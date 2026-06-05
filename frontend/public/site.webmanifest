@@ -1,0 +1,6 @@
+{
+  "name": "Local Produce Exchange",
+  "short_name": "Produce",
+  "start_url": "/",
+  "display": "standalone"
+}

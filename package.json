@@ -1,0 +1,13 @@
+{
+  "name": "local-produce-exchange",
+  "private": true,
+  "scripts": {
+    "setup": "npm --prefix frontend ci",
+    "frontend": "npm --prefix frontend run dev",
+    "fix:frontend": "npm --prefix frontend install",
+    "build": "npm --prefix frontend run build",
+    "typecheck": "npm --prefix frontend run typecheck",
+    "preview": "npm --prefix frontend run preview",
+    "lint": "npm --prefix frontend run lint"
+  }
+}
