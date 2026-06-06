@@ -1,4 +1,4 @@
-# Entry point for the Local Produce Exchange backend.
+# Entry point for the Surplus: A Local Produce Exchange backend.
 # Start it from the repo root with: npm run backend
 
 import logging
@@ -13,7 +13,7 @@ logging.basicConfig(
 )
 logging.getLogger().setLevel(logging.DEBUG)
 
-app = FastAPI(title="Local Produce Exchange API")
+app = FastAPI(title="Surplus: A Local Produce Exchange API")
 
 # Every route in this router starts with /api.
 app.include_router(health.router, prefix="/api")

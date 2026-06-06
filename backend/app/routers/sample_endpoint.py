@@ -4,7 +4,7 @@
 
 import logging
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -23,7 +23,6 @@ def create_sample(
     session: Session = Depends(get_db_session),
 ) -> SampleResponse:
     sample_data_items = []
-    sample_data_error = ""
 
     try:
         rows = session.scalars(select(SampleData)).all()
@@ -37,19 +36,21 @@ def create_sample(
             sample_data_items.append(item)
     except Exception as error:
         # Any database problem, including a missing server or missing table,
-        # lands here. Log it for the developer and answer plainly.
+        # lands here. Log it for the developer and return an HTTP error.
         # No rollback is needed because closing the session discards the
         # failed transaction.
         logger.error("Reading sample data failed: %s", error)
-        sample_data_items = []
-        sample_data_error = (
-            "Could not read sample data from the database. "
-            "Make sure it is running: npm run db, then npm run db:seed."
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Could not read sample data from the database. "
+                "Make sure it is running: npm run db, then npm run db:seed."
+            ),
         )
 
     return SampleResponse(
         message="Payload accepted",
         baz=payload.baz,
         sample_data=sample_data_items,
-        sample_data_error=sample_data_error,
+        sample_data_error="",
     )

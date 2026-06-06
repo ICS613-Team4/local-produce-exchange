@@ -1,6 +1,6 @@
-# Local Produce Exchange
+# Surplus: A Local Produce Exchange
 
-This repository contains Team 4's ICS 613 Local Produce Exchange project.
+This repository contains Team 4's ICS 613 Surplus: A Local Produce Exchange project.
 
 ## Prerequisites
 
@@ -84,8 +84,15 @@ In the third terminal, start PostgreSQL:
 npm run db
 ```
 
-This command keeps running so you can see database logs. Leave that terminal
-open while you work.
+This command runs PostgreSQL in the **foreground**. It keeps running so you can
+see database logs. Leave that terminal open while you work.
+
+After PostgreSQL is running, open another terminal and run this once to insert
+the demo rows:
+
+```sh
+npm run db:seed
+```
 
 To stop the dev db server, press Ctrl+C in the same terminal.
 
@@ -100,7 +107,8 @@ Run these commands from the repo root:
 | `npm run backend` | Run this to start the FastAPI backend with auto-reload. |
 | `npm run fix:frontend` | Run this if the frontend package install is broken; it reinstalls the frontend packages. |
 | `npm run fix:backend` | Run this if the backend package install is broken; it reinstalls every backend package from scratch. |
-| `npm run db` | Start the PostgreSQL container in the foreground. Keep this terminal open while you work. |
+| `npm run db` | Start the PostgreSQL container in the **foreground**. Keep this terminal open while you work. |
+| `npm run db:up` | Start the PostgreSQL container in the **background**. Use this for reset and seed commands. |
 | `npm run db:down` | Stop the PostgreSQL container while keeping the database volume. |
 | `npm run db:reset` | Stop PostgreSQL and delete the database volume. This removes all local database data. |
 | `npm run db:seed` | Create missing tables and insert demo seed data when the table is empty. |
@@ -207,8 +215,6 @@ SQLAlchemy models directly. They do not start an HTTP server.
 ```text
 backend/
   tests/
-    test_app_routes.py        pytest unit tests for FastAPI route registration.
-    test_health.py            pytest unit tests for the health endpoint.
     test_sample_endpoint.py   pytest unit tests for the sample endpoint.
 ```
 
@@ -254,7 +260,7 @@ Reset and seed from a fresh volume:
 
 ```sh
 npm run db:reset
-npm run db
+npm run db:up
 npm run db:seed
 ```
 

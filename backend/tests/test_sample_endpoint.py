@@ -2,6 +2,7 @@
 # These call the function and the models directly. No HTTP is involved.
 
 import pytest
+from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -54,7 +55,7 @@ def test_valid_payload_returns_stored_rows():
         session.close()
 
 
-def test_database_error_returns_explanation():
+def test_database_error_returns_service_unavailable():
     # No create_all here, so the sample_data table is missing on purpose
     # and the SELECT inside the endpoint fails.
     engine = create_engine("sqlite:///:memory:")
@@ -62,9 +63,10 @@ def test_database_error_returns_explanation():
     session = session_factory()
     try:
         payload = SampleRequest(foo="bar", baz=1)
-        result = create_sample(payload, session)
-        assert result.sample_data == []
-        assert result.sample_data_error != ""
+        with pytest.raises(HTTPException) as raised_error:
+            create_sample(payload, session)
+        assert raised_error.value.status_code == 503
+        assert "Could not read sample data" in raised_error.value.detail
     finally:
         session.close()
 
