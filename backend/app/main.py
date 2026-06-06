@@ -5,7 +5,7 @@ import logging
 
 from fastapi import FastAPI
 
-from app.routers import health
+from app.routers import health, sample_endpoint
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -17,3 +17,4 @@ app = FastAPI(title="Local Produce Exchange API")
 
 # Every route in this router starts with /api.
 app.include_router(health.router, prefix="/api")
+app.include_router(sample_endpoint.router, prefix="/api")

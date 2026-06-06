@@ -1,13 +1,13 @@
 import { BrowserRouter, Route, Routes } from 'react-router'
+import AboutPage from './pages/AboutPage.tsx'
 import HomePage from './pages/HomePage.tsx'
-import SamplePage from './pages/SamplePage.tsx'
 
 function App() {
   return (
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<HomePage />} />
-        <Route path="/sample-page" element={<SamplePage />} />
+        <Route path="/about" element={<AboutPage />} />
       </Routes>
     </BrowserRouter>
   )

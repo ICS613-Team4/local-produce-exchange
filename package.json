@@ -4,7 +4,7 @@
   "scripts": {
     "setup": "npm --prefix frontend ci && uv sync --locked --all-groups --directory backend",
     "frontend": "npm --prefix frontend run dev",
-    "fix:frontend": "npm --prefix frontend install",
+    "fix:frontend": "npm --prefix frontend ci",
     "backend": "uv run --locked --directory backend uvicorn app.main:app --reload --port 8000 --log-level debug",
     "fix:backend": "uv sync --locked --reinstall --all-groups --directory backend",
     "build": "npm --prefix frontend run build",
@@ -12,6 +12,10 @@
     "preview": "npm --prefix frontend run preview",
     "lint": "npm run lint:frontend && npm run lint:backend",
     "lint:frontend": "npm --prefix frontend run lint",
-    "lint:backend": "uv run --locked --all-groups --directory backend ruff check ."
+    "lint:backend": "uv run --locked --all-groups --directory backend ruff check .",
+    "test": "npm run test:frontend && npm run test:backend",
+    "tests": "npm test",
+    "test:frontend": "npm --prefix frontend run test",
+    "test:backend": "uv run --locked --all-groups --directory backend pytest"
   }
 }
