@@ -2,12 +2,16 @@
   "name": "local-produce-exchange",
   "private": true,
   "scripts": {
-    "setup": "npm --prefix frontend ci",
+    "setup": "npm --prefix frontend ci && uv sync --locked --all-groups --directory backend",
     "frontend": "npm --prefix frontend run dev",
     "fix:frontend": "npm --prefix frontend install",
+    "backend": "uv run --locked --directory backend uvicorn app.main:app --reload --port 8000 --log-level debug",
+    "fix:backend": "uv sync --locked --reinstall --all-groups --directory backend",
     "build": "npm --prefix frontend run build",
     "typecheck": "npm --prefix frontend run typecheck",
     "preview": "npm --prefix frontend run preview",
-    "lint": "npm --prefix frontend run lint"
+    "lint": "npm run lint:frontend && npm run lint:backend",
+    "lint:frontend": "npm --prefix frontend run lint",
+    "lint:backend": "uv run --locked --all-groups --directory backend ruff check ."
   }
 }
