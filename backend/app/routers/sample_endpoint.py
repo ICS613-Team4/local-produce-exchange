@@ -52,5 +52,4 @@ def create_sample(
         message="Payload accepted",
         baz=payload.baz,
         sample_data=sample_data_items,
-        sample_data_error="",
     )

@@ -29,7 +29,6 @@ def test_valid_payload_is_accepted():
         assert result.message == "Payload accepted"
         assert result.baz == 1765432100
         assert result.sample_data == []
-        assert result.sample_data_error == ""
     finally:
         session.close()
 
@@ -50,7 +49,6 @@ def test_valid_payload_returns_stored_rows():
         assert len(result.sample_data) == 1
         assert result.sample_data[0].slug == "manoa-lettuce"
         assert result.sample_data[0].name == "Manoa Lettuce"
-        assert result.sample_data_error == ""
     finally:
         session.close()
 

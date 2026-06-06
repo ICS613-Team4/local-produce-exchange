@@ -109,7 +109,7 @@ Run these commands from the repo root:
 | `npm run fix:backend` | Run this if the backend package install is broken; it reinstalls every backend package from scratch. |
 | `npm run db` | Start the PostgreSQL container in the **foreground**. Keep this terminal open while you work. |
 | `npm run db:up` | Start the PostgreSQL container in the **background**. Use this for reset and seed commands. |
-| `npm run db:down` | Stop the PostgreSQL container while keeping the database volume. |
+| `npm run db:down` | Stop and remove the PostgreSQL container; the database volume and its data are kept. |
 | `npm run db:reset` | Stop PostgreSQL and delete the database volume. This removes all local database data. |
 | `npm run db:seed` | Create missing tables and insert demo seed data when the table is empty. |
 | `npm run typecheck` | Run the TypeScript type checker. |
@@ -132,6 +132,7 @@ frontend/
     pages/       Route-level screens, such as HomePage or AboutPage.
     services/    API calls to the FastAPI backend.
     styles/      Shared SCSS files.
+    utils/       Small helper functions, such as response text formatting.
     main.tsx     Browser entry point.
     App.tsx      Root React component.
 ```
@@ -154,6 +155,7 @@ backend/
     seed.py            Demo data seeder.
     routers/           Endpoint groups, one file per feature area.
     models/            SQLAlchemy database models.
+      base.py          Shared SQLAlchemy model base class.
       sample_data.py   Small demo table for database smoke tests.
     schemas/           Pydantic request and response shapes.
   tests/               pytest unit tests for backend functions and models.
@@ -220,9 +222,10 @@ backend/
 
 ### Database Tests
 
-The database tests use pytest and SQLAlchemy. They use in-memory SQLite sessions
-(`sqlite:///:memory:`), so they must pass without Docker or Postgres running.
-Real PostgreSQL is exercised by the manual verification steps.
+The database tests use pytest and SQLAlchemy. `test_seed.py` uses in-memory
+SQLite sessions (`sqlite:///:memory:`); `test_db.py` only checks URL strings.
+Both pass without Docker or Postgres running. Real PostgreSQL is exercised by
+the manual verification steps.
 
 ```text
 backend/
