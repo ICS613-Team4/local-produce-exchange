@@ -3,16 +3,70 @@
 
 import pytest
 from pydantic import ValidationError
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
+from app.models.base import Base
+from app.models.sample_data import SampleData
 from app.routers.sample_endpoint import create_sample
-from app.schemas.sample_endpoint import SampleRequest, SampleResponse
+from app.schemas.sample_endpoint import SampleRequest
+
+
+def make_test_session():
+    # A throwaway database that lives in memory for a single test.
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine)
+    return session_factory()
 
 
 def test_valid_payload_is_accepted():
-    payload = SampleRequest(foo="bar", baz=1765432100)
-    result = create_sample(payload)
-    assert result.message == "Payload accepted"
-    assert result.baz == 1765432100
+    session = make_test_session()
+    try:
+        payload = SampleRequest(foo="bar", baz=1765432100)
+        result = create_sample(payload, session)
+        assert result.message == "Payload accepted"
+        assert result.baz == 1765432100
+        assert result.sample_data == []
+        assert result.sample_data_error == ""
+    finally:
+        session.close()
+
+
+def test_valid_payload_returns_stored_rows():
+    session = make_test_session()
+    try:
+        session.add(
+            SampleData(
+                slug="manoa-lettuce",
+                name="Manoa Lettuce",
+                note="Crisp green lettuce.",
+            )
+        )
+        session.commit()
+        payload = SampleRequest(foo="bar", baz=1)
+        result = create_sample(payload, session)
+        assert len(result.sample_data) == 1
+        assert result.sample_data[0].slug == "manoa-lettuce"
+        assert result.sample_data[0].name == "Manoa Lettuce"
+        assert result.sample_data_error == ""
+    finally:
+        session.close()
+
+
+def test_database_error_returns_explanation():
+    # No create_all here, so the sample_data table is missing on purpose
+    # and the SELECT inside the endpoint fails.
+    engine = create_engine("sqlite:///:memory:")
+    session_factory = sessionmaker(bind=engine)
+    session = session_factory()
+    try:
+        payload = SampleRequest(foo="bar", baz=1)
+        result = create_sample(payload, session)
+        assert result.sample_data == []
+        assert result.sample_data_error != ""
+    finally:
+        session.close()
 
 
 def test_numeric_string_is_coerced_to_int():
@@ -37,8 +91,3 @@ def test_malformed_json_is_rejected():
     broken_text = "{\"foo\": \"bar\", \"baz\": 123"
     with pytest.raises(ValidationError):
         SampleRequest.model_validate_json(broken_text)
-
-
-def test_response_dumps_to_expected_dict():
-    response = SampleResponse(message="Payload accepted", baz=123)
-    assert response.model_dump() == {"message": "Payload accepted", "baz": 123}

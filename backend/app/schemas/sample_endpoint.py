@@ -8,6 +8,16 @@ class SampleRequest(BaseModel):
     baz: int
 
 
+class SampleDataItem(BaseModel):
+    id: int
+    slug: str
+    name: str
+    note: str
+
+
 class SampleResponse(BaseModel):
     message: str
     baz: int
+    sample_data: list[SampleDataItem]
+    # Empty string when the database read worked; a plain explanation when not.
+    sample_data_error: str

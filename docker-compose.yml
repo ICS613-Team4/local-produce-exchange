@@ -1,0 +1,32 @@
+# Runs only PostgreSQL in Docker. The backend and frontend still run
+# natively with npm scripts. Start the database with: npm run db
+
+services:
+  db:
+    image: postgres:18.4
+    environment:
+      # These defaults match the values backend/app/db.py uses.
+      # To change them, copy .env.example to .env and edit it.
+      POSTGRES_USER: ${POSTGRES_USER:-produce}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-produce}
+      POSTGRES_DB: ${POSTGRES_DB:-produce_exchange}
+    ports:
+      # 127.0.0.1 means only this machine can reach the database; other
+      # computers on the same network cannot. The host port is overridable
+      # in case 5432 is already taken.
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      # PostgreSQL 18.x images store data under /var/lib/postgresql.
+      # Older guides say /var/lib/postgresql/data; that path is wrong
+      # for version 18 and data would be lost on container recreation.
+      - produce_db_data:/var/lib/postgresql
+    healthcheck:
+      # pg_isready answers once PostgreSQL accepts connections.
+      # $$ stops Compose from substituting; the container shell expands it.
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+volumes:
+  produce_db_data:
