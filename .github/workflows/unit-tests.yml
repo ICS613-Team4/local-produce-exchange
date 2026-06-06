@@ -33,7 +33,9 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Set up Astral uv
-        uses: astral-sh/setup-uv@v8
+        # Pinned to an exact release: setup-uv has no floating "v8" major tag yet,
+        # so "@v8" fails to resolve and kills the job before any step runs.
+        uses: astral-sh/setup-uv@v8.2.0
 
       - name: Install dependencies
         run: npm run setup
