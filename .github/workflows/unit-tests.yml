@@ -1,0 +1,50 @@
+name: Checks
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  # Allows this workflow to be run manually from the GitHub Actions tab.
+  workflow_dispatch:
+
+# If a new run starts for the same branch or PR, cancel the old one.
+# The old run is testing a commit that is no longer the latest.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests-and-linters:
+    name: Unit tests and linters
+    runs-on: ubuntu-latest
+    # Fail the job if it runs longer than this, instead of the 6-hour default.
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Set up Astral uv
+        uses: astral-sh/setup-uv@v8
+
+      - name: Install dependencies
+        run: npm run setup
+
+      - name: Run linters
+        run: npm run lint
+
+      # Runs the TypeScript compiler and then bundles the frontend with vite.
+      # Catches type errors and build-only failures (for example, Sass errors).
+      - name: Build frontend
+        run: npm run build
+
+      - name: Run unit tests
+        run: npm test
