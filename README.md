@@ -78,7 +78,21 @@ To stop the backend dev server, press Ctrl+C in the same terminal.
 
 ### Database
 
-In the third terminal, start PostgreSQL:
+For first-time database setup, and after every pull that may include schema
+changes, run:
+
+```sh
+npm run db:up
+npm run db:migrate
+```
+
+Then insert the demo rows:
+
+```sh
+npm run db:seed
+```
+
+During normal development, you can start PostgreSQL in the third terminal:
 
 ```sh
 npm run db
@@ -86,13 +100,6 @@ npm run db
 
 This command runs PostgreSQL in the **foreground**. It keeps running so you can
 see database logs. Leave that terminal open while you work.
-
-After PostgreSQL is running, open another terminal and run this once to insert
-the demo rows:
-
-```sh
-npm run db:seed
-```
 
 To stop the dev db server, press Ctrl+C in the same terminal.
 
@@ -108,10 +115,12 @@ Run these commands from the repo root:
 | `npm run fix:frontend` | Run this if the frontend package install is broken; it reinstalls the frontend packages. |
 | `npm run fix:backend` | Run this if the backend package install is broken; it reinstalls every backend package from scratch. |
 | `npm run db` | Start the PostgreSQL container in the **foreground**. Keep this terminal open while you work. |
-| `npm run db:up` | Start the PostgreSQL container in the **background**. Use this for reset and seed commands. |
+| `npm run db:up` | Start the PostgreSQL container in the **background** and wait until it accepts connections. |
 | `npm run db:down` | Stop and remove the PostgreSQL container; the database volume and its data are kept. |
 | `npm run db:reset` | Stop PostgreSQL and delete the database volume. This removes all local database data. |
-| `npm run db:seed` | Create missing tables and insert demo seed data when the table is empty. |
+| `npm run db:migrate` | Apply new database migrations. |
+| `npm run db:revision` | Create a new migration after model changes. |
+| `npm run db:seed` | Insert demo seed data when the table is empty. |
 | `npm run typecheck` | Run the TypeScript type checker. |
 | `npm run lint` | Run both frontend and backend linters. |
 | `npm run lint:frontend` | Lint only the frontend. |
@@ -145,6 +154,7 @@ or helper functions.
 
 ```text
 backend/
+  alembic.ini          Alembic migration settings.
   pyproject.toml       Backend dependencies and project info.
   .python-version      The Python version Astral uv installs and uses.
   uv.lock              Exact dependency versions used by Astral uv. Committed; do not edit by hand.
@@ -152,12 +162,13 @@ backend/
     __init__.py        Marks app as a Python package.
     db.py              Database engine and session setup.
     main.py            FastAPI entry point. Adds the /api prefix.
-    seed.py            Demo data seeder.
+    seed.py            Demo data seeder. Run migrations before seeding.
     routers/           Endpoint groups, one file per feature area.
     models/            SQLAlchemy database models.
       base.py          Shared SQLAlchemy model base class.
       sample_data.py   Small demo table for database smoke tests.
     schemas/           Pydantic request and response shapes.
+  migrations/          Alembic migration environment and version files.
   tests/               pytest unit tests for backend functions and models.
 ```
 
@@ -173,9 +184,11 @@ docker-compose.yml        Local PostgreSQL service.
 .env.example              Optional PostgreSQL environment values.
 
 backend/
+  alembic.ini             Alembic migration settings.
+  migrations/             Alembic migration environment and version files.
   app/
     db.py                 Database URL, engine, and sessions.
-    seed.py               Creates missing tables and inserts demo data.
+    seed.py               Inserts demo data after migrations run.
     models/
       base.py             Shared SQLAlchemy model base class.
       sample_data.py      Demo table used to test the database path.
@@ -185,8 +198,31 @@ PostgreSQL runs in Docker. The `backend/app/db.py` file reads the optional root
 `.env` file, uses the same defaults as `docker-compose.yml`, and connects to
 PostgreSQL on `127.0.0.1`.
 
-The seed script uses SQLAlchemy to create any missing tables and insert demo
-rows.
+Alembic migrations create and change tables. The seed script inserts demo rows
+after migrations have run. Alembic stores the current database migration in the
+`alembic_version` table.
+
+## Schema Changes
+
+When a database model changes:
+
+1. Edit or add a model in `backend/app/models/`.
+2. Register new model modules in `backend/app/models/__init__.py`.
+3. Generate a migration from the repo root:
+
+   ```sh
+   npm run db:revision -- "describe the change"
+   ```
+
+4. Read the generated migration before using it. Edit generated Python strings
+   to use double quotes before committing.
+5. Run the migration:
+
+   ```sh
+   npm run db:migrate
+   ```
+
+6. Commit the migration file with the model change.
 
 ## Tests
 
@@ -264,8 +300,13 @@ Reset and seed from a fresh volume:
 ```sh
 npm run db:reset
 npm run db:up
+npm run db:migrate
 npm run db:seed
 ```
+
+If a database migration failed halfway through, check the `alembic_version`
+table before retrying. It records which migration Alembic thinks the database
+has already applied.
 
 ### Astral uv Issues
 

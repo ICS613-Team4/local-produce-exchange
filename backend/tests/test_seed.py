@@ -5,13 +5,14 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from app import seed
+from app.models.base import Base
 from app.models.sample_data import SampleData
 
 
 def set_sqlite_seed_database(monkeypatch):
     engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
     session_factory = sessionmaker(bind=engine)
-    monkeypatch.setattr(seed, "engine", engine)
     monkeypatch.setattr(seed, "SessionLocal", session_factory)
     return session_factory
 

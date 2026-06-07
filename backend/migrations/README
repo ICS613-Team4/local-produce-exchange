@@ -1,0 +1,8 @@
+Alembic migration files live in versions/.
+
+Run migrations from the project root:
+
+npm run db:migrate
+
+When a model changes, generate a revision, review it, run it, and commit it
+with the model change.

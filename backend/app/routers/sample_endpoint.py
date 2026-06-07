@@ -44,7 +44,8 @@ def create_sample(
             status_code=503,
             detail=(
                 "Could not read sample data from the database. "
-                "Make sure it is running: npm run db, then npm run db:seed."
+                "Make sure it is running and migrated: "
+                "npm run db:up, then npm run db:migrate, then npm run db:seed."
             ),
         )
 

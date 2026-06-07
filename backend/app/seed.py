@@ -1,4 +1,7 @@
-# Fills the database with demo data. Run it from the repo root with:
+# Fills the database with demo data. Tables are created by migrations.
+# Run migrations first from the repo root with:
+#   npm run db:migrate
+# Then run this with:
 #   npm run db:seed
 # Safe to run more than once: it does nothing when data is already there.
 
@@ -6,15 +9,11 @@ import sys
 
 from sqlalchemy import select
 
-from app.db import SessionLocal, engine
-from app.models.base import Base
+from app.db import SessionLocal
 from app.models.sample_data import SampleData
 
 
 def seed_database():
-    # Create any missing tables. This never changes existing tables.
-    Base.metadata.create_all(engine)
-
     session = SessionLocal()
     try:
         existing_row = session.scalars(select(SampleData)).first()
@@ -53,5 +52,6 @@ if __name__ == "__main__":
     except Exception as error:
         # A short message instead of a wall of traceback text.
         print("Seeding failed: " + str(error))
-        print("Is the database running? Try: npm run db")
+        print("Is the database running and migrated?")
+        print("Try: npm run db:up, then npm run db:migrate, then npm run db:seed")
         sys.exit(1)
