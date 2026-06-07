@@ -78,20 +78,6 @@ To stop the backend dev server, press Ctrl+C in the same terminal.
 
 ### Database
 
-For first-time database setup, and after every pull that may include schema
-changes, run:
-
-```sh
-npm run db:up
-npm run db:migrate
-```
-
-Then insert the demo rows:
-
-```sh
-npm run db:seed
-```
-
 During normal development, you can start PostgreSQL in the third terminal:
 
 ```sh
@@ -102,6 +88,25 @@ This command runs PostgreSQL in the **foreground**. It keeps running so you can
 see database logs. Leave that terminal open while you work.
 
 To stop the dev db server, press Ctrl+C in the same terminal.
+
+- First Time Setup
+
+  Before the first run on a machine, create the tables and insert the demo
+  rows. With PostgreSQL running, run these in a separate terminal window:
+
+  ```sh
+  npm run db:migrate
+  npm run db:seed
+  ```
+
+- After Pulling Changes
+
+  After every pull that may include schema changes, make sure PostgreSQL is
+  running, then run this in a separate terminal window:
+
+  ```sh
+  npm run db:migrate
+  ```
 
 ## npm Scripts
 
@@ -204,7 +209,12 @@ after migrations have run. Alembic stores the current database migration in the
 
 ## Schema Changes
 
-When a database model changes:
+Both workflows below need PostgreSQL running. Start it with `npm run db` or
+`npm run db:up` first.
+
+### Adding or Changing Tables
+
+When you want to change or add a database table:
 
 1. Edit or add a model in `backend/app/models/`.
 2. Register new model modules in `backend/app/models/__init__.py`.
@@ -214,8 +224,7 @@ When a database model changes:
    npm run db:revision -- "describe the change"
    ```
 
-4. Read the generated migration before using it. Edit generated Python strings
-   to use double quotes before committing.
+4. Read the generated migration before using it.
 5. Run the migration:
 
    ```sh
@@ -223,6 +232,38 @@ When a database model changes:
    ```
 
 6. Commit the migration file with the model change.
+
+### Deleting Tables
+
+> [!WARNING]
+> Deleting a table also deletes all of its data, and there is no undo. This
+> happens on every machine that runs the migration. Check that no one still
+> needs the data before you start.
+
+When you want to delete a database table:
+
+1. Delete the model file from `backend/app/models/`.
+2. Remove the model's import from `backend/app/models/__init__.py`.
+3. Generate a migration from the repo root:
+
+   ```sh
+   npm run db:revision -- "explain why you dropped the table"
+   ```
+
+4. Read the generated migration. The upgrade step should contain
+   `op.drop_table` for the table.
+5. Run the migration:
+
+   ```sh
+   npm run db:migrate
+   ```
+
+6. Commit the migration file with the model deletion.
+
+If other tables point at the deleted table with foreign keys, delete those
+models in the same change, and check that the generated migration drops the
+referencing tables or constraints first. PostgreSQL refuses to drop a table
+that another table still references.
 
 ## Tests
 
@@ -260,8 +301,9 @@ backend/
 
 The database tests use pytest and SQLAlchemy. `test_seed.py` uses in-memory
 SQLite sessions (`sqlite:///:memory:`); `test_db.py` only checks URL strings.
-Both pass without Docker or Postgres running. Real PostgreSQL is exercised by
-the manual verification steps.
+Both pass without Docker or Postgres running. Real PostgreSQL is only
+exercised when you run the app, migrations, and seed script against the
+Docker database.
 
 ```text
 backend/
