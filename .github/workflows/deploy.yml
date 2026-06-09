@@ -1,0 +1,98 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - main
+  # Allows a manual redeploy from the GitHub Actions tab.
+  workflow_dispatch:
+
+# Never run two deploys at the same time. A new run waits for the
+# current one to finish instead of cutting it off halfway.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    name: Lint, build, and test
+    uses: ./.github/workflows/unit-tests.yml
+
+  deploy:
+    name: Deploy to the VPS
+    needs: checks
+    # Guard so a manual dispatch from a non-main branch cannot deploy.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install rsync
+        run: sudo apt-get update && sudo apt-get install -y rsync
+
+      # The checks job built the frontend too, but jobs do not share
+      # files, so this job builds its own copy to upload.
+      - name: Build frontend
+        run: |
+          npm --prefix frontend ci
+          npm --prefix frontend run build
+
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          echo "${{ secrets.DEPLOY_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      # --delete only removes files inside the folders being synchronized
+      # (backend/ and scripts/), so the exclude that matters today is
+      # backend/.venv, which exists only on the VPS. The .env and
+      # docker-compose.override.yml excludes are guards in case the
+      # source list ever changes; --delete cannot reach the app root now.
+      # The frontend is left out of this copy on purpose: nginx serves it
+      # straight from disk, so it is copied last, after the backend is
+      # migrated and healthy.
+      - name: Copy backend files to the VPS
+        run: |
+          rsync -az --delete --relative \
+            --exclude ".env" \
+            --exclude "docker-compose.override.yml" \
+            --exclude "backend/.venv" \
+            --exclude "__pycache__" \
+            --exclude ".pytest_cache" \
+            --exclude ".ruff_cache" \
+            backend docker-compose.yml scripts \
+            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/opt/produce-exchange/app/"
+
+      - name: Install, migrate, restart, and check health on the VPS
+        run: |
+          ssh "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+            "bash /opt/produce-exchange/app/scripts/deploy-remote.sh"
+
+      # Runs only when the step above passed its health checks. This is
+      # the moment the new UI becomes visible. A failure before the
+      # backend restart leaves the old UI and the still-running old
+      # backend together. A failure at or after the restart is not as
+      # forgiving: the old backend process is already gone, so the API
+      # may be down (failed restart) or already serving the new code
+      # (failed smoke test) until someone reverts or fixes forward.
+      # After a good restart, the old UI runs against the new backend
+      # for the few seconds before this copy, which is safe as long as
+      # API changes stay additive.
+      - name: Copy the new frontend to the VPS
+        run: |
+          rsync -az --delete --relative \
+            frontend/dist \
+            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/opt/produce-exchange/app/"

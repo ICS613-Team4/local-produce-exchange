@@ -2,9 +2,8 @@ name: Checks
 
 on:
   pull_request:
-  push:
-    branches:
-      - main
+  # Lets the Deploy workflow reuse these same checks before it deploys.
+  workflow_call:
   # Allows this workflow to be run manually from the GitHub Actions tab.
   workflow_dispatch:
 
