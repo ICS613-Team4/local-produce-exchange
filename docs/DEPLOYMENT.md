@@ -60,8 +60,8 @@ partway through never shows a new UI against a backend that is not ready.
 
 - Host: Vultr, 45.77.209.138, Debian 13, 961MB RAM plus 3GB swap, 23GB
   disk.
-- Admin login: `ssh vps2` (an alias in `C:\Users\jeffr\.ssh\config`, user
-  `jeff`, with passwordless sudo).
+- Admin login: `ssh vps2` (an SSH alias set up on the admin machine,
+  connecting as an admin user that has passwordless sudo).
 - App directory: `/opt/produce-exchange/app`, owned by the `deploy` user.
 - Domain: `localharvest.exchange` (covers the apex and `www`).
 
@@ -198,19 +198,66 @@ database, recreate the volume first:
     ssh vps2 "cd /opt/produce-exchange/app && sudo docker compose down --volumes && sudo docker compose up -d --wait db"
     ssh vps2 "cd /opt/produce-exchange/app && sudo docker compose exec -T db psql -U produce -d produce_exchange" < backup-FILE.sql
 
-The `sudo` is needed because `ssh vps2` logs in as `jeff`, who is not in
-the docker group. Keep the .sql files on the admin machine, not the
+The `sudo` is needed because `ssh vps2` logs in as the admin user, who is
+not in the docker group. Keep the .sql files on the admin machine, not the
 server. The dump includes Alembic's `alembic_version` table, so a restored
 database remembers which migrations it already has, and the next deploy
 applies only newer ones. After an empty-volume restore, the next deploy's
 seed step sees rows and skips itself.
+
+## Automated database backups
+
+A systemd timer takes a database backup every day, so recovery does not
+depend on someone remembering to run the manual dump above. The pieces:
+
+- Where: `/opt/produce-exchange/backups/` on the server, owned by `deploy`
+  with mode 750 (only `deploy` can read it). Admin commands that read it need
+  `sudo -u deploy` or `sudo`.
+- What: a `pg_dump` of `produce_exchange`, gzip-compressed, named
+  `produce_exchange-YYYYmmdd-HHMMSS.sql.gz`, each file mode 600.
+- When: every day at 03:30 UTC (`produce-db-backup.timer`). A run missed while
+  the server was off happens once at the next boot (`Persistent=true`).
+- How long: dumps are kept for 30 days by file age, then deleted. The count on
+  disk settles near 30 and stays there.
+
+The script, service, and timer are installed by hand and kept in the project
+under `deploy/vps-files/` (`backup-db.sh`, `produce-db-backup.service`,
+`produce-db-backup.timer`). The full how-to, including setup on a fresh server
+and a line-by-line walk through the script, is in
+`ics613-research/docs/database-backup-and-restore.md`.
+
+Check that it is running and rotating:
+
+    ssh vps2 "TZ=UTC systemctl list-timers produce-db-backup.timer --all"
+    ssh vps2 "systemctl is-enabled produce-db-backup.timer"
+    ssh vps2 "sudo journalctl -u produce-db-backup.service -n 20 --no-pager"
+    ssh vps2 "sudo -u deploy ls -la /opt/produce-exchange/backups"
+
+Run one backup now instead of waiting for 03:30:
+
+    ssh vps2 "sudo -u deploy /opt/produce-exchange/backup-db.sh"
+
+Restore from a daily backup. This recreates the database volume, so it wipes
+current data; only do it once you have picked the dump to restore:
+
+    ssh vps2 "cd /opt/produce-exchange/app && sudo docker compose down --volumes && sudo docker compose up -d --wait db"
+    ssh vps2 "bash -o pipefail -c 'cd /opt/produce-exchange/app && sudo gunzip -c /opt/produce-exchange/backups/produce_exchange-YYYYmmdd-HHMMSS.sql.gz | sudo docker compose exec -T db psql -v ON_ERROR_STOP=1 -U produce -d produce_exchange'"
+
+To recover only a few rows without wiping current data, or to test a restore
+safely first, use the surgical and scratch-database paths in the research doc
+above.
+
+Scope: these backups live on the server only. They protect against a bad
+migration, an accidental delete, or a wrong update, where you roll back to a
+recent dump. They do not protect against losing the whole server or its disk;
+an off-server copy is a planned extension, not in place yet.
 
 ## Database password rotation
 
 The postgres image reads `.env` only when it first creates an empty data
 volume. After that the password lives inside the volume, so editing `.env`
 by itself makes the backend and the database disagree and login fails.
-Rotate in this order (as `jeff`):
+Rotate in this order (as the admin user):
 
 1. Change it in the database:
 
@@ -223,11 +270,11 @@ Rotate in this order (as `jeff`):
 
 ## Certificate rotation
 
-The certificate expires 2026-12-21. With the new issued files in
-`C:\Users\jeffr\MCS\ics613\ssl\`:
+The certificate expires 2026-12-21. With the new issued files in a local
+`ssl/` directory on the admin machine:
 
-    scp C:\Users\jeffr\MCS\ics613\ssl\localharvest_exchange.crt vps2:/tmp/
-    scp C:\Users\jeffr\MCS\ics613\ssl\localharvest_exchange.ca-bundle vps2:/tmp/
+    scp ./ssl/localharvest_exchange.crt vps2:/tmp/
+    scp ./ssl/localharvest_exchange.ca-bundle vps2:/tmp/
     ssh vps2 "sudo install -m 644 /tmp/localharvest_exchange.crt /etc/ssl/produce/ && sudo install -m 644 /tmp/localharvest_exchange.ca-bundle /etc/ssl/produce/ && sudo sh -c 'cat /etc/ssl/produce/localharvest_exchange.crt /etc/ssl/produce/localharvest_exchange.ca-bundle > /etc/ssl/produce/fullchain.pem' && sudo chmod 644 /etc/ssl/produce/fullchain.pem && rm /tmp/localharvest_exchange.crt /tmp/localharvest_exchange.ca-bundle && sudo nginx -t && sudo systemctl reload nginx"
 
 The private key only changes if a new CSR was generated. Reusing the
