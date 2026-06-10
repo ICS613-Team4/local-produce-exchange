@@ -61,9 +61,11 @@ async function waitForStateUpdates() {
 
 test('shows a placeholder before any button is clicked', () => {
   renderHomePage()
+  const heading = screen.getByRole('heading', { name: 'ICS 613 Team 4: Homepage' })
   const requestPlaceholder = screen.getByText('No request sent yet. Click a button above.')
   const responsePlaceholder = screen.getByText('No response yet. Click a button above.')
 
+  expect(heading).toBeTruthy()
   expect(requestPlaceholder).toBeTruthy()
   expect(responsePlaceholder).toBeTruthy()
 })
