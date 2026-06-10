@@ -436,6 +436,17 @@ variables -> Actions in the GitHub repository:
 - `DEPLOY_USER`: the login name on the server.
 - `DEPLOY_HOST`: the server address.
 
+## Database Backups
+
+The live database on the server backs itself up every 6 hours. A systemd timer
+runs `pg_dump`, gzips the result, and keeps the dumps for 30 days, so a bad
+migration or an accidental delete costs you at most the last 6 hours of changes.
+You don't run any of this yourself; it happens on the server.
+
+Heads up: every backup copy lives on that one server, so this guards against
+losing data, not against losing the whole machine. An off-box copy is a planned
+next step.
+
 ## Troubleshooting
 
 Whatever the issue, run `npm run setup` first.
