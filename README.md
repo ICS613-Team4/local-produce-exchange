@@ -1,6 +1,8 @@
 # Surplus: A Local Produce Exchange
 
-This repository contains Team 4's ICS 613 Surplus: A Local Produce Exchange project.
+This is Team 4's project for ICS 613: Surplus, a local produce exchange.
+
+You can see the live site at https://localharvest.exchange/.
 
 ## Prerequisites
 
@@ -10,16 +12,16 @@ Download Node.js from https://nodejs.org/ and run the installer.
 
 ### Astral uv
 
-Install Astral uv from https://docs.astral.sh/uv/getting-started/installation/ by
-running the command for your system:
+Install Astral uv from https://docs.astral.sh/uv/getting-started/installation/.
+Pick the command for your system:
 
-- Installing on Mac
+- On a Mac
 
   ```sh
   curl -LsSf https://astral.sh/uv/install.sh | sh
   ```
 
-- Installing on Windows
+- On Windows
 
   ```powershell
   powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
@@ -28,14 +30,15 @@ running the command for your system:
 ### Docker Desktop
 
 Install Docker Desktop from https://www.docker.com/products/docker-desktop/.
-It is required for the PostgreSQL database.
+You need it to run the PostgreSQL database.
 
 ## Initial Setup
 
-Install Node, Astral uv, and Docker Desktop first. Then close every terminal window
-that was already open. Open a new terminal and go to the repo root.
+Get Node, Astral uv, and Docker Desktop installed first. Clone the repo. Then
+close any terminal windows you already had open, open a fresh one, and go to the
+repo root.
 
-From the new terminal, run:
+From that new terminal, run:
 
 ```sh
 npm run setup
@@ -43,27 +46,27 @@ npm run setup
 
 ## Development
 
-During full development, keep three terminals open.
+When you're doing full development, keep three terminals open.
 
 ### Frontend
 
-In the first terminal, run:
+In your first terminal, run:
 
 ```sh
 npm run frontend
 ```
 
-Then open the local URL shown in the terminal. It is usually
+Then open the local URL the terminal prints. It's usually
 `http://127.0.0.1:5173`
 
-The frontend forwards any `/api` request to the backend, so React pages can
-call the API with no extra setup.
+The frontend hands any `/api` request off to the backend, so your React pages
+can call the API with no extra setup.
 
-To stop the frontend dev server, press Ctrl+C in the same terminal.
+To stop it, press Ctrl+C in that same terminal.
 
 ### Backend
 
-In the second terminal, run:
+In your second terminal, run:
 
 ```sh
 npm run backend
@@ -71,28 +74,29 @@ npm run backend
 
 The backend runs at `http://127.0.0.1:8000`
 
-This command keeps running so you can see backend logs. Leave that terminal
+This one keeps running so you can watch the backend logs, so leave that terminal
 open while you work.
 
-To stop the backend dev server, press Ctrl+C in the same terminal.
+To stop it, press Ctrl+C in that same terminal.
 
 ### Database
 
-During normal development, you can start PostgreSQL in the third terminal:
+For normal development, start PostgreSQL in your third terminal:
 
 ```sh
 npm run db
 ```
 
-This command runs PostgreSQL in the **foreground**. It keeps running so you can
-see database logs. Leave that terminal open while you work.
+This runs PostgreSQL in the **foreground**. Like the others, it keeps running so
+you can see the database logs, so leave that terminal open while you work.
 
-To stop the dev db server, press Ctrl+C in the same terminal.
+To stop it, press Ctrl+C in that same terminal.
 
 - First Time Setup
 
-  Before the first run on a machine, create the tables and insert the demo
-  rows. With PostgreSQL running, run these in a separate terminal window:
+  The first time you run this on a machine, you need to create the tables and
+  add the demo rows. With PostgreSQL running, run these in a separate terminal
+  window:
 
   ```sh
   npm run db:migrate
@@ -101,7 +105,7 @@ To stop the dev db server, press Ctrl+C in the same terminal.
 
 - After Pulling Changes
 
-  After every pull that may include schema changes, make sure PostgreSQL is
+  After any pull that might include schema changes, make sure PostgreSQL is
   running, then run this in a separate terminal window:
 
   ```sh
@@ -110,7 +114,7 @@ To stop the dev db server, press Ctrl+C in the same terminal.
 
 ## npm Scripts
 
-Run these commands from the repo root:
+Run any of these from the repo root:
 
 | Command | What it's for |
 | --- | --- |
@@ -151,9 +155,9 @@ frontend/
     App.tsx      Root React component.
 ```
 
-Use `.tsx` files for React components because they contain JSX markup. Use
-`.ts` files for TypeScript code that does not render markup, such as API calls
-or helper functions.
+Use `.tsx` files for React components, since they hold JSX markup. Use plain
+`.ts` files for TypeScript that doesn't render markup, like API calls or helper
+functions.
 
 ### Backend Structure
 
@@ -177,10 +181,10 @@ backend/
   tests/               pytest unit tests for backend functions and models.
 ```
 
-Put FastAPI route functions in `app/routers/`. Put Pydantic request and
-response shapes in `app/schemas/`. Put future SQLAlchemy database table models
-in `app/models/`. Put pytest files in `backend/tests/`, named like
-`test_sample_endpoint.py`, so pytest can find them automatically.
+Route functions go in `app/routers/`. Pydantic request and response shapes go
+in `app/schemas/`. New SQLAlchemy table models go in `app/models/`. And pytest
+files go in `backend/tests/`, named like `test_sample_endpoint.py` so pytest
+finds them on its own.
 
 ### Database Structure
 
@@ -200,21 +204,55 @@ backend/
 ```
 
 PostgreSQL runs in Docker. The `backend/app/db.py` file reads the optional root
-`.env` file, uses the same defaults as `docker-compose.yml`, and connects to
-PostgreSQL on `127.0.0.1`.
+`.env` file, falls back to the same defaults as `docker-compose.yml`, and
+connects to PostgreSQL on `127.0.0.1`.
 
-Alembic migrations create and change tables. The seed script inserts demo rows
-after migrations have run. Alembic stores the current database migration in the
-`alembic_version` table.
+Alembic migrations create and change tables, and the seed script adds demo rows
+once the migrations have run. Alembic keeps track of where the database is in
+the `alembic_version` table.
+
+### Deployment Structure
+
+```text
+scripts/
+  deploy-remote.sh        Runs on the VPS during each deploy.
+```
+
+A VPS is a rented Linux server, and it's what hosts the live site at
+https://localharvest.exchange/. The `scripts/deploy-remote.sh` script runs there
+on the server, not on your machine. The GitHub Actions workflow copies the new
+backend files up to the VPS, runs this script over SSH, and only copies the new
+frontend once the script finishes without an error.
+
+The script walks through the same steps you'd do by hand to put a new version
+online, in order:
+
+1. Check that the production `.env` file exists and that each required
+   PostgreSQL key (`POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`,
+   `POSTGRES_PORT`) has a value. If any check fails, the script stops before
+   touching the running site.
+2. Install the backend dependencies, skipping test-only tools like pytest and
+   ruff that production never runs.
+3. Start the PostgreSQL container and wait until its healthcheck passes.
+4. Apply any new database migrations with Alembic.
+5. Insert the demo rows with the seed script. The seed script skips rows that
+   are already present, so this is safe to run on every deploy.
+6. Restart the backend service.
+7. Confirm the deploy worked: call the health endpoint until it answers, then
+   send one request that needs the database, so a broken database connection
+   fails the deploy here instead of being found later by a user.
+
+If any step fails, the script bails out with an error. That fails the deploy and
+leaves the previous version running.
 
 ## Schema Changes
 
-Both workflows below need PostgreSQL running. Start it with `npm run db` or
+Both of these need PostgreSQL running, so start it with `npm run db` or
 `npm run db:up` first.
 
 ### Adding or Changing Tables
 
-When you want to change or add a database table:
+When you want to add or change a database table:
 
 1. Edit or add a model in `backend/app/models/`.
 2. Register new model modules in `backend/app/models/__init__.py`.
@@ -236,9 +274,9 @@ When you want to change or add a database table:
 ### Deleting Tables
 
 > [!WARNING]
-> Deleting a table also deletes all of its data, and there is no undo. This
-> happens on every machine that runs the migration. Check that no one still
-> needs the data before you start.
+> Deleting a table deletes all of its data too, and there's no undo. It happens
+> on every machine that runs the migration, so check that nobody still needs the
+> data before you start.
 
 When you want to delete a database table:
 
@@ -260,18 +298,18 @@ When you want to delete a database table:
 
 6. Commit the migration file with the model deletion.
 
-If other tables point at the deleted table with foreign keys, delete those
+If other tables point at the one you're deleting with foreign keys, delete those
 models in the same change, and check that the generated migration drops the
-referencing tables or constraints first. PostgreSQL refuses to drop a table
-that another table still references.
+referencing tables or constraints first. PostgreSQL won't drop a table that
+another table still points to.
 
 ## Tests
 
 ### Frontend Tests
 
-The frontend uses Vitest. Component tests render React pages with React Testing
-Library and jsdom. Service tests stub `fetch`, so they do not need a running
-backend.
+The frontend uses Vitest. The component tests render React pages with React
+Testing Library and jsdom. The service tests stub out `fetch`, so they don't
+need a running backend.
 
 ```text
 frontend/
@@ -288,8 +326,8 @@ frontend/
 
 ### Backend Tests
 
-The backend uses pytest. These tests call route functions, Pydantic models, and
-SQLAlchemy models directly. They do not start an HTTP server.
+The backend uses pytest. These tests call the route functions, Pydantic models,
+and SQLAlchemy models directly, so they don't start an HTTP server.
 
 ```text
 backend/
@@ -300,10 +338,10 @@ backend/
 ### Database Tests
 
 The database tests use pytest and SQLAlchemy. `test_seed.py` uses in-memory
-SQLite sessions (`sqlite:///:memory:`); `test_db.py` only checks URL strings.
-Both pass without Docker or Postgres running. Real PostgreSQL is only
-exercised when you run the app, migrations, and seed script against the
-Docker database.
+SQLite sessions (`sqlite:///:memory:`), and `test_db.py` only checks URL
+strings, so both pass without Docker or Postgres running. The real PostgreSQL
+only gets exercised when you run the app, the migrations, and the seed script
+against the Docker database.
 
 ```text
 backend/
@@ -312,16 +350,99 @@ backend/
     test_seed.py              pytest unit tests for the seed script.
 ```
 
+## GitHub Actions
+
+GitHub Actions handles the automated checks and the deploys for you. There are
+two workflow files in `.github/workflows/`. One runs the checks on every pull
+request. The other deploys the `main` branch to the live site at
+https://localharvest.exchange/. Both run on GitHub's own Linux machines, so
+there's nothing for you to run from your laptop.
+
+### Checks (`unit-tests.yml`)
+
+This one is named "Checks", and it runs in three situations:
+
+- On every pull request.
+- When another workflow calls it (`workflow_call`). The Deploy workflow reuses
+  it so the same checks run before a deploy.
+- When you start it by hand from the Actions tab (`workflow_dispatch`).
+
+It has a single job that runs on `ubuntu-latest` and gives up after 15 minutes
+if it's still going. Here are the steps, in order:
+
+1. Check out the repository.
+2. Set up Node.js 22, with the npm cache keyed to `frontend/package-lock.json`.
+3. Set up Astral uv (pinned to release 8.2.0).
+4. Install all dependencies with `npm run setup`.
+5. Run the linters with `npm run lint`.
+6. Build the frontend with `npm run build`, which runs the TypeScript compiler
+   and then bundles with vite. This catches type errors and build-only
+   failures such as Sass errors.
+7. Run the unit tests with `npm test`.
+
+If you push a newer commit to the same branch or pull request while a run is
+going, GitHub cancels the older one, since it's testing a commit that's no
+longer the latest.
+
+### Deploy (`deploy.yml`)
+
+This one is named "Deploy", and it runs in two situations:
+
+- On every push to the `main` branch.
+- When you start it by hand from the Actions tab (`workflow_dispatch`), for a
+  manual redeploy.
+
+Two deploys never run at the same time. The workflow uses a concurrency group
+named `deploy-production` that won't cancel a run that's already going, so a new
+deploy waits for the current one to finish instead of getting cut off halfway.
+
+It has two jobs:
+
+1. `checks` reuses the Checks workflow above. If the linters, the build, or the
+   tests fail, the deploy stops right here and nothing reaches the server.
+2. `deploy` runs only after `checks` passes. It also has a guard,
+   `if: github.ref == 'refs/heads/main'`, so a manual run from any branch other
+   than `main` can't deploy. It runs on `ubuntu-latest` and gives up after 15
+   minutes too. Here are its steps, in order:
+   1. Check out the repository.
+   2. Set up Node.js 22.
+   3. Install rsync, the tool it uses to copy files to the server.
+   4. Build the frontend. The `checks` job already built it, but separate jobs
+      don't share files, so this job builds its own copy to upload.
+   5. Set up SSH from the repository secrets (see below). This writes the deploy
+      key and the known-hosts line so the runner can reach the server and trust
+      it.
+   6. Copy `backend/`, `docker-compose.yml`, and `scripts/` to the VPS with
+      rsync. The copy uses `--delete` to clear out files that no longer exist,
+      and it skips the server-only `backend/.venv`, the `.env` file, the
+      `docker-compose.override.yml` file, and the Python cache folders.
+   7. Run `scripts/deploy-remote.sh` on the server over SSH. That script
+      installs the dependencies, applies the migrations, restarts the backend,
+      and runs the health checks (see "Deployment Structure" above).
+   8. Copy the freshly built `frontend/dist` up to the VPS, but only after step
+      7 passes its health checks. nginx serves the frontend straight from disk,
+      so copying it last means a failure partway through never shows a new UI
+      against a backend that isn't ready.
+
+### Repository secrets
+
+The Deploy workflow reads four secrets, which live under Settings -> Secrets and
+variables -> Actions in the GitHub repository:
+
+- `DEPLOY_SSH_KEY`: the private SSH key the runner uses to reach the deploy
+  user on the server.
+- `DEPLOY_KNOWN_HOSTS`: the server's SSH host key line, so the runner trusts
+  the right machine.
+- `DEPLOY_USER`: the login name on the server.
+- `DEPLOY_HOST`: the server address.
+
 ## Troubleshooting
 
-For any issue, run `npm run setup` first. This refreshes the frontend packages
-and makes sure the backend packages match the committed lock files. Many errors
-after a fresh clone, branch switch, or pull come from missing or outdated local
-packages.
+Whatever the issue, run `npm run setup` first.
 
 ### Frontend Issues
 
-If the React package install is broken, run this from the repo root:
+If your React package install is broken, run this from the repo root:
 
 ```sh
 npm run fix:frontend
@@ -329,7 +450,7 @@ npm run fix:frontend
 
 ### Backend Issues
 
-If the backend package install is broken, run this from the repo root:
+If your backend package install is broken, run this from the repo root:
 
 ```sh
 npm run fix:backend
@@ -337,7 +458,8 @@ npm run fix:backend
 
 ### Database Issues
 
-Reset and seed from a fresh volume:
+Heads up: this wipes your local database data and starts you fresh. To reset and
+seed from a fresh volume:
 
 ```sh
 npm run db:reset
@@ -346,14 +468,10 @@ npm run db:migrate
 npm run db:seed
 ```
 
-If a database migration failed halfway through, check the `alembic_version`
-table before retrying. It records which migration Alembic thinks the database
-has already applied.
-
 ### Astral uv Issues
 
-If you have an Astral uv error, update Astral uv, open a new terminal window, then run
-`npm run setup` again:
+If you hit an Astral uv error, update Astral uv, open a new terminal window, then
+run `npm run setup` again:
 
 ```sh
 uv self update
@@ -361,5 +479,5 @@ uv self update
 
 ### Node Issues
 
-If you have a Node error, update Node.js from https://nodejs.org/, then run
+If you hit a Node error, update Node.js from https://nodejs.org/, then run
 `npm run setup` again.
