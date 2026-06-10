@@ -3,7 +3,7 @@ import { Link } from 'react-router'
 function AboutPage() {
   return (
     <>
-      <h1>About page</h1>
+      <h1>ICS 613 Team 4: About Page</h1>
       <p>
         <Link to="/">Go to home page</Link>
       </p>

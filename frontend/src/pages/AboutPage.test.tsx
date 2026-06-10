@@ -17,7 +17,7 @@ test('shows the about page heading and home link', () => {
     </MemoryRouter>,
   )
 
-  const heading = screen.getByRole('heading', { name: 'About page' })
+  const heading = screen.getByRole('heading', { name: 'ICS 613 Team 4: About Page' })
   const placeholderText = screen.getByText(/Lorem ipsum dolor sit amet/)
   const homeLink = screen.getByRole('link', { name: 'Go to home page' })
 
