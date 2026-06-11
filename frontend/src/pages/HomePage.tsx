@@ -73,6 +73,7 @@ function HomePage() {
   return (
     <>
       <h1>ICS 613 Team 4: Homepage</h1>
+	  <p>test</p>
       <p>
         <Link to="/about">Go to about page</Link>
       </p>
