@@ -7,10 +7,22 @@ export default defineConfig({
   server: {
     // Make the dev server itself listen on 127.0.0.1, matching the backend.
     host: '127.0.0.1',
+    // Tell the browser never to cache anything from the dev server, so a
+    // page reload always shows the latest code instead of a stale copy.
+    headers: {
+      'Cache-Control': 'no-store',
+    },
     // Send any /api request to the FastAPI backend dev server.
     // 127.0.0.1 (not localhost) avoids IPv6 lookup problems on Windows.
     proxy: {
       '/api': 'http://127.0.0.1:8000',
+    },
+  },
+  // Same no-cache rule for "npm run preview", which serves the built
+  // production bundle locally.
+  preview: {
+    headers: {
+      'Cache-Control': 'no-store',
     },
   },
 })
