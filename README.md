@@ -1,6 +1,6 @@
 # Surplus: A Local Produce Exchange
 
-This is Team 4's project for ICS 613: Surplus, a local produce exchange.
+This is Team 4's project for ICS 613: "Surplus", a local produce exchange.
 
 You can see the live site at https://localharvest.exchange/.
 
