@@ -77,6 +77,9 @@ function HomePage() {
       <p>
         <Link to="/about">Go to about page</Link>
       </p>
+      <p>
+        <Link to="/register">Go to register page</Link>
+      </p>
       <button onClick={handleGoodClick}>Call backend API with valid JSON</button>
       <button onClick={handleBadClick}>Call backend API with wrong type</button>
       <button onClick={handleMalformedClick}>Call backend API with malformed JSON</button>

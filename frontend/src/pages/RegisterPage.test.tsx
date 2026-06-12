@@ -1,0 +1,224 @@
+// @vitest-environment jsdom
+
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { MemoryRouter, Route, Routes } from 'react-router'
+import { afterEach, expect, test, vi } from 'vitest'
+
+import RegisterPage from './RegisterPage'
+
+type FakeResponse = {
+  ok: boolean
+  status: number
+  text: () => Promise<string>
+}
+
+// Unmount components and restore the real fetch after every test,
+// so one test cannot leak into the next.
+afterEach(() => {
+  cleanup()
+  vi.unstubAllGlobals()
+  window.localStorage.clear()
+})
+
+// Renders the register page plus a stand-in /login route. The stand-in
+// exists only so a test can prove the success redirect went to /login.
+// In the real app /login has no route yet and falls through to the
+// catch-all 404 page.
+function renderRegisterPage() {
+  render(
+    <MemoryRouter initialEntries={['/register']}>
+      <Routes>
+        <Route path="/register" element={<RegisterPage />} />
+        <Route path="/login" element={<div>login page</div>} />
+      </Routes>
+    </MemoryRouter>,
+  )
+}
+
+// Builds a fake fetch result with only the members the service reads.
+function makeFakeResponse(ok: boolean, status: number, body: object): FakeResponse {
+  const bodyText = JSON.stringify(body)
+  const fakeResponse = {
+    ok: ok,
+    status: status,
+    text: async () => {
+      return bodyText
+    },
+  }
+  return fakeResponse
+}
+
+function fillForm(name: string, email: string, password: string, inviteToken: string) {
+  fireEvent.change(screen.getByLabelText('Name'), { target: { value: name } })
+  fireEvent.change(screen.getByLabelText('Email'), { target: { value: email } })
+  fireEvent.change(screen.getByLabelText('Password'), { target: { value: password } })
+  fireEvent.change(screen.getByLabelText('Invite token'), { target: { value: inviteToken } })
+}
+
+function submitForm() {
+  fireEvent.click(screen.getByRole('button', { name: 'Register' }))
+}
+
+test('shows the four inputs and the submit button', () => {
+  renderRegisterPage()
+
+  expect(screen.getByLabelText('Name')).toBeTruthy()
+  expect(screen.getByLabelText('Email')).toBeTruthy()
+  expect(screen.getByLabelText('Password')).toBeTruthy()
+  expect(screen.getByLabelText('Invite token')).toBeTruthy()
+  expect(screen.getByRole('button', { name: 'Register' })).toBeTruthy()
+})
+
+test('redirects to /login after a successful registration', async () => {
+  const responseBody = {
+    id: 'a4c135d8-0000-0000-0000-000000000000',
+    name: 'New Person',
+    email: 'new@example.com',
+  }
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, responseBody)
+  })
+
+  renderRegisterPage()
+  fillForm('New Person', 'new@example.com', 'password123', 'tok-1')
+  submitForm()
+
+  // findByText waits for the navigation that follows the fake fetch.
+  const loginMarker = await screen.findByText('login page')
+  expect(loginMarker).toBeTruthy()
+})
+
+test('writes nothing to localStorage on a successful registration', async () => {
+  const responseBody = {
+    id: 'a4c135d8-0000-0000-0000-000000000000',
+    name: 'New Person',
+    email: 'new@example.com',
+  }
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, responseBody)
+  })
+
+  renderRegisterPage()
+  fillForm('New Person', 'new@example.com', 'password123', 'tok-1')
+  submitForm()
+
+  await screen.findByText('login page')
+  expect(window.localStorage.length).toBe(0)
+})
+
+test('shows the backend message on a 400 bad-token response', async () => {
+  const responseBody = {
+    detail: 'Invalid or already-used invite token.',
+  }
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(false, 400, responseBody)
+  })
+
+  renderRegisterPage()
+  fillForm('New Person', 'new@example.com', 'password123', 'bad-token')
+  submitForm()
+
+  const errorArea = await screen.findByRole('alert')
+  expect(errorArea.textContent).toBe('Invalid or already-used invite token.')
+  expect(screen.queryByText('login page')).toBeNull()
+})
+
+test('shows the backend message on a 409 duplicate-email response', async () => {
+  const responseBody = {
+    detail: 'An account with that email already exists.',
+  }
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(false, 409, responseBody)
+  })
+
+  renderRegisterPage()
+  fillForm('New Person', 'alice@example.com', 'password123', 'tok-1')
+  submitForm()
+
+  const errorArea = await screen.findByRole('alert')
+  expect(errorArea.textContent).toBe('An account with that email already exists.')
+  expect(screen.queryByText('login page')).toBeNull()
+})
+
+test('shows the fixed message when a 422 returns a list of field errors', async () => {
+  const responseBody = {
+    detail: [{ type: 'string_too_short', loc: ['body', 'password'] }],
+  }
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(false, 422, responseBody)
+  })
+
+  renderRegisterPage()
+  fillForm('New Person', 'new@example.com', 'short', 'tok-1')
+  submitForm()
+
+  const errorArea = await screen.findByRole('alert')
+  expect(errorArea.textContent).toBe('Please check your entries and try again.')
+  expect(screen.queryByText('login page')).toBeNull()
+})
+
+test('shows a fallback message when the error body has no detail', async () => {
+  vi.stubGlobal('fetch', async () => {
+    const fakeResponse = {
+      ok: false,
+      status: 502,
+      text: async () => {
+        return 'Bad Gateway'
+      },
+    }
+    return fakeResponse
+  })
+
+  renderRegisterPage()
+  fillForm('New Person', 'new@example.com', 'password123', 'tok-1')
+  submitForm()
+
+  const errorArea = await screen.findByRole('alert')
+  expect(errorArea.textContent).toBe('Registration failed (HTTP 502).')
+})
+
+test('shows the transport error message when the request times out', async () => {
+  vi.stubGlobal('fetch', async () => {
+    // The same exception a real AbortSignal.timeout produces.
+    throw new DOMException('The operation timed out.', 'TimeoutError')
+  })
+
+  renderRegisterPage()
+  fillForm('New Person', 'new@example.com', 'password123', 'tok-1')
+  submitForm()
+
+  const errorArea = await screen.findByRole('alert')
+  expect(errorArea.textContent).toContain('Timeout: no answer from the backend')
+})
+
+test('blocks an empty form without calling fetch', async () => {
+  let fetchCallCount = 0
+  vi.stubGlobal('fetch', async () => {
+    fetchCallCount = fetchCallCount + 1
+    return makeFakeResponse(true, 200, {})
+  })
+
+  renderRegisterPage()
+  submitForm()
+
+  const errorArea = await screen.findByRole('alert')
+  expect(errorArea.textContent).toBe('Please fill in every field.')
+  expect(fetchCallCount).toBe(0)
+  expect(screen.queryByText('login page')).toBeNull()
+})
+
+test('blocks a whitespace-only field without calling fetch', async () => {
+  let fetchCallCount = 0
+  vi.stubGlobal('fetch', async () => {
+    fetchCallCount = fetchCallCount + 1
+    return makeFakeResponse(true, 200, {})
+  })
+
+  renderRegisterPage()
+  fillForm('   ', 'new@example.com', 'password123', 'tok-1')
+  submitForm()
+
+  const errorArea = await screen.findByRole('alert')
+  expect(errorArea.textContent).toBe('Please fill in every field.')
+  expect(fetchCallCount).toBe(0)
+})

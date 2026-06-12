@@ -59,6 +59,13 @@ async function waitForStateUpdates() {
   })
 }
 
+test('shows a link to the register page', () => {
+  renderHomePage()
+  const registerLink = screen.getByRole('link', { name: 'Go to register page' })
+
+  expect(registerLink.getAttribute('href')).toBe('/register')
+})
+
 test('shows a placeholder before any button is clicked', () => {
   renderHomePage()
   const heading = screen.getByRole('heading', { name: 'ICS 613 Team 4: Homepage' })

@@ -5,7 +5,6 @@
 #   npm run db:seed
 # Safe to run more than once: it does nothing when data is already there.
 
-import hashlib
 import sys
 
 from sqlalchemy import select
@@ -13,6 +12,7 @@ from sqlalchemy import select
 from app.db import SessionLocal
 from app.models.member import InviteToken, Member, MemberProfile
 from app.models.sample_data import SampleData
+from app.security import hash_invite_token
 
 # All seed members use "password" as their password.
 _HASHES = [
@@ -24,10 +24,6 @@ _HASHES = [
 
 # Plaintext for the pending demo invite token — shown once at seed time.
 _PENDING_TOKEN_PLAINTEXT = "demo-invite-pending-abc123"
-
-
-def _token_hash(plaintext: str) -> str:
-    return hashlib.sha256(plaintext.encode()).hexdigest()
 
 
 def seed_database():
@@ -62,14 +58,14 @@ def seed_database():
         # One pending token (usable in the registration flow)
         session.add(InviteToken(
             created_by=alice.id,
-            token_hash=_token_hash(_PENDING_TOKEN_PLAINTEXT),
+            token_hash=hash_invite_token(_PENDING_TOKEN_PLAINTEXT),
             status="pending",
         ))
         # One already-used token (Bob used it)
         session.add(InviteToken(
             created_by=alice.id,
             used_by=bob.id,
-            token_hash=_token_hash("demo-invite-used-xyz789"),
+            token_hash=hash_invite_token("demo-invite-used-xyz789"),
             status="used",
         ))
 
