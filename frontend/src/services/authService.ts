@@ -1,4 +1,4 @@
-// API calls for registration.
+// API calls for registration, login, and logout.
 
 export const authTimeoutMilliseconds = 3000
 
@@ -54,6 +54,103 @@ export async function sendRegisterRequest(
   } catch (caughtError) {
     // Without this catch, a timeout or network failure would print
     // "Uncaught (in promise)" in the console instead of showing on the page.
+    let errorMessage: string
+    if (caughtError instanceof DOMException && caughtError.name === 'TimeoutError') {
+      errorMessage =
+        'Timeout: no answer from the backend after ' + authTimeoutMilliseconds + ' ms.'
+    } else {
+      errorMessage = 'Request failed: ' + String(caughtError)
+    }
+
+    return {
+      ok: false,
+      status: 0,
+      data: '',
+      errorMessage: errorMessage,
+    }
+  }
+}
+
+export async function sendLoginRequest(
+  email: string,
+  password: string,
+): Promise<AuthResult> {
+  const requestBody = {
+    email: email,
+    password: password,
+  }
+
+  try {
+    const response = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(requestBody),
+      signal: AbortSignal.timeout(authTimeoutMilliseconds),
+    })
+
+    const responseText = await response.text()
+    let data: unknown = ''
+    if (responseText !== '') {
+      try {
+        data = JSON.parse(responseText)
+      } catch {
+        data = responseText
+      }
+    }
+
+    return {
+      ok: response.ok,
+      status: response.status,
+      data: data,
+      errorMessage: '',
+    }
+  } catch (caughtError) {
+    let errorMessage: string
+    if (caughtError instanceof DOMException && caughtError.name === 'TimeoutError') {
+      errorMessage =
+        'Timeout: no answer from the backend after ' + authTimeoutMilliseconds + ' ms.'
+    } else {
+      errorMessage = 'Request failed: ' + String(caughtError)
+    }
+
+    return {
+      ok: false,
+      status: 0,
+      data: '',
+      errorMessage: errorMessage,
+    }
+  }
+}
+
+export async function sendLogoutRequest(): Promise<AuthResult> {
+  try {
+    const response = await fetch('/api/auth/logout', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      signal: AbortSignal.timeout(authTimeoutMilliseconds),
+    })
+
+    const responseText = await response.text()
+    let data: unknown = ''
+    if (responseText !== '') {
+      try {
+        data = JSON.parse(responseText)
+      } catch {
+        data = responseText
+      }
+    }
+
+    return {
+      ok: response.ok,
+      status: response.status,
+      data: data,
+      errorMessage: '',
+    }
+  } catch (caughtError) {
     let errorMessage: string
     if (caughtError instanceof DOMException && caughtError.name === 'TimeoutError') {
       errorMessage =

@@ -1,6 +1,9 @@
-# Registration endpoint. A guest redeems a pending invite token to create
+# Auth endpoints: registration, login, and logout. A guest redeems a pending
+# invite token to create a member account. A registered member logs in with
 # a member account. Pydantic validates the body shape first; this function
 # then normalizes the values and applies its own checks before any write.
+# Login verifies the credentials and returns the member info.
+# Logout is a thin endpoint that returns 200.
 
 import logging
 from datetime import datetime, timezone
@@ -12,8 +15,8 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db_session
 from app.models.member import InviteToken, Member, MemberProfile
-from app.schemas.auth import RegisterRequest, RegisterResponse
-from app.security import hash_invite_token, hash_password
+from app.schemas.auth import LoginRequest, LoginResponse, RegisterRequest, RegisterResponse
+from app.security import hash_invite_token, hash_password, verify_password
 
 logger = logging.getLogger(__name__)
 
@@ -111,3 +114,50 @@ def register(
         name=name,
         email=email,
     )
+
+
+@router.post("/auth/login")
+def login(
+    payload: LoginRequest,
+    session: Session = Depends(get_db_session),
+) -> LoginResponse:
+    # Normalize the email before the lookup.
+    email = payload.email.strip().lower()
+
+    try:
+        member_query = select(Member).where(Member.email == email)
+        member = session.scalars(member_query).first()
+    except Exception as error:
+        logger.error("Login lookup failed: %s", error)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Could not log in right now. "
+                "Make sure the database is running and migrated: "
+                "npm run db:up, then npm run db:migrate, then npm run db:seed."
+            ),
+        )
+
+    if member is None:
+        raise HTTPException(status_code=401, detail="Invalid email or password.")
+
+    if not verify_password(payload.password, member.password_hash):
+        raise HTTPException(status_code=401, detail="Invalid email or password.")
+
+    if member.status == "suspended":
+        raise HTTPException(status_code=403, detail="Your account is suspended.")
+
+    return LoginResponse(
+        id=str(member.id),
+        name=member.name,
+        email=member.email,
+        status=member.status,
+    )
+
+
+@router.post("/auth/logout")
+def logout() -> dict:
+    # The frontend clears its own session state. This endpoint exists so
+    # there is a clear API contract and so server-side session invalidation
+    # can be added later without changing the frontend call.
+    return {"detail": "Logged out."}

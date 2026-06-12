@@ -1,6 +1,11 @@
 import { afterEach, expect, test, vi } from 'vitest'
 
-import { authTimeoutMilliseconds, sendRegisterRequest } from './authService'
+import {
+  authTimeoutMilliseconds,
+  sendLoginRequest,
+  sendLogoutRequest,
+  sendRegisterRequest,
+} from './authService'
 
 type FakeResponse = {
   ok: boolean
@@ -23,6 +28,8 @@ function makeFakeResponse(ok: boolean, status: number, bodyText: string): FakeRe
   }
   return fakeResponse
 }
+
+// --- sendRegisterRequest tests ---
 
 test('posts the registration JSON and parses a JSON response', async () => {
   const responseBody = {
@@ -126,3 +133,125 @@ test('returns a request failure message when fetch rejects', async () => {
   expect(result.status).toBe(0)
   expect(result.errorMessage).toBe('Request failed: TypeError: Failed to fetch')
 })
+
+// --- sendLoginRequest tests ---
+
+test('posts the login JSON and parses a JSON response', async () => {
+  const responseBody = {
+    id: 'a4c135d8-0000-0000-0000-000000000000',
+    name: 'Alice Admin',
+    email: 'alice@example.com',
+    status: 'active',
+  }
+  let requestUrl = ''
+  let requestOptions: RequestInit = {}
+  vi.stubGlobal('fetch', async (url: string | URL | Request, options: RequestInit | undefined) => {
+    requestUrl = String(url)
+    if (options !== undefined) {
+      requestOptions = options
+    }
+    return makeFakeResponse(true, 200, JSON.stringify(responseBody))
+  })
+
+  const result = await sendLoginRequest('alice@example.com', 'password')
+
+  expect(result.ok).toBe(true)
+  expect(result.status).toBe(200)
+  expect(JSON.stringify(result.data)).toBe(JSON.stringify(responseBody))
+  expect(result.errorMessage).toBe('')
+  expect(requestUrl).toBe('/api/auth/login')
+  expect(requestOptions.method).toBe('POST')
+  expect(JSON.stringify(requestOptions.headers)).toContain('application/json')
+  expect(requestOptions.signal).toBeTruthy()
+
+  const sentBody = JSON.parse(String(requestOptions.body))
+  expect(sentBody.email).toBe('alice@example.com')
+  expect(sentBody.password).toBe('password')
+})
+
+test('maps a login 401 error into the result object', async () => {
+  const responseBody = {
+    detail: 'Invalid email or password.',
+  }
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(false, 401, JSON.stringify(responseBody))
+  })
+
+  const result = await sendLoginRequest('alice@example.com', 'wrong')
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(401)
+  expect(JSON.stringify(result.data)).toBe(JSON.stringify(responseBody))
+  expect(result.errorMessage).toBe('')
+})
+
+test('maps a login 403 suspension error into the result object', async () => {
+  const responseBody = {
+    detail: 'Your account is suspended.',
+  }
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(false, 403, JSON.stringify(responseBody))
+  })
+
+  const result = await sendLoginRequest('suspended@example.com', 'password')
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(403)
+  expect(JSON.stringify(result.data)).toBe(JSON.stringify(responseBody))
+  expect(result.errorMessage).toBe('')
+})
+
+test('returns a timeout message when login fetch times out', async () => {
+  vi.stubGlobal('fetch', async () => {
+    throw new DOMException('The operation timed out.', 'TimeoutError')
+  })
+
+  const result = await sendLoginRequest('alice@example.com', 'password')
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(0)
+  expect(result.errorMessage).toBe(
+    'Timeout: no answer from the backend after ' + authTimeoutMilliseconds + ' ms.',
+  )
+})
+
+// --- sendLogoutRequest tests ---
+
+test('posts to the logout endpoint and parses the response', async () => {
+  const responseBody = {
+    detail: 'Logged out.',
+  }
+  let requestUrl = ''
+  let requestOptions: RequestInit = {}
+  vi.stubGlobal('fetch', async (url: string | URL | Request, options: RequestInit | undefined) => {
+    requestUrl = String(url)
+    if (options !== undefined) {
+      requestOptions = options
+    }
+    return makeFakeResponse(true, 200, JSON.stringify(responseBody))
+  })
+
+  const result = await sendLogoutRequest()
+
+  expect(result.ok).toBe(true)
+  expect(result.status).toBe(200)
+  expect(JSON.stringify(result.data)).toBe(JSON.stringify(responseBody))
+  expect(result.errorMessage).toBe('')
+  expect(requestUrl).toBe('/api/auth/logout')
+  expect(requestOptions.method).toBe('POST')
+})
+
+test('returns a timeout message when logout fetch times out', async () => {
+  vi.stubGlobal('fetch', async () => {
+    throw new DOMException('The operation timed out.', 'TimeoutError')
+  })
+
+  const result = await sendLogoutRequest()
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(0)
+  expect(result.errorMessage).toBe(
+    'Timeout: no answer from the backend after ' + authTimeoutMilliseconds + ' ms.',
+  )
+})
+

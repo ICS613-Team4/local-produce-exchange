@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import { Link } from 'react-router'
 
 import { sendSampleEndpointRequest } from '../services/sampleEndpointService'
+import { sendLogoutRequest } from '../services/authService'
 import { formatApiResult } from '../utils/formatApiResult'
 
 function HomePage() {
@@ -13,6 +14,11 @@ function HomePage() {
 
   // Holds the text of the latest backend response. Starts empty.
   const [apiResult, setApiResult] = useState('')
+
+  // Track whether a member is logged in by reading localStorage.
+  const [memberName, setMemberName] = useState(
+    window.localStorage.getItem('memberName') ?? '',
+  )
 
   // Sends one POST to the sample endpoint and saves the response for display.
   // bodyText must already be a JSON string.
@@ -58,6 +64,14 @@ function HomePage() {
     await sendToSampleEndpoint(brokenJsonText)
   }
 
+  async function handleLogout() {
+    await sendLogoutRequest()
+    window.localStorage.removeItem('memberId')
+    window.localStorage.removeItem('memberName')
+    window.localStorage.removeItem('memberEmail')
+    setMemberName('')
+  }
+
   // Decide what the request box should show.
   let requestDisplayText = apiRequest
   if (requestDisplayText === '') {
@@ -70,6 +84,23 @@ function HomePage() {
     responseDisplayText = 'No response yet. Click a button above.'
   }
 
+  // Show login or logout depending on whether a member is logged in.
+  let authArea
+  if (memberName !== '') {
+    authArea = (
+      <p>
+        Logged in as {memberName}.{' '}
+        <button onClick={handleLogout}>Log out</button>
+      </p>
+    )
+  } else {
+    authArea = (
+      <p>
+        <Link to="/login">Go to login page</Link>
+      </p>
+    )
+  }
+
   return (
     <>
       <h1>ICS 613 Team 4: Homepage</h1>
@@ -80,6 +111,7 @@ function HomePage() {
       <p>
         <Link to="/register">Go to register page</Link>
       </p>
+      {authArea}
       <button onClick={handleGoodClick}>Call backend API with valid JSON</button>
       <button onClick={handleBadClick}>Call backend API with wrong type</button>
       <button onClick={handleMalformedClick}>Call backend API with malformed JSON</button>
@@ -96,3 +128,4 @@ function HomePage() {
 }
 
 export default HomePage
+
