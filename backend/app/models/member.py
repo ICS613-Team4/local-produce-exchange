@@ -2,8 +2,7 @@ import uuid
 from datetime import datetime
 from typing import List, Optional
 
-from sqlalchemy import Enum as SAEnum
-from sqlalchemy import ForeignKey, Text, TIMESTAMP
+from sqlalchemy import Enum as SAEnum, ForeignKey, text, Text, TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -26,7 +25,7 @@ class Member(Base):
         server_default="member",
     )
     suspended_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP(timezone=True))
-    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default="now()")
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=text("CURRENT_TIMESTAMP"))
 
     profile: Mapped[Optional["MemberProfile"]] = relationship(
         back_populates="member",
