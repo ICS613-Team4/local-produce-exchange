@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router'
+import { Link, useNavigate } from 'react-router'
 
 import { sendRegisterRequest } from '../services/authService'
 import { formatApiResult } from '../utils/formatApiResult'
@@ -107,6 +107,9 @@ function RegisterPage() {
   return (
     <>
       <h1>Register</h1>
+      <p>
+        <Link to="/">Go to home page</Link>
+      </p>
       <p>Create your member account with the invite token you received.</p>
       <form onSubmit={handleSubmit}>
         <p>
@@ -134,6 +137,10 @@ function RegisterPage() {
             value={inviteToken}
             onChange={handleInviteTokenChange}
           />
+        </p>
+        <p>
+          For testing, use invite token: <code>demo-invite-pending-abc123</code>{' '}
+          (one time use)
         </p>
         <button type="submit">Register</button>
       </form>
