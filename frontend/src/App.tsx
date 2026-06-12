@@ -1,6 +1,7 @@
 import { BrowserRouter, Route, Routes } from 'react-router'
 import AboutPage from './pages/AboutPage.tsx'
 import HomePage from './pages/HomePage.tsx'
+import NotFoundPage from './pages/NotFoundPage.tsx'
 
 function App() {
   return (
@@ -8,6 +9,10 @@ function App() {
       <Routes>
         <Route path="/" element={<HomePage />} />
         <Route path="/about" element={<AboutPage />} />
+        {/* The "*" path matches only when no route above does, so every
+            unknown URL (including /login until US-02 adds a real login
+            route) shows the not-found page instead of a blank screen. */}
+        <Route path="*" element={<NotFoundPage />} />
       </Routes>
     </BrowserRouter>
   )
