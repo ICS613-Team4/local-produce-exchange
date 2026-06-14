@@ -217,3 +217,28 @@ test('does not store anything in localStorage on a failed login', async () => {
   await screen.findByRole('alert')
   expect(window.localStorage.length).toBe(0)
 })
+
+// --- US-04: registration success message after a redirect ---
+
+test('shows the registration success message when redirected after registering', () => {
+  // RegisterPage redirects here with this one-time flag in the navigation
+  // state, so the message should appear above the form.
+  render(
+    <MemoryRouter initialEntries={[{ pathname: '/login', state: { justRegistered: true } }]}>
+      <Routes>
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/" element={<div>home page</div>} />
+      </Routes>
+    </MemoryRouter>,
+  )
+
+  const message = screen.getByText('Your account was created. Please log in.')
+  expect(message).toBeTruthy()
+})
+
+test('does not show the registration success message without that state', () => {
+  // A plain visit to /login carries no such state, so no message shows.
+  renderLoginPage()
+
+  expect(screen.queryByText('Your account was created. Please log in.')).toBeNull()
+})

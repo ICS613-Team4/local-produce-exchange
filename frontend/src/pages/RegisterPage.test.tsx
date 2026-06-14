@@ -222,3 +222,29 @@ test('blocks a whitespace-only field without calling fetch', async () => {
   expect(errorArea.textContent).toBe('Please fill in every field.')
   expect(fetchCallCount).toBe(0)
 })
+
+// --- US-04: invite token prefilled from a shared link ---
+
+test('prefills the invite token from the token query parameter', () => {
+  // A shared invite link carries the token in the URL, like the link the
+  // invite page builds. The field should start filled with that value.
+  render(
+    <MemoryRouter initialEntries={['/register?token=shared-token-xyz']}>
+      <Routes>
+        <Route path="/register" element={<RegisterPage />} />
+        <Route path="/login" element={<div>login page</div>} />
+      </Routes>
+    </MemoryRouter>,
+  )
+
+  const tokenField = screen.getByLabelText('Invite token') as HTMLInputElement
+  expect(tokenField.value).toBe('shared-token-xyz')
+})
+
+test('leaves the invite token empty when there is no token parameter', () => {
+  // No token in the URL means the field behaves exactly as it did before.
+  renderRegisterPage()
+
+  const tokenField = screen.getByLabelText('Invite token') as HTMLInputElement
+  expect(tokenField.value).toBe('')
+})

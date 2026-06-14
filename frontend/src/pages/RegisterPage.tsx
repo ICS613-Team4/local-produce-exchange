@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link, useNavigate } from 'react-router'
+import { Link, useNavigate, useSearchParams } from 'react-router'
 
 import { sendRegisterRequest } from '../services/authService'
 import { formatApiResult } from '../utils/formatApiResult'
@@ -9,10 +9,17 @@ function RegisterPage() {
   // not inside the submit handler.
   const navigate = useNavigate()
 
+  // A shared invite link looks like /register?token=abc123. Read that token
+  // from the URL and use it as the starting value of the invite-token field,
+  // so a friend who clicked the link sees the field already filled in. When
+  // there is no token in the URL, the field starts empty as before.
+  const [searchParams] = useSearchParams()
+  const tokenFromLink = searchParams.get('token') ?? ''
+
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [inviteToken, setInviteToken] = useState('')
+  const [inviteToken, setInviteToken] = useState(tokenFromLink)
 
   // Holds the message shown in the error area. Empty means no error.
   const [errorMessage, setErrorMessage] = useState('')
@@ -54,10 +61,12 @@ function RegisterPage() {
     const result = await sendRegisterRequest(trimmedName, trimmedEmail, password, trimmedToken)
 
     if (result.ok) {
-      // The account exists now. Send the user to the login page. No
-      // session is started and nothing is written to localStorage;
-      // logging in arrives in US-02.
-      navigate('/login')
+      // The account exists now. Send the user to the login page and pass a
+      // one-time flag so that page can show a success message. The flag
+      // travels with this redirect but clears on a manual refresh, which is
+      // what a one-time message should do. No session is started and nothing
+      // is written to localStorage; logging in happens on the next page.
+      navigate('/login', { state: { justRegistered: true } })
       return
     }
 

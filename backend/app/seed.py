@@ -3,7 +3,16 @@
 #   npm run db:migrate
 # Then run this with:
 #   npm run db:seed
-# Safe to run more than once: it does nothing when data is already there.
+#
+# Safe to run more than once. Each group of demo rows checks its own
+# table on its own: if that table is empty the rows are inserted, and if
+# the table already has rows that group is skipped. So if some demo rows
+# get deleted later (even on production), the next run puts back only the
+# groups that are missing and leaves the groups that are still there
+# alone. This is different from the old version, which decided whether to
+# seed anything at all by looking at just one table (sample_data), so a
+# table added later never got its demo rows on a database that already
+# had sample rows.
 
 import sys
 
@@ -22,56 +31,117 @@ _HASHES = [
     "$2b$12$D87RT4vw8S19Gl4PSo1Ck.JqLJxoPcpWVLlj.d0wuzSjaG99vCVk2",
 ]
 
-# Plaintext for the pending demo invite token — shown once at seed time.
+# Plaintext for the pending demo invite token - shown once at seed time.
 _PENDING_TOKEN_PLAINTEXT = "demo-invite-pending-abc123"
+
+
+def table_is_empty(session, model):
+    # Returns True when the given table has no rows yet.
+    first_row = session.scalars(select(model)).first()
+    if first_row is None:
+        return True
+    return False
+
+
+def find_member_by_email(session, email):
+    # Looks up a member by their unique email. Profiles and invite tokens
+    # point at members by id, so we find the member here instead of
+    # assuming it was created earlier in this same run.
+    statement = select(Member).where(Member.email == email)
+    member = session.scalars(statement).first()
+    return member
+
+
+def seed_sample_data(session):
+    if not table_is_empty(session, SampleData):
+        print("Sample data already present. Skipping sample rows.")
+        return
+
+    session.add(SampleData(slug="manoa-lettuce", name="Manoa Lettuce", note="Crisp green lettuce grown in Manoa Valley."))
+    session.add(SampleData(slug="apple-bananas", name="Apple Bananas", note="Small sweet bananas, a Hawaii favorite."))
+    session.add(SampleData(slug="kahuku-corn",   name="Kahuku Corn",   note="Sweet corn from the North Shore."))
+    print("Inserted 3 sample rows.")
+
+
+def seed_members(session):
+    if not table_is_empty(session, Member):
+        print("Members already present. Skipping members.")
+        return
+
+    alice = Member(name="Alice Admin", email="alice@example.com", password_hash=_HASHES[0], role="admin")
+    bob   = Member(name="Bob Baker",   email="bob@example.com",   password_hash=_HASHES[1])
+    carol = Member(name="Carol Chen",  email="carol@example.com", password_hash=_HASHES[2])
+    dave  = Member(name="Dave Diaz",   email="dave@example.com",  password_hash=_HASHES[3])
+
+    session.add_all([alice, bob, carol, dave])
+    print("Inserted 4 members.")
+
+
+def seed_profiles(session):
+    if not table_is_empty(session, MemberProfile):
+        print("Member profiles already present. Skipping profiles.")
+        return
+
+    # Look each member up by email. If members were just inserted above
+    # and not flushed yet, this query flushes them first, so they have
+    # their ids by the time we read them.
+    alice = find_member_by_email(session, "alice@example.com")
+    bob = find_member_by_email(session, "bob@example.com")
+    carol = find_member_by_email(session, "carol@example.com")
+    dave = find_member_by_email(session, "dave@example.com")
+
+    if alice is not None:
+        session.add(MemberProfile(member_id=alice.id, display_name="Alice", neighborhood="Manoa", contact_preference="email"))
+    if bob is not None:
+        session.add(MemberProfile(member_id=bob.id, display_name="Bob", neighborhood="Kaimuki", contact_preference="message"))
+    if carol is not None:
+        session.add(MemberProfile(member_id=carol.id, display_name="Carol", neighborhood="Kailua", contact_preference="either"))
+    if dave is not None:
+        session.add(MemberProfile(member_id=dave.id, display_name="Dave", neighborhood="Pearl City"))
+    print("Inserted member profiles.")
+
+
+def seed_invite_tokens(session):
+    if not table_is_empty(session, InviteToken):
+        print("Invite tokens already present. Skipping invite tokens.")
+        return
+
+    # Both demo tokens are tied to seed members, so we need Alice (the
+    # creator) and Bob (who used one). If the seed members are missing,
+    # skip the tokens rather than insert a broken reference.
+    alice = find_member_by_email(session, "alice@example.com")
+    bob = find_member_by_email(session, "bob@example.com")
+    if alice is None or bob is None:
+        print("Seed members are missing, so invite tokens were skipped.")
+        return
+
+    # One pending token (usable in the registration flow).
+    session.add(InviteToken(
+        created_by=alice.id,
+        token_hash=hash_invite_token(_PENDING_TOKEN_PLAINTEXT),
+        status="pending",
+    ))
+    # One already-used token (Bob used it).
+    session.add(InviteToken(
+        created_by=alice.id,
+        used_by=bob.id,
+        token_hash=hash_invite_token("demo-invite-used-xyz789"),
+        status="used",
+    ))
+    print("Inserted 2 invite tokens.")
+    print(f"Pending invite token (use this to register): {_PENDING_TOKEN_PLAINTEXT}")
 
 
 def seed_database():
     session = SessionLocal()
     try:
-        existing_row = session.scalars(select(SampleData)).first()
-        if existing_row is not None:
-            print("Sample data is already present. Nothing to do.")
-            return
-
-        # --- sample_data rows (existing demo) ---
-        session.add(SampleData(slug="manoa-lettuce", name="Manoa Lettuce", note="Crisp green lettuce grown in Manoa Valley."))
-        session.add(SampleData(slug="apple-bananas", name="Apple Bananas", note="Small sweet bananas, a Hawaii favorite."))
-        session.add(SampleData(slug="kahuku-corn",   name="Kahuku Corn",   note="Sweet corn from the North Shore."))
-
-        # --- members ---
-        alice = Member(name="Alice Admin",  email="alice@example.com",  password_hash=_HASHES[0], role="admin")
-        bob   = Member(name="Bob Baker",    email="bob@example.com",    password_hash=_HASHES[1])
-        carol = Member(name="Carol Chen",   email="carol@example.com",  password_hash=_HASHES[2])
-        dave  = Member(name="Dave Diaz",    email="dave@example.com",   password_hash=_HASHES[3])
-
-        session.add_all([alice, bob, carol, dave])
-        session.flush()
-
-        # --- profiles ---
-        session.add(MemberProfile(member_id=alice.id, display_name="Alice",  neighborhood="Manoa",       contact_preference="email"))
-        session.add(MemberProfile(member_id=bob.id,   display_name="Bob",    neighborhood="Kaimuki",     contact_preference="message"))
-        session.add(MemberProfile(member_id=carol.id, display_name="Carol",  neighborhood="Kailua",      contact_preference="either"))
-        session.add(MemberProfile(member_id=dave.id,  display_name="Dave",   neighborhood="Pearl City"))
-
-        # --- invite tokens ---
-        # One pending token (usable in the registration flow)
-        session.add(InviteToken(
-            created_by=alice.id,
-            token_hash=hash_invite_token(_PENDING_TOKEN_PLAINTEXT),
-            status="pending",
-        ))
-        # One already-used token (Bob used it)
-        session.add(InviteToken(
-            created_by=alice.id,
-            used_by=bob.id,
-            token_hash=hash_invite_token("demo-invite-used-xyz789"),
-            status="used",
-        ))
-
+        # Order matters: members come before profiles and invite tokens,
+        # because those two point back at members.
+        seed_sample_data(session)
+        seed_members(session)
+        seed_profiles(session)
+        seed_invite_tokens(session)
         session.commit()
-        print("Inserted seed data: 3 sample rows, 4 members, 4 profiles, 2 invite tokens.")
-        print(f"Pending invite token (use this to register): {_PENDING_TOKEN_PLAINTEXT}")
     finally:
         session.close()
 
