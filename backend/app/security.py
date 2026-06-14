@@ -15,6 +15,11 @@ def hash_password(plain_password: str) -> str:
     return hashed_bytes.decode("utf-8")
 
 
+def verify_password(plain_password: str, hashed: str) -> bool:
+    # Returns True when the plaintext matches the stored bcrypt hash.
+    return bcrypt.checkpw(plain_password.encode("utf-8"), hashed.encode("utf-8"))
+
+
 def hash_invite_token(plaintext: str) -> str:
     # Invite tokens are stored as a sha256 hash, never as plaintext.
     # The seed script and the registration route both use this function,

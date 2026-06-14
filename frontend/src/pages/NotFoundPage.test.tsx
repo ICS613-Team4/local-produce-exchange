@@ -27,13 +27,11 @@ test('an unknown URL renders the not-found page with a home link', () => {
   expect(homeLink.getAttribute('href')).toBe('/')
 })
 
-test('/login renders the not-found page because no login route exists yet', () => {
-  // US-02 will add the real /login route. Until then /login falls through
-  // to the catch-all, and this test documents that.
+test('/login renders the login page now that US-02 is implemented', () => {
   window.history.pushState({}, '', '/login')
   render(<App />)
 
-  const heading = screen.getByRole('heading', { name: 'Page not found' })
+  const heading = screen.getByRole('heading', { name: 'Log in' })
 
   expect(heading).toBeTruthy()
 })

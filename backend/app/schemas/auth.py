@@ -20,3 +20,17 @@ class RegisterResponse(BaseModel):
     id: str
     name: str
     email: str
+
+
+class LoginRequest(BaseModel):
+    # 254 is the longest a real email address can be (RFC 5321).
+    email: str = Field(min_length=1, max_length=254)
+    password: str = Field(min_length=1)
+
+
+class LoginResponse(BaseModel):
+    id: str
+    name: str
+    email: str
+    status: str
+
