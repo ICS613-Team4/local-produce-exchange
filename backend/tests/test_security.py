@@ -4,7 +4,7 @@ import hashlib
 
 import pytest
 
-from app.security import hash_invite_token, hash_password
+from app.security import generate_invite_token, hash_invite_token, hash_password
 
 
 def test_hash_password_returns_a_non_plaintext_string():
@@ -54,3 +54,16 @@ def test_hash_invite_token_is_deterministic():
     # The registration lookup compares this hash against the stored one,
     # so the same input must always give the same output.
     assert first_hash == second_hash
+
+
+def test_generate_invite_token_returns_a_non_empty_string():
+    token = generate_invite_token()
+    assert isinstance(token, str)
+    assert token != ""
+
+
+def test_generate_invite_token_is_random():
+    first_token = generate_invite_token()
+    second_token = generate_invite_token()
+    # An invite token must be unguessable, so two calls must not repeat.
+    assert first_token != second_token

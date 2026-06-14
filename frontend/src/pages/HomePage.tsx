@@ -90,6 +90,7 @@ function HomePage() {
     authArea = (
       <p>
         Logged in as {memberName}.{' '}
+        <Link to="/invite">Invite a new member</Link>{' '}
         <button onClick={handleLogout}>Log out</button>
       </p>
     )
