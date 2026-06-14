@@ -90,7 +90,14 @@ npm run db
 This runs PostgreSQL in the **foreground**. Like the others, it keeps running so
 you can see the database logs, so leave that terminal open while you work.
 
-To stop it, press Ctrl+C in that same terminal.
+This also starts pgweb, a small web tool for browsing the database. It comes up
+next to PostgreSQL at `http://localhost:8081` with no login. You don't have to
+use it, and you don't have to start anything extra; it's there when you want to
+look at tables or run a read-only query. The two sets of logs share this
+terminal.
+
+To stop it, press Ctrl+C in that same terminal. That stops both PostgreSQL and
+pgweb.
 
 - First Time Setup
 
@@ -112,6 +119,34 @@ To stop it, press Ctrl+C in that same terminal.
   npm run db:migrate
   ```
 
+## Database browser (pgweb)
+
+pgweb is a web page for looking at the database. You can browse tables and run
+SQL in your browser, with no database client to install.
+
+It's read-only, on purpose. pgweb signs in as a database login that can read
+every table but change nothing: PostgreSQL itself rejects any insert, update,
+delete, or schema change it tries. Treat pgweb as a window, not a workbench.
+
+Here's why. Every change to this database, both the table layout and the data,
+goes through an Alembic migration that's committed to source control. That keeps
+each change reviewed, repeatable, and applied the same way on every machine. An
+edit typed into a browser would skip all of that and drift your database away
+from everyone else's. So when you need to change something, write a migration
+(see "Schema Changes" below) instead of reaching for pgweb.
+
+### Locally
+
+There's nothing to set up. When you run `npm run db` (or `npm run db:up`), pgweb
+starts next to PostgreSQL. Open `http://localhost:8081` and it's there, already
+connected to your local database, with no login. That's it.
+
+### In production
+
+The live one is at `https://db.localharvest.exchange`, behind a shared team
+login (the username and password are posted in the team Discord channel, not
+here). Like the local one, it's read-only.
+
 ## npm Scripts
 
 Run any of these from the repo root:
@@ -121,12 +156,13 @@ Run any of these from the repo root:
 | `npm run setup` | Run this for first-time setup. Safe to run again. |
 | `npm run frontend` | Run this to do development work on the frontend. |
 | `npm run backend` | Run this to start the FastAPI backend with auto-reload. |
+| `npm run db` | Start the PostgreSQL and pgweb containers in the **foreground**. Keep this terminal open while you work. pgweb is at `http://localhost:8081`. |
 | `npm run fix:frontend` | Run this if the frontend package install is broken; it reinstalls the frontend packages. |
 | `npm run fix:backend` | Run this if the backend package install is broken; it reinstalls every backend package from scratch. |
-| `npm run db` | Start the PostgreSQL container in the **foreground**. Keep this terminal open while you work. |
-| `npm run db:up` | Start the PostgreSQL container in the **background** and wait until it accepts connections. |
-| `npm run db:down` | Stop and remove the PostgreSQL container; the database volume and its data are kept. |
-| `npm run db:reset` | Stop PostgreSQL and delete the database volume. This removes all local database data. |
+| `npm run fix:db` | The catch-all repair for almost any local problem. Reinstalls the frontend and backend packages, then rebuilds the local database from a clean volume and reseeds it. Heads up: this wipes your local database data. |
+| `npm run db:up` | Start PostgreSQL and pgweb in the **background** and wait until the database accepts connections. |
+| `npm run db:down` | Stop and remove the PostgreSQL and pgweb containers; the database volume and its data are kept. |
+| `npm run db:reset` | Stop the containers and delete the database volume. This removes all local database data. |
 | `npm run db:migrate` | Apply new database migrations. |
 | `npm run db:revision` | Create a new migration after model changes. |
 | `npm run db:seed` | Insert demo seed data when the table is empty. |
@@ -469,14 +505,12 @@ npm run fix:backend
 
 ### Database Issues
 
-Heads up: this wipes your local database data and starts you fresh. To reset and
-seed from a fresh volume:
+Heads up: this wipes your local database data and starts you fresh. To rebuild
+your local database from a clean volume and reseed it, run this from the repo
+root:
 
 ```sh
-npm run db:reset
-npm run db:up
-npm run db:migrate
-npm run db:seed
+npm run fix:db
 ```
 
 ### Astral uv Issues

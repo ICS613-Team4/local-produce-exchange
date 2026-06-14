@@ -1,5 +1,6 @@
-# Runs only PostgreSQL in Docker. The backend and frontend still run
-# natively with npm scripts. Start the database with: npm run db
+# Runs PostgreSQL plus pgweb (a read-only web browser for the database) in
+# Docker. The backend and frontend still run natively with npm scripts. Start
+# everything with: npm run db
 
 services:
   db:
@@ -27,6 +28,83 @@ services:
       interval: 2s
       timeout: 5s
       retries: 15
+
+  # Helper that makes sure the read-only pgweb_ro login exists before
+  # pgweb starts. It runs every time the database comes up, so the role is
+  # created on a brand-new database and is also added to a database that
+  # already existed before pgweb was introduced - with no extra step for
+  # anyone. It connects as the owner role, runs one idempotent SQL file, and
+  # exits.
+  pgweb-init:
+    image: postgres:18.4
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Password for connecting as the owner role to run the setup SQL.
+      PGPASSWORD: ${POSTGRES_PASSWORD:-produce}
+    volumes:
+      - ./scripts/pgweb-readonly-role.sql:/pgweb-readonly-role.sql:ro
+    # ro_pass is the password pgweb will use to sign in as pgweb_ro. Locally it
+    # falls back to a built-in default; production passes its own strong value.
+    entrypoint:
+      - psql
+    command:
+      - -v
+      - ON_ERROR_STOP=1
+      - -v
+      - ro_pass=${PGWEB_DB_PASSWORD:-pgweb_ro}
+      - -h
+      - db
+      - -U
+      - ${POSTGRES_USER:-produce}
+      - -d
+      - ${POSTGRES_DB:-produce_exchange}
+      - -f
+      - /pgweb-readonly-role.sql
+    restart: "no"
+
+  # pgweb is a small web app for browsing the database from a browser. It
+  # starts together with the db container, so a teammate just opens
+  # http://localhost:8081 (no login on localhost). It signs in as the
+  # read-only pgweb_ro login (set up by pgweb-init), so PostgreSQL itself
+  # refuses any write from pgweb. Every real change goes through an Alembic
+  # migration, which connects as the normal owner role, not pgweb_ro.
+  pgweb:
+    image: sosedoff/pgweb:0.17.0
+    environment:
+      # pgweb reaches the db container over Docker's private network, not the
+      # published port, so the host is "db" and the port is 5432. That private
+      # link is not encrypted, so sslmode=disable. The user is the read-only
+      # pgweb_ro login; its password falls back to a local default, so no .env
+      # is needed locally. Production sets PGWEB_DB_PASSWORD in its own .env to
+      # match the pgweb_ro role.
+      PGWEB_DATABASE_URL: postgres://pgweb_ro:${PGWEB_DB_PASSWORD:-pgweb_ro}@db:5432/${POSTGRES_DB:-produce_exchange}?sslmode=disable
+      # Basic-auth login for the web page. Empty on purpose for local dev:
+      # pgweb turns auth off when both are blank, so localhost shows no login
+      # prompt. Production fills these in through its own .env, and the deploy
+      # refuses to start without them.
+      PGWEB_AUTH_USER: ${PGWEB_AUTH_USER:-}
+      PGWEB_AUTH_PASS: ${PGWEB_AUTH_PASS:-}
+    # The image entrypoint already passes --bind and --listen, so we add only
+    # these flags:
+    #   --lock-session  pin the UI to this one connection so it cannot be aimed
+    #                   at another database host.
+    #   --no-ssh        turn off pgweb's "connect over SSH" feature.
+    # Read-only is enforced by the pgweb_ro database login, not by a pgweb flag,
+    # so PostgreSQL is the thing that says no to writes.
+    command: ["--lock-session", "--no-ssh"]
+    ports:
+      # localhost-only, the same pattern as the db service. PGWEB_PORT is a
+      # local-only knob in case 8081 is taken; production stays on 8081.
+      - "127.0.0.1:${PGWEB_PORT:-8081}:8081"
+    depends_on:
+      # Wait for the database to be healthy and for pgweb-init to finish
+      # creating the read-only role before pgweb starts.
+      db:
+        condition: service_healthy
+      pgweb-init:
+        condition: service_completed_successfully
 
 volumes:
   produce_db_data:

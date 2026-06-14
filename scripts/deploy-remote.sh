@@ -22,7 +22,12 @@ fi
 # The same fallback happens one variable at a time: any key missing from
 # .env quietly gets its default. So a present-but-incomplete .env is as
 # dangerous as a missing one. Check that each required key has a value.
-for required_key in POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB POSTGRES_PORT; do
+# The PGWEB_AUTH_* keys (the pgweb web login) and PGWEB_DB_PASSWORD (the
+# password for the read-only pgweb_ro database role) have no safe default, so
+# they are required here too. An empty web login would serve the database with
+# no password; a missing role password would not match the pgweb_ro role on the
+# server. The trailing "." in the grep already rejects an empty value.
+for required_key in POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB POSTGRES_PORT PGWEB_AUTH_USER PGWEB_AUTH_PASS PGWEB_DB_PASSWORD; do
     if ! grep -q "^${required_key}=." "$APP_ROOT/.env"; then
         echo "No ${required_key} value in $APP_ROOT/.env. Refusing to deploy." >&2
         exit 1
@@ -36,6 +41,30 @@ done
 # Make sure the database container matches the compose file and is
 # healthy before anything talks to it. --wait uses the healthcheck.
 docker compose up -d --wait db
+
+# Start the pgweb database browser. It waits on the db healthcheck, so it
+# comes up once the database is ready. pgweb is a non-critical admin tool,
+# so problems here only print a warning; they never fail the deploy. nginx
+# shows a maintenance page whenever pgweb is down.
+docker compose up -d pgweb
+
+# Confirm pgweb is listening, but do not gate the deploy on it. With auth
+# turned on, an unauthenticated probe returns 401, which still proves pgweb
+# is up. A reply of 000 means nothing is listening yet, so retry a few times.
+pgweb_attempt=1
+while [ "$pgweb_attempt" -le 10 ]; do
+    pgweb_status=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8081 || true)
+    if [ "$pgweb_status" != "000" ]; then
+        echo "pgweb is up (HTTP ${pgweb_status})."
+        break
+    fi
+    if [ "$pgweb_attempt" -eq 10 ]; then
+        echo "WARNING: pgweb did not come up; continuing without it." >&2
+        break
+    fi
+    pgweb_attempt=$((pgweb_attempt + 1))
+    sleep 2
+done
 
 # Apply any new database migrations. Alembic reads alembic.ini from this
 # folder, and migrations/env.py connects with the same settings as the
