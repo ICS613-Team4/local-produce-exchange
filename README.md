@@ -74,6 +74,10 @@ npm run backend
 
 The backend runs at `http://127.0.0.1:8000`
 
+FastAPI builds interactive API docs for you. Once the backend is running, open
+`http://127.0.0.1:8000/docs` for the Swagger UI, where you can read every
+endpoint and try them out from the browser.
+
 This one keeps running so you can watch the backend logs, so leave that terminal
 open while you work.
 
