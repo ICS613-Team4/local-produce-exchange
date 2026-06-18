@@ -12,11 +12,12 @@ type FakeResponse = {
   text: () => Promise<string>
 }
 
-// Unmount components and restore the real fetch after every test,
-// so one test cannot leak into the next.
+// Unmount components, restore the real fetch, and clear localStorage after
+// every test, so one test cannot leak into the next.
 afterEach(() => {
   cleanup()
   vi.unstubAllGlobals()
+  window.localStorage.clear()
 })
 
 // Renders the page inside an in-memory router. The Link needs one.
@@ -64,6 +65,17 @@ test('shows a link to the register page', () => {
   const registerLink = screen.getByRole('link', { name: 'Go to register page' })
 
   expect(registerLink.getAttribute('href')).toBe('/register')
+})
+
+test('shows the invite link when a member is logged in', () => {
+  // A logged-in member has a name in localStorage, which switches the auth
+  // area to the logged-in branch that holds the invite link.
+  window.localStorage.setItem('memberName', 'Bob Baker')
+  renderHomePage()
+
+  const inviteLink = screen.getByRole('link', { name: 'Invite a new member' })
+  expect(inviteLink.getAttribute('href')).toBe('/invite')
+  expect(screen.getByRole('button', { name: 'Log out' })).toBeTruthy()
 })
 
 test('shows a placeholder before any button is clicked', () => {

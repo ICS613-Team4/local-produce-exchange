@@ -1,6 +1,8 @@
-# Hashing helpers for passwords and invite tokens.
+# Hashing helpers for passwords and invite tokens, plus a generator that
+# mints a fresh random invite token.
 
 import hashlib
+import secrets
 
 import bcrypt
 
@@ -25,3 +27,10 @@ def hash_invite_token(plaintext: str) -> str:
     # The seed script and the registration route both use this function,
     # so the lookup hash always matches the stored hash.
     return hashlib.sha256(plaintext.encode()).hexdigest()
+
+
+def generate_invite_token() -> str:
+    # Makes a new, hard-to-guess invite token. secrets.token_urlsafe is the
+    # standard library tool for unguessable codes; 32 bytes of randomness is
+    # plenty. The result is URL-safe text, so it drops cleanly into a link.
+    return secrets.token_urlsafe(32)
