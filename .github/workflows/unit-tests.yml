@@ -64,6 +64,30 @@ jobs:
         # so "@v8" fails to resolve and kills the job before any step runs.
         uses: astral-sh/setup-uv@v8.2.0
 
+      # Guard against a platform-pruned lock file. If a teammate runs
+      # "npm install" on Windows (or possibly Mac), npm can drop the optional
+      # package entries that other operating systems need. That pruned lock
+      # might still pass "npm ci" here on Linux while breaking for a teammate on
+      # a different OS, so a plain install step would not always catch it.
+      #
+      # This regenerates the lock from the two manifest files in an empty
+      # directory (the same way "npm run lock" does) and fails if the committed
+      # lock differs. The runner is already Linux on Node 22, so it produces the
+      # canonical lock without Docker. The check is idempotent on a correct lock.
+      - name: Check the frontend lock file is the canonical one
+        run: |
+          mkdir -p "$RUNNER_TEMP/lockcheck"
+          cp frontend/package.json frontend/package-lock.json "$RUNNER_TEMP/lockcheck/"
+          cd "$RUNNER_TEMP/lockcheck"
+          npm install --package-lock-only
+          if ! diff -q "$RUNNER_TEMP/lockcheck/package-lock.json" "$GITHUB_WORKSPACE/frontend/package-lock.json" > /dev/null; then
+            echo "::error::frontend/package-lock.json is not the canonical lock. Run 'npm run lock' on the repo root and commit the result."
+            echo "Lines starting with '<' are in the committed lock; lines starting with '>' are what it should be:"
+            diff "$GITHUB_WORKSPACE/frontend/package-lock.json" "$RUNNER_TEMP/lockcheck/package-lock.json" || true
+            exit 1
+          fi
+          echo "Lock file is the canonical Linux-generated one."
+
       - name: Install dependencies
         run: npm run setup
 
