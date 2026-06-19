@@ -1,11 +1,10 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { MemoryRouter, Route, Routes } from 'react-router'
+import { MemoryRouter, Route, Routes, useParams } from 'react-router'
 import { afterEach, expect, test, vi } from 'vitest'
 
 import CreateListingPage from './CreateListingPage'
-import DashboardPage from './DashboardPage'
 
 type FakeResponse = {
   ok: boolean
@@ -19,14 +18,22 @@ afterEach(() => {
   window.localStorage.clear()
 })
 
-// Renders the create page plus the dashboard (the success target) and a
+// A stand-in for the detail page (the new success target), so a test can prove
+// the create flow navigated to /listings/<id> carrying the new listing's id.
+function ShowsListingId() {
+  const params = useParams()
+  const listingId = params.id ?? ''
+  return <div>listing {listingId}</div>
+}
+
+// Renders the create page plus the detail stand-in (the success target) and a
 // stand-in login route (the redirect-guard target).
 function renderCreatePage() {
   render(
     <MemoryRouter initialEntries={['/listings/create']}>
       <Routes>
         <Route path="/listings/create" element={<CreateListingPage />} />
-        <Route path="/dashboard" element={<DashboardPage />} />
+        <Route path="/listings/:id" element={<ShowsListingId />} />
         <Route path="/login" element={<div>login page</div>} />
       </Routes>
     </MemoryRouter>,
@@ -121,7 +128,7 @@ test('marks the required fields and uses the right input types', () => {
   expect(pickupEnd.hasAttribute('required')).toBe(true)
 })
 
-test('navigates to the dashboard and confirms after a successful create', async () => {
+test('navigates to the new listing detail page after a successful create', async () => {
   window.localStorage.setItem('memberId', 'member-123')
   vi.stubGlobal('fetch', async () => {
     return makeFakeResponse(true, 201, JSON.stringify({ id: 'x', owner_id: 'member-123', status: 'active' }))
@@ -131,8 +138,9 @@ test('navigates to the dashboard and confirms after a successful create', async 
   fillForm()
   submitForm()
 
-  const confirmation = await screen.findByText('Listing created.')
-  expect(confirmation).toBeTruthy()
+  // The detail stand-in shows the id, proving the redirect went to /listings/x.
+  const detailMarker = await screen.findByText('listing x')
+  expect(detailMarker).toBeTruthy()
 })
 
 test('sends the member id header, a number quantity, split tags, and ISO pickup times', async () => {
@@ -149,7 +157,7 @@ test('sends the member id header, a number quantity, split tags, and ISO pickup 
   fillForm()
   submitForm()
 
-  await screen.findByText('Listing created.')
+  await screen.findByText('listing x')
 
   // The id rides in the header, not the body.
   expect(JSON.stringify(capturedOptions.headers)).toContain('X-Member-Id')
@@ -178,7 +186,6 @@ test('shows the backend message on a 422 response', async () => {
 
   const errorArea = await screen.findByRole('alert')
   expect(errorArea.textContent).toBe('Quantity available must be greater than zero.')
-  expect(screen.queryByText('Listing created.')).toBeNull()
 })
 
 test('shows a transport error when the request fails', async () => {
@@ -263,4 +270,30 @@ test('disables the submit button while the request is in flight', async () => {
     const button = screen.getByRole('button', { name: 'Create listing' }) as HTMLButtonElement
     expect(button.disabled).toBe(false)
   })
+})
+
+test('keeps the form and disables submit when the created listing has no id', async () => {
+  window.localStorage.setItem('memberId', 'member-123')
+  // A 201 whose body carries no string id. This should not happen on a real
+  // create, but the page guards against it instead of blind-navigating.
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 201, JSON.stringify({ owner_id: 'member-123', status: 'active' }))
+  })
+
+  renderCreatePage()
+  fillForm()
+  submitForm()
+
+  // The page shows the "created but could not open" alert and stays on the form.
+  const alert = await screen.findByRole('alert')
+  expect(alert.textContent).toBe(
+    'The listing was created, but the app could not open its page. Go to the dashboard.',
+  )
+  expect(screen.getByRole('heading', { name: 'Create a listing' })).toBeTruthy()
+  // It did not navigate to the detail stand-in route.
+  expect(screen.queryByText('listing x')).toBeNull()
+  // The submit button stays disabled, so the already-created listing cannot be
+  // submitted a second time.
+  const button = screen.getByRole('button', { name: 'Create listing' }) as HTMLButtonElement
+  expect(button.disabled).toBe(true)
 })

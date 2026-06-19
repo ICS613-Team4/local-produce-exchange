@@ -4,15 +4,10 @@
 # Then run this with:
 #   npm run db:seed
 #
-# Safe to run more than once. Each group of demo rows checks its own
-# table on its own: if that table is empty the rows are inserted, and if
-# the table already has rows that group is skipped. So if some demo rows
-# get deleted later (even on production), the next run puts back only the
-# groups that are missing and leaves the groups that are still there
-# alone. This is different from the old version, which decided whether to
-# seed anything at all by looking at just one table (sample_data), so a
-# table added later never got its demo rows on a database that already
-# had sample rows.
+# Safe to run more than once. Most demo groups check their own table: if that
+# table is empty the rows are inserted, and if the table already has rows that
+# group is skipped. Listings check each demo row by owner and title, so a
+# database with the two older demo listings still gets the six newer ones.
 
 import sys
 from datetime import datetime, timedelta, timezone
@@ -53,6 +48,18 @@ def find_member_by_email(session, email):
     statement = select(Member).where(Member.email == email)
     member = session.scalars(statement).first()
     return member
+
+
+def add_listing_if_missing(session, listing):
+    # Use owner plus title as the seed identity. The owner is found by email
+    # before the listing is built, so this works across databases with different
+    # generated member ids.
+    statement = select(Listing).where(Listing.owner_id == listing.owner_id).where(Listing.title == listing.title)
+    existing_listing = session.scalars(statement).first()
+    if existing_listing is not None:
+        return False
+    session.add(listing)
+    return True
 
 
 def seed_sample_data(session):
@@ -136,24 +143,25 @@ def seed_invite_tokens(session):
 
 
 def seed_listings(session):
-    if not table_is_empty(session, Listing):
-        print("Listings already present. Skipping listings.")
-        return
-
-    # Demo listings need an owner. Look the seed members up by email; if they
-    # are missing, skip rather than insert a listing with a broken owner.
+    # Demo listings need an owner. Look the seed members up by email; if any
+    # owner we need is missing, skip rather than insert a listing with a broken
+    # owner. All four demo members can own a listing now.
     bob = find_member_by_email(session, "bob@example.com")
     carol = find_member_by_email(session, "carol@example.com")
-    if bob is None or carol is None:
+    dave = find_member_by_email(session, "dave@example.com")
+    alice = find_member_by_email(session, "alice@example.com")
+    if bob is None or carol is None or dave is None or alice is None:
         print("Seed members are missing, so listings were skipped.")
         return
 
-    # The pickup window is one range value: the start is included and the end
-    # is not. Use a window that starts now and runs two days, so a later browse
-    # story has a current listing to show.
+    # Each pickup window is one range value: the start is included and the end
+    # is not. Build three windows off a single "now" and reuse them across the
+    # listings, so the demo data has current pickup times without a lot of code.
     window_start = datetime.now(timezone.utc)
     window_end = window_start + timedelta(days=2)
     pickup_window = Range(window_start, window_end, bounds="[)")
+    window_two = Range(window_start + timedelta(days=1), window_start + timedelta(days=3), bounds="[)")
+    window_three = Range(window_start + timedelta(days=2), window_start + timedelta(days=4), bounds="[)")
 
     lettuce = Listing(
         owner_id=bob.id,
@@ -179,9 +187,103 @@ def seed_listings(session):
         pickup_window=pickup_window,
         status="active",
     )
-    session.add(lettuce)
-    session.add(bananas)
-    print("Inserted 2 listings.")
+    # Six more realistic demo listings across all four members, so the detail
+    # page has real content to open. Each starts with remaining equal to total.
+    lemons = Listing(
+        owner_id=dave.id,
+        title="Backyard Meyer Lemons",
+        description="Sweet, fragrant Meyer lemons from a backyard tree in Pearl City. Great for lemonade or baking. Bring your own bag.",
+        category="Fruit",
+        dietary_tags=["vegan", "vegetarian"],
+        allergen_tags=[],
+        total_quantity=24,
+        remaining_quantity=24,
+        pickup_window=window_two,
+        status="active",
+    )
+    kabocha = Listing(
+        owner_id=bob.id,
+        title="Kabocha Squash",
+        description="A few small kabocha squash from this season's garden. Firm and sweet, good for roasting or soup.",
+        category="Vegetables",
+        dietary_tags=["vegan", "vegetarian", "gluten-free"],
+        allergen_tags=[],
+        total_quantity=4,
+        remaining_quantity=4,
+        pickup_window=window_three,
+        status="active",
+    )
+    banana_bread = Listing(
+        owner_id=carol.id,
+        title="Homemade Banana Bread",
+        description="Two fresh loaves made with our extra apple bananas. Contains walnuts. Baked this weekend.",
+        category="Baked goods",
+        dietary_tags=["vegetarian"],
+        allergen_tags=["contains wheat", "contains eggs", "contains nuts"],
+        total_quantity=2,
+        remaining_quantity=2,
+        pickup_window=pickup_window,
+        status="active",
+    )
+    avocados = Listing(
+        owner_id=alice.id,
+        title="Williams Avocados",
+        description="Large, creamy Williams avocados, picked hard so they travel well. Let them ripen on the counter for a few days.",
+        category="Fruit",
+        dietary_tags=["vegan", "vegetarian"],
+        allergen_tags=[],
+        total_quantity=8,
+        remaining_quantity=8,
+        pickup_window=window_two,
+        status="active",
+    )
+    farm_eggs = Listing(
+        owner_id=dave.id,
+        title="Farm Eggs",
+        description="Three dozen eggs from our backyard hens in Pearl City, mixed brown and white. Returning the carton is appreciated.",
+        category="Dairy and eggs",
+        dietary_tags=["vegetarian"],
+        allergen_tags=["contains eggs"],
+        total_quantity=3,
+        remaining_quantity=3,
+        pickup_window=window_three,
+        status="active",
+    )
+    thai_basil = Listing(
+        owner_id=carol.id,
+        title="Thai Basil",
+        description="Big aromatic bunches of Thai basil from the Kailua garden. Perfect for pho, curry, or stir-fry.",
+        category="Herbs",
+        dietary_tags=["vegan", "vegetarian"],
+        allergen_tags=[],
+        total_quantity=12,
+        remaining_quantity=12,
+        pickup_window=pickup_window,
+        status="active",
+    )
+
+    inserted_count = 0
+    if add_listing_if_missing(session, lettuce):
+        inserted_count = inserted_count + 1
+    if add_listing_if_missing(session, bananas):
+        inserted_count = inserted_count + 1
+    if add_listing_if_missing(session, lemons):
+        inserted_count = inserted_count + 1
+    if add_listing_if_missing(session, kabocha):
+        inserted_count = inserted_count + 1
+    if add_listing_if_missing(session, banana_bread):
+        inserted_count = inserted_count + 1
+    if add_listing_if_missing(session, avocados):
+        inserted_count = inserted_count + 1
+    if add_listing_if_missing(session, farm_eggs):
+        inserted_count = inserted_count + 1
+    if add_listing_if_missing(session, thai_basil):
+        inserted_count = inserted_count + 1
+
+    if inserted_count == 0:
+        print("Listings already present. Skipping listing rows.")
+    else:
+        print("Inserted " + str(inserted_count) + " listings.")
 
 
 def seed_database():

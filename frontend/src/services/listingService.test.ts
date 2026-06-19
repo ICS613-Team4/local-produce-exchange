@@ -1,6 +1,10 @@
 import { afterEach, expect, test, vi } from 'vitest'
 
-import { listingTimeoutMilliseconds, sendCreateListingRequest } from './listingService'
+import {
+  listingTimeoutMilliseconds,
+  sendCreateListingRequest,
+  sendGetListingRequest,
+} from './listingService'
 
 type FakeResponse = {
   ok: boolean
@@ -141,4 +145,93 @@ test('returns a request failure message when fetch rejects', async () => {
   expect(result.ok).toBe(false)
   expect(result.status).toBe(0)
   expect(result.errorMessage).toBe('Request failed: TypeError: Failed to fetch')
+})
+
+// --- US-07: sendGetListingRequest fetches one listing's details ---
+
+test('gets the listing by id with the member id header and parses a JSON response', async () => {
+  const responseBody = {
+    id: 'listing-row-id',
+    owner_id: 'member-123',
+    title: 'Backyard Lemons',
+    status: 'active',
+  }
+  let requestUrl = ''
+  let requestOptions: RequestInit = {}
+  vi.stubGlobal('fetch', async (url: string | URL | Request, options: RequestInit | undefined) => {
+    requestUrl = String(url)
+    if (options !== undefined) {
+      requestOptions = options
+    }
+    return makeFakeResponse(true, 200, JSON.stringify(responseBody))
+  })
+
+  const result = await sendGetListingRequest('listing-row-id', 'member-123')
+
+  expect(result.ok).toBe(true)
+  expect(result.status).toBe(200)
+  expect(JSON.stringify(result.data)).toBe(JSON.stringify(responseBody))
+  expect(result.errorMessage).toBe('')
+  expect(requestUrl).toBe('/api/listings/listing-row-id')
+  expect(requestOptions.method).toBe('GET')
+  // The member id rides in the X-Member-Id header.
+  expect(JSON.stringify(requestOptions.headers)).toContain('X-Member-Id')
+  expect(JSON.stringify(requestOptions.headers)).toContain('member-123')
+  // The timeout signal must be present so the function can't silently drop it.
+  expect(requestOptions.signal).toBeTruthy()
+})
+
+test('maps a 404 not-found response into the result object', async () => {
+  const responseBody = {
+    detail: 'This listing is unavailable.',
+  }
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(false, 404, JSON.stringify(responseBody))
+  })
+
+  const result = await sendGetListingRequest('missing-id', 'member-123')
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(404)
+  expect(JSON.stringify(result.data)).toBe(JSON.stringify(responseBody))
+  expect(result.errorMessage).toBe('')
+})
+
+test('keeps a plain text body on a get request', async () => {
+  // A proxy or server problem can return non-JSON text; the function keeps the
+  // status and the raw body instead of throwing the parse error away.
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(false, 502, 'Bad Gateway')
+  })
+
+  const result = await sendGetListingRequest('listing-row-id', 'member-123')
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(502)
+  expect(result.data).toBe('Bad Gateway')
+  expect(result.errorMessage).toBe('')
+})
+
+test('returns a timeout message when the get request times out', async () => {
+  vi.stubGlobal('fetch', async () => {
+    throw new DOMException('The operation timed out.', 'TimeoutError')
+  })
+
+  const result = await sendGetListingRequest('listing-row-id', 'member-123')
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(0)
+  expect(result.errorMessage).toContain('Timeout')
+})
+
+test('returns a request failure message when the get request rejects', async () => {
+  vi.stubGlobal('fetch', async () => {
+    throw new TypeError('Failed to fetch')
+  })
+
+  const result = await sendGetListingRequest('listing-row-id', 'member-123')
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(0)
+  expect(result.errorMessage).not.toBe('')
 })

@@ -10,11 +10,11 @@ afterEach(() => {
   cleanup()
 })
 
-// Renders the dashboard at /dashboard. The optional state lets a test pass the
-// "created" flag the create flow sends.
-function renderDashboard(state: object | null) {
+// Renders the dashboard at /dashboard. The page no longer reads navigation
+// state, so the helper takes no arguments.
+function renderDashboard() {
   render(
-    <MemoryRouter initialEntries={[{ pathname: '/dashboard', state: state }]}>
+    <MemoryRouter initialEntries={['/dashboard']}>
       <Routes>
         <Route path="/dashboard" element={<DashboardPage />} />
       </Routes>
@@ -23,7 +23,7 @@ function renderDashboard(state: object | null) {
 }
 
 test('shows the title and the navigation links', () => {
-  renderDashboard(null)
+  renderDashboard()
 
   expect(screen.getByRole('heading', { name: 'Member Dashboard' })).toBeTruthy()
 
@@ -35,24 +35,4 @@ test('shows the title and the navigation links', () => {
 
   const createLink = screen.getByRole('link', { name: 'Create a listing' })
   expect(createLink.getAttribute('href')).toBe('/listings/create')
-})
-
-test('shows the confirmation when reached with the created flag', () => {
-  renderDashboard({ created: true })
-
-  const note = screen.getByRole('status')
-  expect(note.textContent).toBe('Listing created.')
-})
-
-test('does not show the confirmation without that state', () => {
-  renderDashboard(null)
-
-  expect(screen.queryByText('Listing created.')).toBeNull()
-})
-
-test('does not show the confirmation when the state lacks the created flag', () => {
-  // Reached with some other state object that has no created flag: still quiet.
-  renderDashboard({ from: 'somewhere' })
-
-  expect(screen.queryByText('Listing created.')).toBeNull()
 })

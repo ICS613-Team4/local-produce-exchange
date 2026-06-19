@@ -48,9 +48,9 @@ npm run setup
 
 When you're doing full development, keep three terminals open.
 
-### Frontend
+### Terminal 1: Frontend
 
-In your first terminal, run:
+In this terminal, run:
 
 ```sh
 npm run frontend
@@ -59,14 +59,17 @@ npm run frontend
 Then open the local URL the terminal prints. It's usually
 `http://127.0.0.1:5173`
 
-The frontend hands any `/api` request off to the backend, so your React pages
-can call the API with no extra setup.
+- The frontend hands any `/api` request off to the backend, so your React pages
+  can call the API with no extra setup.
+
+This one keeps running so you can watch the Vite logs, so leave that terminal
+open while you work.
 
 To stop it, press Ctrl+C in that same terminal.
 
-### Backend
+### Terminal 2: Backend
 
-In your second terminal, run:
+In this terminal, run:
 
 ```sh
 npm run backend
@@ -74,18 +77,18 @@ npm run backend
 
 The backend runs at `http://127.0.0.1:8000`
 
-FastAPI builds interactive API docs for you. Once the backend is running, open
-`http://127.0.0.1:8000/docs` for the Swagger UI, where you can read every
-endpoint and try them out from the browser.
+- FastAPI builds interactive API docs for you. Once the backend is running,
+  open `http://127.0.0.1:8000/docs` for the Swagger UI, where you can read
+  every endpoint and try them out from the browser.
 
 This one keeps running so you can watch the backend logs, so leave that terminal
 open while you work.
 
 To stop it, press Ctrl+C in that same terminal.
 
-### Database
+### Terminal 3: Database
 
-For normal development, start PostgreSQL in your third terminal:
+For normal development, start PostgreSQL in this terminal:
 
 ```sh
 npm run db
@@ -94,34 +97,26 @@ npm run db
 This runs PostgreSQL in the **foreground**. Like the others, it keeps running so
 you can see the database logs, so leave that terminal open while you work.
 
-This also starts pgweb, a small web tool for browsing the database. It comes up
-next to PostgreSQL at `http://localhost:8081` with no login. You don't have to
-use it, and you don't have to start anything extra; it's there when you want to
-look at tables or run a read-only query. The two sets of logs share this
-terminal.
+- This also starts pgweb, a small web tool for browsing the database. It comes
+  up next to PostgreSQL at `http://localhost:8081` with no login. You don't have
+  to use it, and you don't have to start anything extra; it's there when you
+  want to look at tables or run a read-only query.
 
 To stop it, press Ctrl+C in that same terminal. That stops both PostgreSQL and
 pgweb.
 
-- First Time Setup
+## Database Refresh
 
-  The first time you run this on a machine, you need to create the tables and
-  add the demo rows. With PostgreSQL running, run these in a separate terminal
-  window:
+**EVERY TIME YOU SIT DOWN TO WORK**, make sure PostgreSQL is running, then run
+these in a separate terminal:
 
-  ```sh
-  npm run db:migrate
-  npm run db:seed
-  ```
+```sh
+npm run db:migrate
+npm run db:seed
+```
 
-- After Pulling Changes
-
-  After any pull that might include schema changes, make sure PostgreSQL is
-  running, then run this in a separate terminal window:
-
-  ```sh
-  npm run db:migrate
-  ```
+Do this for first-time setup and after pulling changes too. **These commands are
+safe to run every day.**
 
 ## Database browser (pgweb)
 
@@ -169,7 +164,7 @@ Run any of these from the repo root:
 | `npm run db:reset` | Stop the containers and delete the database volume. This removes all local database data. |
 | `npm run db:migrate` | Apply new database migrations. |
 | `npm run db:revision` | Create a new migration after model changes. |
-| `npm run db:seed` | Insert demo seed data when the table is empty. |
+| `npm run db:seed` | Insert missing demo seed rows. Most groups skip when their table already has rows; listings add missing demo rows by owner and title. |
 | `npm run typecheck` | Run the TypeScript type checker. |
 | `npm run lint` | Run both frontend and backend linters. |
 | `npm run lint:frontend` | Lint only the frontend. |
@@ -184,78 +179,108 @@ Run any of these from the repo root:
 
 ```text
 frontend/
-  src/           TypeScript and React source code.
-    assets/      Images, fonts, and icons imported by code or SCSS.
-    components/  Reusable React components.
-    pages/       Route-level screens, such as HomePage or AboutPage.
-    services/    API calls to the FastAPI backend.
-    styles/      Shared SCSS files.
-    utils/       Small helper functions, such as response text formatting.
-    main.tsx     Browser entry point.
-    App.tsx      Root React component.
+  package.json        Frontend scripts, dependencies, and Node engine range.
+  package-lock.json   Exact dependency graph used by npm ci.
+  .npmrc              Enforces the Node engine range during npm installs.
+  vite.config.ts      Vite setup, React plugin, no-cache headers, and /api
+                      proxy.
+  index.html          Browser HTML shell where Vite mounts React.
+  public/             Static files copied as-is, such as browser metadata.
+    site.webmanifest  App metadata for installed browser shortcuts.
+  src/
+    main.tsx          Creates the React root and renders App.
+    App.tsx           Top-level route map and app shell.
+    pages/            Route screens. Add a page here when a URL needs its
+                      own UI.
+    services/         API calls. Put fetch code here so pages do not build
+                      HTTP requests inline.
+    styles/           Shared SCSS loaded by the app.
+    utils/            Small helpers that are not React components.
+    components/       Shared React components once more than one page needs
+                      them.
+    assets/           Imported images or fonts once source code needs bundled
+                      assets.
 ```
 
 Use `.tsx` files for React components, since they hold JSX markup. Use plain
 `.ts` files for TypeScript that doesn't render markup, like API calls or helper
-functions.
+functions. Frontend tests live near the code they cover, usually beside pages,
+services, and utilities.
 
 ### Backend Structure
 
 ```text
 backend/
+  pyproject.toml       Backend dependencies, pytest config, and ruff config.
+  uv.lock              Exact dependency versions used by Astral uv.
   alembic.ini          Alembic migration settings.
-  pyproject.toml       Backend dependencies and project info.
-  .python-version      The Python version Astral uv installs and uses.
-  uv.lock              Exact dependency versions used by Astral uv. Committed; do not edit by hand.
   app/
-    __init__.py        Marks app as a Python package.
+    main.py            FastAPI app, logging, and router registration.
     db.py              Database engine and session setup.
-    main.py            FastAPI entry point. Adds the /api prefix.
+    dependencies.py    Shared FastAPI dependencies used by route handlers.
+    security.py        Password and invite-token hashing helpers.
     seed.py            Demo data seeder. Run migrations before seeding.
-    routers/           Endpoint groups, one file per feature area.
-    models/            SQLAlchemy database models.
+    routers/           HTTP endpoint groups. Add a file here for new API routes.
+    schemas/           Pydantic request and response shapes used by routes
+                       and tests.
+    models/            SQLAlchemy table models.
       base.py          Shared SQLAlchemy model base class.
-      sample_data.py   Small demo table for database smoke tests.
-    schemas/           Pydantic request and response shapes.
-  migrations/          Alembic migration environment and version files.
-  tests/               pytest unit tests for backend functions and models.
+      __init__.py      Imports models so Alembic can see them.
+  migrations/
+    env.py             Alembic runtime setup. Imports models and uses the
+                       app engine.
+    versions/          Committed migration history.
+  tests/               pytest coverage for routes, models, seed, security,
+                       and database behavior.
 ```
 
-Route functions go in `app/routers/`. Pydantic request and response shapes go
-in `app/schemas/`. New SQLAlchemy table models go in `app/models/`. And pytest
-files go in `backend/tests/`, named like `test_sample_endpoint.py` so pytest
-finds them on its own.
+When you add backend behavior, keep the layers separate: routes handle HTTP,
+schemas validate input and output, models define tables, and migrations change
+the database. Register new model modules in `app/models/__init__.py` so Alembic
+can generate migrations from them.
 
 ### Database Structure
 
 ```text
-docker-compose.yml        Local PostgreSQL service.
-.env.example              Optional PostgreSQL environment values.
+docker-compose.yml        Defines PostgreSQL, pgweb-init, pgweb, and the
+                          database volume.
+.env.example              Optional PostgreSQL and pgweb environment values.
+scripts/
+  pgweb-readonly-role.sql Creates and refreshes the read-only pgweb_ro role.
 
 backend/
-  alembic.ini             Alembic migration settings.
-  migrations/             Alembic migration environment and version files.
   app/
-    db.py                 Database URL, engine, and sessions.
+    db.py                 Builds the database URL, engine, and sessions.
     seed.py               Inserts demo data after migrations run.
     models/
       base.py             Shared SQLAlchemy model base class.
-      sample_data.py      Demo table used to test the database path.
+      __init__.py         Model registry used by Alembic autogenerate.
+  migrations/
+    env.py                Connects Alembic to the app models and database
+                          engine.
+    versions/             Ordered schema changes committed with feature work.
 ```
 
 PostgreSQL runs in Docker. The `backend/app/db.py` file reads the optional root
 `.env` file, falls back to the same defaults as `docker-compose.yml`, and
 connects to PostgreSQL on `127.0.0.1`.
 
-Alembic migrations create and change tables, and the seed script adds demo rows
-once the migrations have run. Alembic keeps track of where the database is in
-the `alembic_version` table.
+Use models for table shape, migrations for schema changes, and `seed.py` for
+demo rows. Use pgweb to inspect data. Put durable database changes in
+migrations or application code.
 
 ### Deployment Structure
 
 ```text
+.github/
+  workflows/
+    unit-tests.yml        Reusable lint, build, and test checks.
+    deploy.yml            Production deploy workflow for main and manual runs.
+docker-compose.yml        Service definitions used by local dev and the VPS.
 scripts/
-  deploy-remote.sh        Runs on the VPS during each deploy.
+  deploy-remote.sh        VPS-side deploy script. Installs, migrates, seeds,
+                          restarts, and checks the API.
+  pgweb-readonly-role.sql Keeps pgweb's database login read-only.
 ```
 
 A VPS is a rented Linux server, and it's what hosts the live site at
@@ -264,26 +289,45 @@ on the server, not on your machine. The GitHub Actions workflow copies the new
 backend files up to the VPS, runs this script over SSH, and only copies the new
 frontend once the script finishes without an error.
 
+The deploy workflow builds `frontend/dist` during the run and uploads it after
+the backend health checks pass. That directory is generated output, so don't
+commit it.
+
 The script walks through the same steps you'd do by hand to put a new version
 online, in order:
 
-1. Check that the production `.env` file exists and that each required
-   PostgreSQL key (`POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`,
-   `POSTGRES_PORT`) has a value. If any check fails, the script stops before
-   touching the running site.
+1. Check that the production `.env` file exists and that each required key has
+   a value: the PostgreSQL keys (`POSTGRES_USER`, `POSTGRES_PASSWORD`,
+   `POSTGRES_DB`, `POSTGRES_PORT`), the pgweb browser login
+   (`PGWEB_AUTH_USER`, `PGWEB_AUTH_PASS`), and the pgweb database-role password
+   (`PGWEB_DB_PASSWORD`). The pgweb database password must use only URL-safe
+   characters, and `PGWEB_PORT` must be unset or `8081` in production. If any
+   check fails, the script stops before touching the running site.
 2. Install the backend dependencies, skipping test-only tools like pytest and
-   ruff that production never runs.
+   ruff that production never runs. The script uses `uv` from `PATH`, falling
+   back to `$HOME/.local/bin/uv`.
 3. Start the PostgreSQL container and wait until its healthcheck passes.
-4. Apply any new database migrations with Alembic.
-5. Insert the demo rows with the seed script. The seed script skips rows that
-   are already present, so this is safe to run on every deploy.
-6. Restart the backend service.
-7. Confirm the deploy worked: call the health endpoint until it answers, then
+4. Start pgweb. The script probes `http://127.0.0.1:8081` so the deploy log says
+   whether pgweb answered. A compose failure while starting pgweb stops the
+   deploy before migrations. If pgweb starts but the HTTP probe does not answer,
+   the script prints a warning and continues because pgweb is not part of the
+   user-facing app.
+5. Apply any new database migrations with Alembic.
+6. Insert the demo rows with the seed script. Most seed groups skip when their
+   table already has rows, and listings add only missing demo rows by owner and
+   title, so this is safe to run on every deploy.
+7. Restart the backend service.
+8. Confirm the deploy worked: call the health endpoint until it answers, then
    send one request that needs the database, so a broken database connection
    fails the deploy here instead of being found later by a user.
 
-If any step fails, the script bails out with an error. That fails the deploy and
-leaves the previous version running.
+If a required `.env` check, dependency install, database start, migration, or seed
+step fails, the script bails out before the backend restart, so the previous
+backend keeps running. If the restart or health checks fail, the old backend has
+already stopped. At that point the API may be down or may be serving the new
+backend code until someone fixes forward or rolls back. The new frontend is copied
+only after the script passes, so a script failure leaves the old frontend files in
+place.
 
 ## Schema Changes
 
@@ -354,14 +398,27 @@ need a running backend.
 ```text
 frontend/
   src/
+    App.test.tsx                Vitest route-registration tests for the React app.
     pages/
-      HomePage.test.tsx       Vitest component tests for the home page.
-      AboutPage.test.tsx      Vitest component tests for the about page.
+      AboutPage.test.tsx        Vitest component tests for the about page.
+      CreateListingPage.test.tsx
+                                Vitest component tests for listing creation.
+      DashboardPage.test.tsx    Vitest component tests for the member dashboard.
+      HomePage.test.tsx         Vitest component tests for the home page.
+      InvitePage.test.tsx       Vitest component tests for invite links.
+      ListingDetailPage.test.tsx
+                                Vitest component tests for listing details.
+      LoginPage.test.tsx        Vitest component tests for login and logout.
+      NotFoundPage.test.tsx     Vitest component tests for unknown routes.
+      RegisterPage.test.tsx     Vitest component tests for registration.
     services/
+      authService.test.ts       Vitest unit tests for auth API helpers.
+      inviteService.test.ts     Vitest unit tests for invite API helpers.
+      listingService.test.ts    Vitest unit tests for listing API helpers.
       sampleEndpointService.test.ts
-                              Vitest unit tests for the API call helper.
+                                Vitest unit tests for the sample API helper.
     utils/
-      formatApiResult.test.ts Vitest unit tests for response text formatting.
+      formatApiResult.test.ts   Vitest unit tests for response text formatting.
 ```
 
 ### Backend Tests
@@ -372,7 +429,13 @@ and SQLAlchemy models directly, so they don't start an HTTP server.
 ```text
 backend/
   tests/
-    test_sample_endpoint.py   pytest unit tests for the sample endpoint.
+    test_auth_login.py         pytest unit tests for login behavior.
+    test_auth_register.py      pytest unit tests for registration behavior.
+    test_invite.py             pytest unit tests for invite behavior.
+    test_listing.py            pytest unit tests for create-listing behavior.
+    test_listing_detail.py     pytest unit tests for listing-detail behavior.
+    test_sample_endpoint.py    pytest unit tests for the sample endpoint.
+    test_security.py           pytest unit tests for password and invite-token helpers.
 ```
 
 ### Database Tests

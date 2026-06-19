@@ -4,7 +4,10 @@
 # rollback, each test binds seed.SessionLocal to the test's shared connection
 # with savepoint mode (the same trick the conftest session uses).
 
+from datetime import datetime, timedelta, timezone
+
 from sqlalchemy import delete, select
+from sqlalchemy.dialects.postgresql import Range
 from sqlalchemy.orm import sessionmaker
 
 from app import seed
@@ -52,6 +55,45 @@ def delete_all_rows(session_factory, model):
         session.close()
 
 
+def insert_old_demo_listings(session):
+    seed.seed_members(session)
+
+    bob = seed.find_member_by_email(session, "bob@example.com")
+    carol = seed.find_member_by_email(session, "carol@example.com")
+
+    window_start = datetime.now(timezone.utc)
+    window_end = window_start + timedelta(days=2)
+    pickup_window = Range(window_start, window_end, bounds="[)")
+
+    lettuce = Listing(
+        owner_id=bob.id,
+        title="Fresh Manoa Lettuce",
+        description="Crisp green lettuce, just picked this morning.",
+        category="Vegetables",
+        dietary_tags=["vegan", "vegetarian"],
+        allergen_tags=[],
+        total_quantity=6,
+        remaining_quantity=6,
+        pickup_window=pickup_window,
+        status="active",
+    )
+    bananas = Listing(
+        owner_id=carol.id,
+        title="Apple Bananas",
+        description="A big bunch of sweet apple bananas from the backyard.",
+        category="Fruit",
+        dietary_tags=["vegan"],
+        allergen_tags=[],
+        total_quantity=10,
+        remaining_quantity=10,
+        pickup_window=pickup_window,
+        status="active",
+    )
+    session.add(lettuce)
+    session.add(bananas)
+    session.commit()
+
+
 def test_seed_database_inserts_demo_rows(db_connection, monkeypatch):
     session_factory = bind_seed_to_connection(db_connection, monkeypatch)
     seed.seed_database()
@@ -71,7 +113,7 @@ def test_seed_database_inserts_all_groups(db_connection, monkeypatch):
     assert count_rows(session_factory, Member) == 4
     assert count_rows(session_factory, MemberProfile) == 4
     assert count_rows(session_factory, InviteToken) == 2
-    assert count_rows(session_factory, Listing) == 2
+    assert count_rows(session_factory, Listing) == 8
 
 
 def test_seed_database_inserts_listings_owned_by_members(db_connection, monkeypatch):
@@ -81,7 +123,7 @@ def test_seed_database_inserts_listings_owned_by_members(db_connection, monkeypa
     session = session_factory()
     try:
         listings = session.scalars(select(Listing)).all()
-        assert len(listings) == 2
+        assert len(listings) == 8
         for listing in listings:
             # Every demo listing is active, owned by a member, and starts with
             # its remaining quantity equal to the total.
@@ -102,7 +144,7 @@ def test_seed_database_does_not_duplicate_rows(db_connection, monkeypatch):
     assert count_rows(session_factory, Member) == 4
     assert count_rows(session_factory, MemberProfile) == 4
     assert count_rows(session_factory, InviteToken) == 2
-    assert count_rows(session_factory, Listing) == 2
+    assert count_rows(session_factory, Listing) == 8
 
 
 def test_seed_restores_deleted_invite_tokens(db_connection, monkeypatch):
@@ -132,8 +174,23 @@ def test_seed_restores_deleted_listings(db_connection, monkeypatch):
     assert count_rows(session_factory, Listing) == 0
 
     seed.seed_database()
-    assert count_rows(session_factory, Listing) == 2
+    assert count_rows(session_factory, Listing) == 8
     assert count_rows(session_factory, Member) == 4
+
+
+def test_seed_listings_adds_missing_rows_when_old_demo_listings_exist(db_session):
+    # This matches a teammate database from the US-15 branch: the first two
+    # demo listings are already present, but the six US-07 listings are not.
+    insert_old_demo_listings(db_session)
+
+    seed.seed_listings(db_session)
+
+    rows = db_session.scalars(select(Listing)).all()
+    assert len(rows) == 8
+
+    seed.seed_listings(db_session)
+    rows = db_session.scalars(select(Listing)).all()
+    assert len(rows) == 8
 
 
 def test_seed_listings_skips_when_members_missing(db_session):

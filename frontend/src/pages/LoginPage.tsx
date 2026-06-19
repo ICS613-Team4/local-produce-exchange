@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router'
 
-import { sendLoginRequest } from '../services/authService'
+import { sendLoginRequest, sendLogoutRequest } from '../services/authService'
 import { formatApiResult } from '../utils/formatApiResult'
 
 function LoginPage() {
@@ -43,6 +43,12 @@ function LoginPage() {
   // Holds the raw backend response after a failed submit, for debugging.
   const [rawResponseText, setRawResponseText] = useState('')
 
+  // Auth truth is memberId: logged in means it is not empty. memberName is read
+  // the same way but used only for the display text (the two can drift). Both
+  // live in state so logging out swaps the form back in without a reload.
+  const [memberId, setMemberId] = useState(window.localStorage.getItem('memberId') ?? '')
+  const [memberName, setMemberName] = useState(window.localStorage.getItem('memberName') ?? '')
+
   function handleEmailChange(event: React.ChangeEvent<HTMLInputElement>) {
     setEmail(event.target.value)
   }
@@ -51,18 +57,23 @@ function LoginPage() {
     setPassword(event.target.value)
   }
 
+  async function handleLogout() {
+    await sendLogoutRequest()
+    window.localStorage.removeItem('memberId')
+    window.localStorage.removeItem('memberName')
+    window.localStorage.removeItem('memberEmail')
+    // Reset both state values so the form reappears in place.
+    setMemberId('')
+    setMemberName('')
+  }
+
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
 
-    const trimmedEmail = email.trim()
-
-    if (trimmedEmail === '' || password === '') {
-      setErrorMessage('Please fill in every field.')
-      setRawResponseText('')
-      return
-    }
-
-    const result = await sendLoginRequest(trimmedEmail, password)
+    // No JS field check here: the HTML5 required attribute and type="email" on
+    // the inputs block an empty or malformed email before submit. The backend
+    // stays the authority for trimming and rejecting bad input.
+    const result = await sendLoginRequest(email, password)
 
     if (result.ok) {
       // Save the member info so the rest of the app knows who is
@@ -98,6 +109,43 @@ function LoginPage() {
       setErrorMessage('Login failed (HTTP ' + result.status + ').')
     }
     setRawResponseText(formatApiResult(result.ok, result.status, result.data))
+  }
+
+  // Logged-in branch: hide the form and show an "already logged in" view, so a
+  // logged-in person can go to the dashboard or switch accounts by logging out.
+  // Every hook above runs regardless of which branch returns, so the Rules of
+  // Hooks hold.
+  if (memberId !== '') {
+    let alreadyLoggedInLine = "You're already logged in."
+    if (memberName !== '') {
+      alreadyLoggedInLine = "You're already logged in as " + memberName + '.'
+    }
+    // Keep the registration confirmation here too, but without "Please log in.",
+    // which would contradict someone who is already logged in.
+    let loggedInSuccessArea = <></>
+    if (justRegistered) {
+      loggedInSuccessArea = (
+        <p className="success-message" role="status">
+          Your account was created.
+        </p>
+      )
+    }
+    return (
+      <>
+        <h1>Log in</h1>
+        <p>
+          <Link to="/">Go to home page</Link>
+        </p>
+        {loggedInSuccessArea}
+        <p>{alreadyLoggedInLine}</p>
+        <p>
+          <Link to="/dashboard">Go to dashboard</Link>
+        </p>
+        <p>
+          <button onClick={handleLogout}>Log out</button>
+        </p>
+      </>
+    )
   }
 
   // Build the registration success message only when the page was reached
@@ -139,13 +187,20 @@ function LoginPage() {
       <form onSubmit={handleSubmit}>
         <p>
           <label htmlFor="login-email">Email</label>{' '}
-          <input id="login-email" type="text" value={email} onChange={handleEmailChange} />
+          <input
+            id="login-email"
+            type="email"
+            required
+            value={email}
+            onChange={handleEmailChange}
+          />
         </p>
         <p>
           <label htmlFor="login-password">Password</label>{' '}
           <input
             id="login-password"
             type="password"
+            required
             value={password}
             onChange={handlePasswordChange}
           />

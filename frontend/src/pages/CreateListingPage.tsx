@@ -102,9 +102,30 @@ function CreateListingPage() {
     const result = await sendCreateListingRequest(memberId, listingFields)
 
     if (result.ok) {
-      // Tell the dashboard a listing was just created, so it can confirm it
-      // even though there is no listing-detail page yet.
-      navigate('/dashboard', { state: { created: true } })
+      // Read the new listing's id from the response and open its detail page, so
+      // the poster immediately sees the listing they just created. result.data
+      // is unknown, so check it is an object with a string id before using it.
+      let newListingId = ''
+      if (typeof result.data === 'object' && result.data !== null) {
+        const dataObject = result.data as { id?: unknown }
+        if (typeof dataObject.id === 'string') {
+          newListingId = dataObject.id
+        }
+      }
+
+      if (newListingId !== '') {
+        navigate('/listings/' + newListingId)
+        return
+      }
+
+      // The listing was created but the response carried no usable id (should
+      // not happen on a 201). Do not navigate to the dashboard, which no longer
+      // shows any confirmation. Tell the user what happened and leave the submit
+      // button disabled, so the already-created listing cannot be duplicated.
+      setErrorMessage(
+        'The listing was created, but the app could not open its page. Go to the dashboard.',
+      )
+      setRawResponseText('')
       return
     }
 

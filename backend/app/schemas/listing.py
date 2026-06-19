@@ -1,8 +1,10 @@
-# The shapes of the create-listing request and response.
+# The shapes of the listing request and response.
 #
-# The request takes two separate pickup times (start and end). The route
-# assembles them into the single pickup_window range the database stores, and
-# the response hands those same two validated times back.
+# CreateListingRequest is the create body: two separate pickup times (start and
+# end). The create route assembles them into the single pickup_window range the
+# database stores. ListingResponse is shared by two routes: the create route
+# hands those two validated request times back, while the GET-details route
+# (US-07) fills them by reading the stored range back off the row.
 
 from datetime import datetime
 
@@ -51,8 +53,9 @@ class ListingResponse(BaseModel):
     remaining_quantity: int
     dietary_tags: list[str]
     allergen_tags: list[str]
-    # The route fills these from the validated request values it already holds,
-    # not by reading the stored range back off the row.
+    # The create route fills these from the validated request values it already
+    # holds; the GET-details route fills them from the stored pickup_window
+    # range it reads back off the row.
     pickup_start: datetime
     pickup_end: datetime
     status: str

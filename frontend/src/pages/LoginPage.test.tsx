@@ -171,36 +171,64 @@ test('shows the transport error message when the request times out', async () =>
   expect(errorArea.textContent).toContain('Timeout: no answer from the backend')
 })
 
-test('blocks an empty form without calling fetch', async () => {
-  let fetchCallCount = 0
-  vi.stubGlobal('fetch', async () => {
-    fetchCallCount = fetchCallCount + 1
-    return makeFakeResponse(true, 200, {})
-  })
+// --- US-07: HTML5 validation replaces the old JS field check ---
 
+test('marks the email and password inputs for HTML5 validation', () => {
   renderLoginPage()
-  submitForm()
 
-  const errorArea = await screen.findByRole('alert')
-  expect(errorArea.textContent).toBe('Please fill in every field.')
-  expect(fetchCallCount).toBe(0)
-  expect(screen.queryByText('dashboard page')).toBeNull()
+  // type="email" plus required is the browser-side stand-in for the deleted
+  // "Please fill in every field." JS check.
+  const emailInput = screen.getByLabelText('Email')
+  expect(emailInput.getAttribute('type')).toBe('email')
+  expect(emailInput.hasAttribute('required')).toBe(true)
+
+  const passwordInput = screen.getByLabelText('Password')
+  expect(passwordInput.hasAttribute('required')).toBe(true)
 })
 
-test('blocks a whitespace-only email without calling fetch', async () => {
-  let fetchCallCount = 0
+// --- US-07: the form is hidden when already logged in ---
+
+test('hides the form and shows the already-logged-in view when logged in', async () => {
+  window.localStorage.setItem('memberId', 'a4c135d8-0000-0000-0000-000000000000')
+  window.localStorage.setItem('memberName', 'Alice Admin')
+  window.localStorage.setItem('memberEmail', 'alice@example.com')
+  // Clicking Log out calls sendLogoutRequest, which posts to the backend.
   vi.stubGlobal('fetch', async () => {
-    fetchCallCount = fetchCallCount + 1
     return makeFakeResponse(true, 200, {})
   })
 
   renderLoginPage()
-  fillForm('   ', 'password')
-  submitForm()
 
-  const errorArea = await screen.findByRole('alert')
-  expect(errorArea.textContent).toBe('Please fill in every field.')
-  expect(fetchCallCount).toBe(0)
+  // The form is gone and the already-logged-in view shows.
+  expect(screen.queryByLabelText('Email')).toBeNull()
+  expect(screen.getByText("You're already logged in as Alice Admin.")).toBeTruthy()
+  expect(screen.getByRole('link', { name: 'Go to dashboard' })).toBeTruthy()
+  const logoutButton = screen.getByRole('button', { name: 'Log out' })
+  expect(logoutButton).toBeTruthy()
+
+  // Logging out clears the three credential keys and brings the form back.
+  fireEvent.click(logoutButton)
+  expect(await screen.findByLabelText('Email')).toBeTruthy()
+  expect(window.localStorage.getItem('memberId')).toBeNull()
+  expect(window.localStorage.getItem('memberName')).toBeNull()
+  expect(window.localStorage.getItem('memberEmail')).toBeNull()
+})
+
+test('shows the registration success message even when logged in', () => {
+  window.localStorage.setItem('memberId', 'a4c135d8-0000-0000-0000-000000000000')
+  window.localStorage.setItem('memberName', 'Alice Admin')
+  render(
+    <MemoryRouter initialEntries={[{ pathname: '/login', state: { justRegistered: true } }]}>
+      <Routes>
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/" element={<div>home page</div>} />
+        <Route path="/dashboard" element={<div>dashboard page</div>} />
+      </Routes>
+    </MemoryRouter>,
+  )
+
+  // The logged-in branch shows the shorter confirmation, without "Please log in."
+  expect(screen.getByText('Your account was created.')).toBeTruthy()
 })
 
 test('does not store anything in localStorage on a failed login', async () => {

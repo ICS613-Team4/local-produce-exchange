@@ -7,9 +7,11 @@
 # (the X-Member-Id header), the same identity path the invite route uses.
 
 import logging
+import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import Range
 from sqlalchemy.orm import Session
 
@@ -151,4 +153,104 @@ def create_listing(
         pickup_end=payload.pickup_end,
         status="active",
         created_at=created_at,
+    )
+
+
+@router.get("/listings/{listing_id}")
+def get_listing(
+    listing_id: str,
+    current_member: Member = Depends(get_current_member),
+    session: Session = Depends(get_db_session),
+) -> ListingResponse:
+    # Permission gate. UC-07 expects a logged-in, active member. A suspended
+    # account cannot take any member action, and the insecure X-Member-Id
+    # header means a forged suspended id could otherwise read details, so this
+    # route applies the same active-member check the create-listing route uses.
+    # The wording is about viewing, not creating, so the message is truthful
+    # for this endpoint.
+    if current_member.status != "active":
+        if current_member.status == "suspended":
+            raise HTTPException(
+                status_code=403,
+                detail="Your account is suspended, so you cannot view listings.",
+            )
+        raise HTTPException(
+            status_code=403,
+            detail="Your account is not active, so you cannot view listings.",
+        )
+
+    # The id arrives as a path string. A value that is not a real UUID cannot
+    # match any listing, so treat it as not found rather than a server error.
+    # One not-found message covers the missing, malformed, and inactive cases.
+    try:
+        listing_uuid = uuid.UUID(listing_id)
+    except (ValueError, AttributeError, TypeError):
+        raise HTTPException(status_code=404, detail="This listing is unavailable.")
+
+    # Look the row up by id. Wrap the query so a down or unmigrated database
+    # returns 503 instead of an unhandled error, matching the create path.
+    try:
+        row = session.scalars(select(Listing).where(Listing.id == listing_uuid)).first()
+    except Exception as error:
+        logger.error("Reading a listing failed: %s", error)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Could not read the listing right now. "
+                "Make sure the database is running and migrated: "
+                "npm run db:up, then npm run db:migrate, then npm run db:seed."
+            ),
+        )
+
+    # No such listing.
+    if row is None:
+        raise HTTPException(status_code=404, detail="This listing is unavailable.")
+
+    # The listing exists but is no longer active (Scenario 2). Any non-active
+    # status (claimed, expired, cancelled, deactivated) shows as unavailable.
+    if row.status != "active":
+        raise HTTPException(status_code=404, detail="This listing is unavailable.")
+
+    # Read the pickup window back off the stored range. Check each piece before
+    # reading the next, so nothing is read off a missing value. The column is
+    # NOT NULL, so a missing window should not happen, but a manual row could
+    # hold an unbounded or equal-bound range that ListingResponse cannot
+    # represent; treat any of those as unavailable, reusing the same message.
+    pickup_window = row.pickup_window
+    if pickup_window is None:
+        raise HTTPException(status_code=404, detail="This listing is unavailable.")
+    pickup_start = pickup_window.lower
+    pickup_end = pickup_window.upper
+    if pickup_start is None or pickup_end is None:
+        raise HTTPException(status_code=404, detail="This listing is unavailable.")
+    if pickup_end <= pickup_start:
+        raise HTTPException(status_code=404, detail="This listing is unavailable.")
+
+    # The model lets description and category be NULL, but ListingResponse types
+    # both as plain strings. Coerce a null to an empty string so a null row
+    # never crashes building the response.
+    description = row.description
+    if description is None:
+        description = ""
+    category = row.category
+    if category is None:
+        category = ""
+
+    # Build the response from the stored row: the ids as strings (same as the
+    # create response), the coerced text, the tag lists, the two pickup times
+    # pulled from the range above, and the status and created_at.
+    return ListingResponse(
+        id=str(row.id),
+        owner_id=str(row.owner_id),
+        title=row.title,
+        description=description,
+        category=category,
+        total_quantity=row.total_quantity,
+        remaining_quantity=row.remaining_quantity,
+        dietary_tags=row.dietary_tags,
+        allergen_tags=row.allergen_tags,
+        pickup_start=pickup_start,
+        pickup_end=pickup_end,
+        status=row.status,
+        created_at=row.created_at,
     )
