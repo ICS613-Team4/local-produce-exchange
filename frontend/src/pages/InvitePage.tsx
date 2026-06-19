@@ -46,7 +46,7 @@ function InvitePage() {
     }
 
     // The backend answered with an HTTP error. FastAPI puts the reason in a
-    // "detail" field (403 suspended, 404 member not found, 503 database).
+    // "detail" field (401 missing identity, 403 suspended, 503 database).
     let detail: unknown = undefined
     if (typeof result.data === 'object' && result.data !== null) {
       const dataObject = result.data as { detail?: unknown }

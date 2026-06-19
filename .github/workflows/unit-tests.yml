@@ -20,6 +20,34 @@ jobs:
     # Fail the job if it runs longer than this, instead of the 6-hour default.
     timeout-minutes: 15
 
+    # The backend tests run against a real Postgres database now (SQLite was
+    # dropped), so both the test fixture (through app/db.py) and any alembic
+    # step read these. The runner reaches the service below at 127.0.0.1:5432,
+    # which is the host app/db.py hard-codes, so no code change is needed.
+    env:
+      POSTGRES_USER: produce
+      POSTGRES_PASSWORD: produce
+      POSTGRES_DB: produce_exchange_test
+      POSTGRES_PORT: 5432
+    services:
+      postgres:
+        # Match the dev image in docker-compose.yml and the version named in
+        # technical-design.md. Do not drift to a different major.
+        image: postgres:18.4
+        env:
+          POSTGRES_USER: produce
+          POSTGRES_PASSWORD: produce
+          POSTGRES_DB: produce_exchange_test
+        ports:
+          - 5432:5432
+        # Wait until Postgres accepts connections before the steps run, so the
+        # first test does not race a still-starting database.
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - name: Check out repository
         uses: actions/checkout@v6

@@ -3,12 +3,6 @@
 from pydantic import BaseModel
 
 
-class CreateInviteRequest(BaseModel):
-    # The id of the member creating the invite. There is no server session
-    # yet, so the frontend reads this from localStorage and sends it here.
-    member_id: str
-
-
 class CreateInviteResponse(BaseModel):
     # The invite token row id is a UUID in the database. The router converts
     # it with str() so the response JSON carries a plain string.

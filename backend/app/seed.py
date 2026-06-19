@@ -15,10 +15,13 @@
 # had sample rows.
 
 import sys
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import Range
 
 from app.db import SessionLocal
+from app.models.listing import Listing
 from app.models.member import InviteToken, Member, MemberProfile
 from app.models.sample_data import SampleData
 from app.security import hash_invite_token
@@ -132,15 +135,65 @@ def seed_invite_tokens(session):
     print(f"Pending invite token (use this to register): {_PENDING_TOKEN_PLAINTEXT}")
 
 
+def seed_listings(session):
+    if not table_is_empty(session, Listing):
+        print("Listings already present. Skipping listings.")
+        return
+
+    # Demo listings need an owner. Look the seed members up by email; if they
+    # are missing, skip rather than insert a listing with a broken owner.
+    bob = find_member_by_email(session, "bob@example.com")
+    carol = find_member_by_email(session, "carol@example.com")
+    if bob is None or carol is None:
+        print("Seed members are missing, so listings were skipped.")
+        return
+
+    # The pickup window is one range value: the start is included and the end
+    # is not. Use a window that starts now and runs two days, so a later browse
+    # story has a current listing to show.
+    window_start = datetime.now(timezone.utc)
+    window_end = window_start + timedelta(days=2)
+    pickup_window = Range(window_start, window_end, bounds="[)")
+
+    lettuce = Listing(
+        owner_id=bob.id,
+        title="Fresh Manoa Lettuce",
+        description="Crisp green lettuce, just picked this morning.",
+        category="Vegetables",
+        dietary_tags=["vegan", "vegetarian"],
+        allergen_tags=[],
+        total_quantity=6,
+        remaining_quantity=6,
+        pickup_window=pickup_window,
+        status="active",
+    )
+    bananas = Listing(
+        owner_id=carol.id,
+        title="Apple Bananas",
+        description="A big bunch of sweet apple bananas from the backyard.",
+        category="Fruit",
+        dietary_tags=["vegan"],
+        allergen_tags=[],
+        total_quantity=10,
+        remaining_quantity=10,
+        pickup_window=pickup_window,
+        status="active",
+    )
+    session.add(lettuce)
+    session.add(bananas)
+    print("Inserted 2 listings.")
+
+
 def seed_database():
     session = SessionLocal()
     try:
-        # Order matters: members come before profiles and invite tokens,
-        # because those two point back at members.
+        # Order matters: members come before profiles, invite tokens, and
+        # listings, because those three point back at members.
         seed_sample_data(session)
         seed_members(session)
         seed_profiles(session)
         seed_invite_tokens(session)
+        seed_listings(session)
         session.commit()
     finally:
         session.close()

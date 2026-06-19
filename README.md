@@ -377,11 +377,14 @@ backend/
 
 ### Database Tests
 
-The database tests use pytest and SQLAlchemy. `test_seed.py` uses in-memory
-SQLite sessions (`sqlite:///:memory:`), and `test_db.py` only checks URL
-strings, so both pass without Docker or Postgres running. The real PostgreSQL
-only gets exercised when you run the app, the migrations, and the seed script
-against the Docker database.
+The database tests use pytest and SQLAlchemy, and they run against a real
+Postgres test database (`produce_exchange_test`), not SQLite. A shared
+`conftest.py` fixture handles it for you: it runs the migrations to build the
+schema once, then wraps each test in a transaction it rolls back, so the tests
+stay isolated and the suite stays fast. The catch is that `npm run test:backend`
+needs the Docker database up first (`npm run db:up`), and CI runs the same tests
+against its own Postgres service. `test_db.py` is the one exception, since it
+only checks URL strings and touches no database.
 
 ```text
 backend/

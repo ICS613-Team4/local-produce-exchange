@@ -20,14 +20,15 @@ afterEach(() => {
   window.localStorage.clear()
 })
 
-// Renders the login page plus a stand-in / route. The stand-in
-// exists only so a test can prove the success redirect went to /.
+// Renders the login page plus stand-in / and /dashboard routes. The stand-ins
+// exist only so a test can prove the success redirect went to the dashboard.
 function renderLoginPage() {
   render(
     <MemoryRouter initialEntries={['/login']}>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/" element={<div>home page</div>} />
+        <Route path="/dashboard" element={<div>dashboard page</div>} />
       </Routes>
     </MemoryRouter>,
   )
@@ -63,7 +64,7 @@ test('shows the two inputs and the submit button', () => {
   expect(screen.getByRole('button', { name: 'Log in' })).toBeTruthy()
 })
 
-test('redirects to / after a successful login', async () => {
+test('redirects to the dashboard after a successful login', async () => {
   const responseBody = {
     id: 'a4c135d8-0000-0000-0000-000000000000',
     name: 'Alice Admin',
@@ -78,8 +79,8 @@ test('redirects to / after a successful login', async () => {
   fillForm('alice@example.com', 'password')
   submitForm()
 
-  const homeMarker = await screen.findByText('home page')
-  expect(homeMarker).toBeTruthy()
+  const dashboardMarker = await screen.findByText('dashboard page')
+  expect(dashboardMarker).toBeTruthy()
 })
 
 test('stores member info in localStorage on success', async () => {
@@ -97,7 +98,7 @@ test('stores member info in localStorage on success', async () => {
   fillForm('alice@example.com', 'password')
   submitForm()
 
-  await screen.findByText('home page')
+  await screen.findByText('dashboard page')
   expect(window.localStorage.getItem('memberId')).toBe('a4c135d8-0000-0000-0000-000000000000')
   expect(window.localStorage.getItem('memberName')).toBe('Alice Admin')
   expect(window.localStorage.getItem('memberEmail')).toBe('alice@example.com')
@@ -117,7 +118,7 @@ test('shows the backend message on a 401 wrong-credentials response', async () =
 
   const errorArea = await screen.findByRole('alert')
   expect(errorArea.textContent).toBe('Invalid email or password.')
-  expect(screen.queryByText('home page')).toBeNull()
+  expect(screen.queryByText('dashboard page')).toBeNull()
 })
 
 test('shows the suspension message on a 403 response', async () => {
@@ -134,7 +135,7 @@ test('shows the suspension message on a 403 response', async () => {
 
   const errorArea = await screen.findByRole('alert')
   expect(errorArea.textContent).toBe('Your account is suspended.')
-  expect(screen.queryByText('home page')).toBeNull()
+  expect(screen.queryByText('dashboard page')).toBeNull()
 })
 
 test('shows a fallback message when the error body has no detail', async () => {
@@ -183,7 +184,7 @@ test('blocks an empty form without calling fetch', async () => {
   const errorArea = await screen.findByRole('alert')
   expect(errorArea.textContent).toBe('Please fill in every field.')
   expect(fetchCallCount).toBe(0)
-  expect(screen.queryByText('home page')).toBeNull()
+  expect(screen.queryByText('dashboard page')).toBeNull()
 })
 
 test('blocks a whitespace-only email without calling fetch', async () => {

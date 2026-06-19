@@ -1,26 +1,44 @@
-// API call for creating an invite token.
+// API call for creating a listing.
 
-export const inviteTimeoutMilliseconds = 3000
+export const listingTimeoutMilliseconds = 3000
 
-export type InviteResult = {
+export type ListingResult = {
   ok: boolean
   status: number
   data: unknown
   errorMessage: string
 }
 
-export async function sendCreateInviteRequest(memberId: string): Promise<InviteResult> {
+// The shape of the listing fields the page builds and sends. The two pickup
+// fields are already timezone-aware ISO strings by the time they reach here.
+export type ListingFields = {
+  title: string
+  description: string
+  category: string
+  total_quantity: number
+  dietary_tags: string[]
+  allergen_tags: string[]
+  pickup_start: string
+  pickup_end: string
+}
+
+export async function sendCreateListingRequest(
+  memberId: string,
+  listingFields: ListingFields,
+): Promise<ListingResult> {
   // The acting member's id travels in the X-Member-Id header, the same identity
-  // path the listing endpoint uses. The backend loads that member and checks
-  // the account is active. There is no request body.
+  // path the invite endpoint uses. The page reads the id from localStorage and
+  // passes it in, so this function stays a plain function of its inputs.
   try {
-    const response = await fetch('/api/invites', {
+    const response = await fetch('/api/listings', {
       method: 'POST',
       headers: {
+        'Content-Type': 'application/json',
         'X-Member-Id': memberId,
       },
+      body: JSON.stringify(listingFields),
       // Cancel the request if the backend takes too long to answer.
-      signal: AbortSignal.timeout(inviteTimeoutMilliseconds),
+      signal: AbortSignal.timeout(listingTimeoutMilliseconds),
     })
 
     const responseText = await response.text()
@@ -47,7 +65,7 @@ export async function sendCreateInviteRequest(memberId: string): Promise<InviteR
     let errorMessage: string
     if (caughtError instanceof DOMException && caughtError.name === 'TimeoutError') {
       errorMessage =
-        'Timeout: no answer from the backend after ' + inviteTimeoutMilliseconds + ' ms.'
+        'Timeout: no answer from the backend after ' + listingTimeoutMilliseconds + ' ms.'
     } else {
       errorMessage = 'Request failed: ' + String(caughtError)
     }

@@ -9,6 +9,14 @@ from alembic import context
 # Importing app.models registers every table on Base.metadata.
 # Without this import, autogenerate would think no tables exist.
 import app.models  # noqa: F401
+
+# This import wires the alembic-postgresql-enum plugin into Alembic's
+# autogenerate. It makes autogenerate emit the CREATE TYPE on upgrade and
+# the DROP TYPE on downgrade for new Postgres enum types (like the
+# listing_status enum), so the generated migration is complete and
+# reversible with no hand-editing. At upgrade time the import is a no-op.
+import alembic_postgresql_enum  # noqa: F401
+
 from app.db import engine
 from app.models.base import Base
 

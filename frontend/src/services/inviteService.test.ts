@@ -50,7 +50,9 @@ test('posts the member id and returns the token on success', async () => {
   expect(result.errorMessage).toBe('')
   expect(requestUrl).toBe('/api/invites')
   expect(requestOptions.method).toBe('POST')
-  expect(String(requestOptions.body)).toContain('member-123')
+  // The member id now rides in the X-Member-Id header, not the request body.
+  expect(JSON.stringify(requestOptions.headers)).toContain('X-Member-Id')
+  expect(JSON.stringify(requestOptions.headers)).toContain('member-123')
   expect(requestOptions.signal).toBeTruthy()
 })
 

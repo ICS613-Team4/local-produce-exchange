@@ -1,26 +1,16 @@
 # Tests for the login and logout endpoints. Run from the project root with:
 # npm run test:backend
 # These call the route function directly with a session. No HTTP is involved.
+# The database tests take the shared Postgres session from conftest.py.
 
 import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
-from app.models.base import Base
 from app.models.member import Member
 from app.routers.auth import login, logout
 from app.schemas.auth import LoginRequest
 from app.security import hash_password
-
-
-def make_test_session():
-    # A throwaway database that lives in memory for a single test.
-    engine = create_engine("sqlite:///:memory:")
-    Base.metadata.create_all(engine)
-    session_factory = sessionmaker(bind=engine)
-    return session_factory()
 
 
 def insert_member(session, email, password, status="active"):
@@ -42,96 +32,72 @@ def make_login_request(email, password):
 # --- happy path (Scenario 1) ---
 
 
-def test_login_returns_member_info_for_valid_credentials():
-    session = make_test_session()
-    try:
-        insert_member(session, "alice@example.com", "password123")
-        payload = make_login_request("alice@example.com", "password123")
+def test_login_returns_member_info_for_valid_credentials(db_session):
+    insert_member(db_session, "alice@example.com", "password123")
+    payload = make_login_request("alice@example.com", "password123")
 
-        response = login(payload, session)
+    response = login(payload, db_session)
 
-        assert response.name == "Test User"
-        assert response.email == "alice@example.com"
-        assert response.status == "active"
-        assert response.id is not None
-    finally:
-        session.close()
+    assert response.name == "Test User"
+    assert response.email == "alice@example.com"
+    assert response.status == "active"
+    assert response.id is not None
 
 
-def test_login_normalizes_email_case():
-    session = make_test_session()
-    try:
-        insert_member(session, "alice@example.com", "password123")
-        payload = make_login_request("Alice@Example.COM", "password123")
+def test_login_normalizes_email_case(db_session):
+    insert_member(db_session, "alice@example.com", "password123")
+    payload = make_login_request("Alice@Example.COM", "password123")
 
-        response = login(payload, session)
+    response = login(payload, db_session)
 
-        assert response.email == "alice@example.com"
-    finally:
-        session.close()
+    assert response.email == "alice@example.com"
 
 
-def test_login_trims_email_whitespace():
-    session = make_test_session()
-    try:
-        insert_member(session, "alice@example.com", "password123")
-        payload = make_login_request("  alice@example.com  ", "password123")
+def test_login_trims_email_whitespace(db_session):
+    insert_member(db_session, "alice@example.com", "password123")
+    payload = make_login_request("  alice@example.com  ", "password123")
 
-        response = login(payload, session)
+    response = login(payload, db_session)
 
-        assert response.email == "alice@example.com"
-    finally:
-        session.close()
+    assert response.email == "alice@example.com"
 
 
 # --- wrong credentials (Scenario 2) ---
 
 
-def test_login_rejects_wrong_password():
-    session = make_test_session()
-    try:
-        insert_member(session, "alice@example.com", "password123")
-        payload = make_login_request("alice@example.com", "wrongpassword")
+def test_login_rejects_wrong_password(db_session):
+    insert_member(db_session, "alice@example.com", "password123")
+    payload = make_login_request("alice@example.com", "wrongpassword")
 
-        with pytest.raises(HTTPException) as raised_error:
-            login(payload, session)
+    with pytest.raises(HTTPException) as raised_error:
+        login(payload, db_session)
 
-        assert raised_error.value.status_code == 401
-        assert raised_error.value.detail == "Invalid email or password."
-    finally:
-        session.close()
+    assert raised_error.value.status_code == 401
+    assert raised_error.value.detail == "Invalid email or password."
 
 
-def test_login_rejects_unknown_email():
-    session = make_test_session()
-    try:
-        payload = make_login_request("nobody@example.com", "password123")
+def test_login_rejects_unknown_email(db_session):
+    payload = make_login_request("nobody@example.com", "password123")
 
-        with pytest.raises(HTTPException) as raised_error:
-            login(payload, session)
+    with pytest.raises(HTTPException) as raised_error:
+        login(payload, db_session)
 
-        assert raised_error.value.status_code == 401
-        assert raised_error.value.detail == "Invalid email or password."
-    finally:
-        session.close()
+    assert raised_error.value.status_code == 401
+    assert raised_error.value.detail == "Invalid email or password."
 
 
 # --- suspended account (Scenario 3) ---
 
 
-def test_login_rejects_suspended_account():
-    session = make_test_session()
-    try:
-        insert_member(session, "suspended@example.com", "password123", status="suspended")
-        payload = make_login_request("suspended@example.com", "password123")
+def test_login_rejects_suspended_account(db_session):
+    insert_member(db_session, "suspended@example.com", "password123", status="suspended")
+    payload = make_login_request("suspended@example.com", "password123")
 
-        with pytest.raises(HTTPException) as raised_error:
-            login(payload, session)
+    with pytest.raises(HTTPException) as raised_error:
+        login(payload, db_session)
 
-        assert raised_error.value.status_code == 403
-        assert raised_error.value.detail == "Your account is suspended."
-    finally:
-        session.close()
+    assert raised_error.value.status_code == 403
+    assert raised_error.value.detail == "Your account is suspended."
 
 
 # --- schema validation ---
@@ -150,21 +116,14 @@ def test_login_schema_rejects_empty_password():
 # --- database failure ---
 
 
-def test_login_returns_503_when_database_is_broken():
-    # No create_all here, so the tables are missing on purpose and the
-    # member lookup inside the endpoint fails.
-    engine = create_engine("sqlite:///:memory:")
-    session_factory = sessionmaker(bind=engine)
-    session = session_factory()
-    try:
-        payload = make_login_request("alice@example.com", "password123")
+def test_login_returns_503_when_database_is_broken(broken_session):
+    # The broken session raises on the member lookup inside the endpoint.
+    payload = make_login_request("alice@example.com", "password123")
 
-        with pytest.raises(HTTPException) as raised_error:
-            login(payload, session)
+    with pytest.raises(HTTPException) as raised_error:
+        login(payload, broken_session)
 
-        assert raised_error.value.status_code == 503
-    finally:
-        session.close()
+    assert raised_error.value.status_code == 503
 
 
 # --- logout ---

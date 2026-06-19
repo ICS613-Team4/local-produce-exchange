@@ -1,5 +1,7 @@
 import { BrowserRouter, Route, Routes } from 'react-router'
 import AboutPage from './pages/AboutPage.tsx'
+import CreateListingPage from './pages/CreateListingPage.tsx'
+import DashboardPage from './pages/DashboardPage.tsx'
 import HomePage from './pages/HomePage.tsx'
 import InvitePage from './pages/InvitePage.tsx'
 import LoginPage from './pages/LoginPage.tsx'
@@ -15,6 +17,8 @@ function App() {
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/invite" element={<InvitePage />} />
+        <Route path="/dashboard" element={<DashboardPage />} />
+        <Route path="/listings/create" element={<CreateListingPage />} />
         {/* The "*" path matches only when no route above does, so every
             unknown URL shows the not-found page instead of a blank screen. */}
         <Route path="*" element={<NotFoundPage />} />

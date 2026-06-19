@@ -55,8 +55,7 @@ def register(
     try:
         # FOR UPDATE locks the token row, so two requests redeeming the
         # same token wait on each other in PostgreSQL and the loser sees
-        # status "used". SQLite ignores the lock, which is fine for unit
-        # tests because production runs PostgreSQL.
+        # status "used".
         token_query = select(InviteToken).where(InviteToken.token_hash == token_hash).with_for_update()
         token_row = session.scalars(token_query).first()
         if token_row is None or token_row.status != "pending":

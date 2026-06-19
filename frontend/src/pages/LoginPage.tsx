@@ -72,7 +72,7 @@ function LoginPage() {
       window.localStorage.setItem('memberId', data.id)
       window.localStorage.setItem('memberName', data.name)
       window.localStorage.setItem('memberEmail', data.email)
-      navigate('/')
+      navigate('/dashboard')
       return
     }
 
