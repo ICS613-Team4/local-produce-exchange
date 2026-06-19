@@ -5,6 +5,7 @@ import { sendGetListingRequest } from '../services/listingService'
 import type { ListingDetail, ListingResult } from '../services/listingService'
 import { sendLogoutRequest } from '../services/authService'
 import { formatApiResult } from '../utils/formatApiResult'
+import { formatTimestamp, getLocalTimeZoneName } from '../utils/formatTimestamp'
 
 // One shared message for the not-logged-in case, declared at module scope so the
 // wording is the same everywhere and it is not a useEffect dependency.
@@ -123,6 +124,19 @@ function ListingDetailPage() {
     if (allergenText === '') {
       allergenText = 'None'
     }
+    // Render the timezone-aware pickup times in the viewer's own locale and
+    // local time zone, instead of the raw ISO strings the backend sends. Each
+    // formatted time already ends with the zone's short name (like "HST").
+    const pickupStartText = formatTimestamp(listing.pickup_start)
+    const pickupEndText = formatTimestamp(listing.pickup_end)
+    // Spell out, in plain words, that the times above are in the viewer's own
+    // local zone, the way calendar and event sites do. We add the IANA zone
+    // name (like "Pacific/Honolulu") when the browser can report it.
+    const localTimeZoneName = getLocalTimeZoneName()
+    let timeZoneNote = 'All times are shown in your local time zone.'
+    if (localTimeZoneName !== '') {
+      timeZoneNote = 'All times are shown in your local time zone (' + localTimeZoneName + ').'
+    }
     // Quantity available (what the poster entered) and remaining quantity (what
     // is left) are two different numbers, so label each on its own line.
     contentArea = (
@@ -134,8 +148,11 @@ function ListingDetailPage() {
         <p>Remaining quantity: {listing.remaining_quantity}</p>
         <p>Dietary tags: {dietaryText}</p>
         <p>Allergen tags: {allergenText}</p>
-        <p>Pickup start: {listing.pickup_start}</p>
-        <p>Pickup end: {listing.pickup_end}</p>
+        <p>Pickup start: {pickupStartText}</p>
+        <p>Pickup end: {pickupEndText}</p>
+        <p>
+          <small>{timeZoneNote}</small>
+        </p>
       </>
     )
   } else if (result.status === 404) {

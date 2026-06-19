@@ -156,12 +156,16 @@ def seed_listings(session):
 
     # Each pickup window is one range value: the start is included and the end
     # is not. Build three windows off a single "now" and reuse them across the
-    # listings, so the demo data has current pickup times without a lot of code.
-    window_start = datetime.now(timezone.utc)
-    window_end = window_start + timedelta(days=2)
-    pickup_window = Range(window_start, window_end, bounds="[)")
-    window_two = Range(window_start + timedelta(days=1), window_start + timedelta(days=3), bounds="[)")
-    window_three = Range(window_start + timedelta(days=2), window_start + timedelta(days=4), bounds="[)")
+    # listings. Each window runs for about six months from its own start (183
+    # days is roughly six months), so the demo listings stay well inside their
+    # pickup window and never go stale during a demo or a long-running deploy.
+    six_months = timedelta(days=183)
+    start_one = datetime.now(timezone.utc)
+    start_two = start_one + timedelta(days=1)
+    start_three = start_one + timedelta(days=2)
+    pickup_window = Range(start_one, start_one + six_months, bounds="[)")
+    window_two = Range(start_two, start_two + six_months, bounds="[)")
+    window_three = Range(start_three, start_three + six_months, bounds="[)")
 
     lettuce = Listing(
         owner_id=bob.id,

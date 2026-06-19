@@ -130,9 +130,23 @@ test('shows the listing details and the logged-in nav for an active listing', as
   // Both tag groups show.
   expect(screen.getByText('Dietary tags: vegan, vegetarian')).toBeTruthy()
   expect(screen.getByText('Allergen tags: contains nuts')).toBeTruthy()
-  // The pickup window shows the raw backend strings exactly.
-  expect(screen.getByText('Pickup start: 2026-07-01T09:00:00.000Z')).toBeTruthy()
-  expect(screen.getByText('Pickup end: 2026-07-01T11:00:00.000Z')).toBeTruthy()
+  // The pickup window shows each timestamp in the browser's locale and local
+  // time zone, with the zone's short name appended, not the raw ISO string. We
+  // build the expected text the same way the page does, so this passes on any
+  // machine's locale or time zone.
+  const timeZoneOptions = { timeZoneName: 'short' as const }
+  const expectedPickupStart = new Date('2026-07-01T09:00:00.000Z').toLocaleString(
+    undefined,
+    timeZoneOptions,
+  )
+  const expectedPickupEnd = new Date('2026-07-01T11:00:00.000Z').toLocaleString(
+    undefined,
+    timeZoneOptions,
+  )
+  expect(screen.getByText('Pickup start: ' + expectedPickupStart)).toBeTruthy()
+  expect(screen.getByText('Pickup end: ' + expectedPickupEnd)).toBeTruthy()
+  // A plain-words note tells the user the times are in their own local zone.
+  expect(screen.getByText(/All times are shown in your local time zone/)).toBeTruthy()
   // The logged-in nav shows the dashboard link and the log out button.
   expect(screen.getByRole('link', { name: 'Go to dashboard' })).toBeTruthy()
   expect(screen.getByRole('button', { name: 'Log out' })).toBeTruthy()
