@@ -91,6 +91,7 @@ function HomePage() {
       <p>
         Logged in as {memberName}.{' '}
         <Link to="/dashboard">Go to dashboard</Link>{' '}
+        <Link to="/profile">View profile</Link>{' '}
         <Link to="/invite">Invite a new member</Link>{' '}
         <button onClick={handleLogout}>Log out</button>
       </p>
