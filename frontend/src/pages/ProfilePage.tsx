@@ -20,7 +20,8 @@ function ProfilePage() {
   const memberId = window.localStorage.getItem('memberId')
 
   const [member, setMember] = useState<MemberData | null>(null)
-  const [loading, setLoading] = useState(true)
+  // Only load when there is a memberId to fetch; no memberId means nothing to load.
+  const [loading, setLoading] = useState(memberId !== null)
   const [pageError, setPageError] = useState('')
 
   const [editing, setEditing] = useState(false)
@@ -33,7 +34,6 @@ function ProfilePage() {
 
   useEffect(() => {
     if (memberId === null) {
-      setLoading(false)
       return
     }
 
