@@ -67,11 +67,14 @@ test('shows a link to the register page', () => {
   expect(registerLink.getAttribute('href')).toBe('/register')
 })
 
-test('shows the invite link when a member is logged in', () => {
+test('shows the dashboard and invite links when a member is logged in', () => {
   // A logged-in member has a name in localStorage, which switches the auth
-  // area to the logged-in branch that holds the invite link.
+  // area to the logged-in branch that holds the dashboard and invite links.
   window.localStorage.setItem('memberName', 'Bob Baker')
   renderHomePage()
+
+  const dashboardLink = screen.getByRole('link', { name: 'Go to dashboard' })
+  expect(dashboardLink.getAttribute('href')).toBe('/dashboard')
 
   const inviteLink = screen.getByRole('link', { name: 'Invite a new member' })
   expect(inviteLink.getAttribute('href')).toBe('/invite')

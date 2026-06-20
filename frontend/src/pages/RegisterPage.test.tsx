@@ -191,36 +191,25 @@ test('shows the transport error message when the request times out', async () =>
   expect(errorArea.textContent).toContain('Timeout: no answer from the backend')
 })
 
-test('blocks an empty form without calling fetch', async () => {
-  let fetchCallCount = 0
-  vi.stubGlobal('fetch', async () => {
-    fetchCallCount = fetchCallCount + 1
-    return makeFakeResponse(true, 200, {})
-  })
+// --- US-07: HTML5 validation replaces the old JS field check ---
 
+test('marks all four inputs for HTML5 validation', () => {
   renderRegisterPage()
-  submitForm()
 
-  const errorArea = await screen.findByRole('alert')
-  expect(errorArea.textContent).toBe('Please fill in every field.')
-  expect(fetchCallCount).toBe(0)
-  expect(screen.queryByText('login page')).toBeNull()
-})
+  // required on every field plus type="email" on the email is the browser-side
+  // stand-in for the deleted "Please fill in every field." JS check.
+  const nameInput = screen.getByLabelText('Name')
+  expect(nameInput.hasAttribute('required')).toBe(true)
 
-test('blocks a whitespace-only field without calling fetch', async () => {
-  let fetchCallCount = 0
-  vi.stubGlobal('fetch', async () => {
-    fetchCallCount = fetchCallCount + 1
-    return makeFakeResponse(true, 200, {})
-  })
+  const emailInput = screen.getByLabelText('Email')
+  expect(emailInput.getAttribute('type')).toBe('email')
+  expect(emailInput.hasAttribute('required')).toBe(true)
 
-  renderRegisterPage()
-  fillForm('   ', 'new@example.com', 'password123', 'tok-1')
-  submitForm()
+  const passwordInput = screen.getByLabelText('Password')
+  expect(passwordInput.hasAttribute('required')).toBe(true)
 
-  const errorArea = await screen.findByRole('alert')
-  expect(errorArea.textContent).toBe('Please fill in every field.')
-  expect(fetchCallCount).toBe(0)
+  const tokenInput = screen.getByLabelText('Invite token')
+  expect(tokenInput.hasAttribute('required')).toBe(true)
 })
 
 // --- US-04: invite token prefilled from a shared link ---

@@ -3,6 +3,7 @@
   "private": true,
   "scripts": {
     "setup": "npm --prefix frontend ci && uv sync --locked --all-groups --directory backend",
+    "lock": "node scripts/regen-lock.js",
     "frontend": "npm --prefix frontend run dev",
     "fix:frontend": "npm --prefix frontend ci",
     "backend": "uv run --locked --directory backend uvicorn app.main:app --reload --port 8000 --log-level debug",
@@ -12,8 +13,8 @@
     "db:up": "docker compose up -d --remove-orphans --wait db && docker compose up -d pgweb",
     "db:down": "docker compose down --remove-orphans",
     "db:reset": "docker compose down --volumes --remove-orphans",
-    "db:migrate": "uv run --locked --directory backend alembic upgrade head",
-    "db:revision": "uv run --locked --directory backend alembic revision --autogenerate -m",
+    "db:migrate": "uv run --locked --directory backend python -m alembic upgrade head",
+    "db:revision": "uv run --locked --directory backend python -m alembic revision --autogenerate -m",
     "db:seed": "uv run --locked --directory backend python -m app.seed",
     "build": "npm --prefix frontend run build",
     "typecheck": "npm --prefix frontend run typecheck",

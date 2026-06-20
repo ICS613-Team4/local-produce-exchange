@@ -46,19 +46,12 @@ function RegisterPage() {
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
 
-    // Trim the text fields for validation. The password is not trimmed,
-    // because spaces inside a password are allowed.
-    const trimmedName = name.trim()
-    const trimmedEmail = email.trim()
-    const trimmedToken = inviteToken.trim()
-
-    if (trimmedName === '' || trimmedEmail === '' || password === '' || trimmedToken === '') {
-      setErrorMessage('Please fill in every field.')
-      setRawResponseText('')
-      return
-    }
-
-    const result = await sendRegisterRequest(trimmedName, trimmedEmail, password, trimmedToken)
+    // No JS field check here: the HTML5 required attribute on all four inputs,
+    // plus type="email" on the email, block an empty form or a malformed email
+    // before submit. The backend stays the authority for trimming and rejecting
+    // bad input, so a whitespace-only name or token still reaches it and is
+    // rejected there.
+    const result = await sendRegisterRequest(name, email, password, inviteToken)
 
     if (result.ok) {
       // The account exists now. Send the user to the login page and pass a
@@ -123,17 +116,24 @@ function RegisterPage() {
       <form onSubmit={handleSubmit}>
         <p>
           <label htmlFor="register-name">Name</label>{' '}
-          <input id="register-name" type="text" value={name} onChange={handleNameChange} />
+          <input id="register-name" type="text" required value={name} onChange={handleNameChange} />
         </p>
         <p>
           <label htmlFor="register-email">Email</label>{' '}
-          <input id="register-email" type="text" value={email} onChange={handleEmailChange} />
+          <input
+            id="register-email"
+            type="email"
+            required
+            value={email}
+            onChange={handleEmailChange}
+          />
         </p>
         <p>
           <label htmlFor="register-password">Password</label>{' '}
           <input
             id="register-password"
             type="password"
+            required
             value={password}
             onChange={handlePasswordChange}
           />
@@ -143,6 +143,7 @@ function RegisterPage() {
           <input
             id="register-invite-token"
             type="text"
+            required
             value={inviteToken}
             onChange={handleInviteTokenChange}
           />

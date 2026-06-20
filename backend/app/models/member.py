@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import List, Optional
 
-from sqlalchemy import Enum as SAEnum, ForeignKey, text, Text, TIMESTAMP
+from sqlalchemy import Enum as SAEnum, ForeignKey, Index, text, Text, TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -57,6 +57,10 @@ class MemberProfile(Base):
 
 class InviteToken(Base):
     __tablename__ = "invite_token"
+    __table_args__ = (
+        Index("idx_invite_token_created_by", "created_by"),
+        Index("idx_invite_token_used_by", "used_by"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     created_by: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("member.id"))

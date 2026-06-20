@@ -10,19 +10,15 @@ export type InviteResult = {
 }
 
 export async function sendCreateInviteRequest(memberId: string): Promise<InviteResult> {
-  // There is no server session yet, so the acting member's id travels in the
-  // request body. The backend looks it up and checks the account is active.
-  const requestBody = {
-    member_id: memberId,
-  }
-
+  // The acting member's id travels in the X-Member-Id header, the same identity
+  // path the listing endpoint uses. The backend loads that member and checks
+  // the account is active. There is no request body.
   try {
     const response = await fetch('/api/invites', {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
+        'X-Member-Id': memberId,
       },
-      body: JSON.stringify(requestBody),
       // Cancel the request if the backend takes too long to answer.
       signal: AbortSignal.timeout(inviteTimeoutMilliseconds),
     })

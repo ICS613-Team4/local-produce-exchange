@@ -128,9 +128,12 @@ nbdist/
 
 # ===== AI coding tools =====
 # CLAUDE.md and AGENTS.md are project instructions, committed on purpose.
-# Only local personal tool files are ignored.
+# Shared .claude/ config (skills, commands, settings.json) is committed too, so
+# only the personal local file is ignored, not the whole .claude/ directory.
 .claude/settings.local.json
-.codex/
+# Codex keeps only local state, so the whole family is ignored: .codex,
+# .codex-temp, and any similar scratch directory.
+.codex*/
 
 # ===== Editor, temp, and backup files =====
 *.swp
@@ -140,3 +143,7 @@ nbdist/
 *.tmp
 *.temp
 *.orig
+
+# ===== Playwright (local browser-automation artifacts) =====
+# Covers .playwright, .playwright-cli, .playwright-mcp, and any similar dir.
+.playwright*/

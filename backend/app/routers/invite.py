@@ -6,19 +6,20 @@
 #   - create_invite() is the pure core. It takes a Member object, checks the
 #     account is active, makes the token, and saves it. The unit tests call
 #     this directly, so they cover the rule and the write with no HTTP layer.
-#   - create_invite_endpoint() is the thin HTTP route. There is no server
-#     session yet, so the acting member's id arrives in the request body. The
-#     route looks that member up, then hands the Member object to the core.
+#   - create_invite_endpoint() is the thin HTTP route. The acting member
+#     arrives through the shared get_current_member dependency (the X-Member-Id
+#     header), the same identity path the listing route uses. The dependency
+#     resolves the member (or returns 401), and the route hands it to the core.
 
 import logging
-import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.db import get_db_session
+from app.dependencies import get_current_member
 from app.models.member import InviteToken, Member
-from app.schemas.invite import CreateInviteRequest, CreateInviteResponse
+from app.schemas.invite import CreateInviteResponse
 from app.security import generate_invite_token, hash_invite_token
 
 logger = logging.getLogger(__name__)
@@ -81,18 +82,10 @@ def create_invite(acting_member, session: Session) -> CreateInviteResponse:
 
 @router.post("/invites", status_code=201)
 def create_invite_endpoint(
-    payload: CreateInviteRequest,
+    current_member: Member = Depends(get_current_member),
     session: Session = Depends(get_db_session),
 ) -> CreateInviteResponse:
-    # member_id arrives as a string but Member.id is a UUID column, so parse
-    # it first. A bad string becomes a clean 404, not a 500.
-    try:
-        member_uuid = uuid.UUID(payload.member_id)
-    except (ValueError, AttributeError, TypeError):
-        raise HTTPException(status_code=404, detail="Member not found.")
-
-    acting_member = session.get(Member, member_uuid)
-    if acting_member is None:
-        raise HTTPException(status_code=404, detail="Member not found.")
-
-    return create_invite(acting_member, session)
+    # The acting member now comes from the shared identity dependency, which
+    # reads the X-Member-Id header. A missing, malformed, or unknown id becomes
+    # a 401 there, so the route just hands the loaded member to the core.
+    return create_invite(current_member, session)
