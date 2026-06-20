@@ -254,3 +254,122 @@ def get_listing(
         status=row.status,
         created_at=row.created_at,
     )
+
+
+@router.put("/listings/{listing_id}")
+def edit_listing(
+    listing_id: str,
+    payload: CreateListingRequest,
+    current_member: Member = Depends(get_current_member),
+    session: Session = Depends(get_db_session),
+) -> ListingResponse:
+    if current_member.status != "active":
+        if current_member.status == "suspended":
+            raise HTTPException(
+                status_code=403,
+                detail="Your account is suspended, so you cannot edit a listing.",
+            )
+        raise HTTPException(
+            status_code=403,
+            detail="Your account is not active, so you cannot edit a listing.",
+        )
+
+    try:
+        listing_uuid = uuid.UUID(listing_id)
+    except (ValueError, AttributeError, TypeError):
+        raise HTTPException(status_code=404, detail="This listing is unavailable.")
+
+    try:
+        row = session.scalars(select(Listing).where(Listing.id == listing_uuid)).first()
+    except Exception as error:
+        logger.error("Reading a listing for edit failed: %s", error)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Could not read the listing right now. "
+                "Make sure the database is running and migrated."
+            ),
+        )
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="This listing is unavailable.")
+
+    if row.owner_id != current_member.id:
+        raise HTTPException(status_code=403, detail="You can only edit your own listing.")
+
+    if row.status != "active":
+        raise HTTPException(status_code=404, detail="This listing is unavailable.")
+
+    title = payload.title.strip()
+    if title == "":
+        raise HTTPException(status_code=422, detail="Title must not be blank.")
+    description = payload.description.strip()
+    if description == "":
+        raise HTTPException(status_code=422, detail="Description must not be blank.")
+    category = payload.category.strip()
+    if category == "":
+        raise HTTPException(status_code=422, detail="Category must not be blank.")
+
+    dietary_tags = normalize_tags(payload.dietary_tags)
+    allergen_tags = normalize_tags(payload.allergen_tags)
+
+    if payload.total_quantity <= 0:
+        raise HTTPException(status_code=422, detail="Quantity available must be greater than zero.")
+    if payload.pickup_end <= payload.pickup_start:
+        raise HTTPException(status_code=422, detail="The pickup end time must be after the start time.")
+
+    approved_quantity = row.total_quantity - row.remaining_quantity
+    if payload.total_quantity < approved_quantity:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "The quantity available cannot be less than the amount already "
+                f"approved ({approved_quantity})."
+            ),
+        )
+    new_remaining_quantity = payload.total_quantity - approved_quantity
+
+    row.title = title
+    row.description = description
+    row.category = category
+    row.dietary_tags = dietary_tags
+    row.allergen_tags = allergen_tags
+    row.total_quantity = payload.total_quantity
+    row.remaining_quantity = new_remaining_quantity
+    row.pickup_window = Range(payload.pickup_start, payload.pickup_end, bounds="[)")
+
+    listing_id_out = row.id
+    owner_id_out = row.owner_id
+    status_out = row.status
+    created_at_out = row.created_at
+    total_quantity_out = row.total_quantity
+    remaining_quantity_out = row.remaining_quantity
+
+    try:
+        session.commit()
+    except Exception as error:
+        session.rollback()
+        logger.error("Editing a listing failed: %s", error)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Could not save your changes right now. "
+                "Make sure the database is running and migrated."
+            ),
+        )
+
+    return ListingResponse(
+        id=str(listing_id_out),
+        owner_id=str(owner_id_out),
+        title=title,
+        description=description,
+        category=category,
+        total_quantity=total_quantity_out,
+        remaining_quantity=remaining_quantity_out,
+        dietary_tags=dietary_tags,
+        allergen_tags=allergen_tags,
+        pickup_start=payload.pickup_start,
+        pickup_end=payload.pickup_end,
+        status=status_out,
+        created_at=created_at_out,
+    )

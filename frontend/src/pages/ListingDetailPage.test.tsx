@@ -243,6 +243,32 @@ test('shows the detail message on a generic HTTP error', async () => {
   expect(screen.queryByText('This listing is unavailable.')).toBeNull()
 })
 
+test('shows the edit link when the logged-in member owns the listing', async () => {
+  setLoggedIn()
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, makeActiveListing())
+  })
+
+  renderDetailPage()
+
+  const editLink = await screen.findByRole('link', { name: 'Edit listing' })
+  expect(editLink.getAttribute('href')).toBe('/listings/abc/edit')
+})
+
+test('hides the edit link when another member owns the listing', async () => {
+  setLoggedIn()
+  const listing = makeActiveListing()
+  listing.owner_id = 'other-member'
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, listing)
+  })
+
+  renderDetailPage()
+
+  expect(await screen.findByText('Backyard Lemons')).toBeTruthy()
+  expect(screen.queryByRole('link', { name: 'Edit listing' })).toBeNull()
+})
+
 test('shows the transport error message when the request fails', async () => {
   setLoggedIn()
   vi.stubGlobal('fetch', async () => {

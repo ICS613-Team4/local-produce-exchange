@@ -4,6 +4,7 @@ import {
   listingTimeoutMilliseconds,
   sendCreateListingRequest,
   sendGetListingRequest,
+  sendUpdateListingRequest,
 } from './listingService'
 
 type FakeResponse = {
@@ -234,4 +235,70 @@ test('returns a request failure message when the get request rejects', async () 
   expect(result.ok).toBe(false)
   expect(result.status).toBe(0)
   expect(result.errorMessage).not.toBe('')
+})
+
+// --- US-16: sendUpdateListingRequest edits one listing ---
+
+test('puts the listing JSON to the listing URL with the member id header', async () => {
+  const responseBody = {
+    id: 'listing-row-id',
+    owner_id: 'member-123',
+    status: 'active',
+  }
+  let requestUrl = ''
+  let requestOptions: RequestInit = {}
+  vi.stubGlobal('fetch', async (url: string | URL | Request, options: RequestInit | undefined) => {
+    requestUrl = String(url)
+    if (options !== undefined) {
+      requestOptions = options
+    }
+    return makeFakeResponse(true, 200, JSON.stringify(responseBody))
+  })
+
+  const result = await sendUpdateListingRequest('listing-row-id', 'member-123', makeFields())
+
+  expect(result.ok).toBe(true)
+  expect(result.status).toBe(200)
+  expect(JSON.stringify(result.data)).toBe(JSON.stringify(responseBody))
+  expect(result.errorMessage).toBe('')
+  expect(requestUrl).toBe('/api/listings/listing-row-id')
+  expect(requestOptions.method).toBe('PUT')
+  expect(JSON.stringify(requestOptions.headers)).toContain('X-Member-Id')
+  expect(JSON.stringify(requestOptions.headers)).toContain('member-123')
+  expect(requestOptions.signal).toBeTruthy()
+
+  const sentBody = JSON.parse(String(requestOptions.body))
+  expect(sentBody.title).toBe('Fresh Tomatoes')
+  expect(sentBody.total_quantity).toBe(5)
+  expect(sentBody.dietary_tags).toEqual(['vegan'])
+})
+
+test('maps an update HTTP error response into the result object', async () => {
+  const responseBody = {
+    detail: 'You can only edit your own listing.',
+  }
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(false, 403, JSON.stringify(responseBody))
+  })
+
+  const result = await sendUpdateListingRequest('listing-row-id', 'member-123', makeFields())
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(403)
+  expect(JSON.stringify(result.data)).toBe(JSON.stringify(responseBody))
+  expect(result.errorMessage).toBe('')
+})
+
+test('returns a timeout message when the update request times out', async () => {
+  vi.stubGlobal('fetch', async () => {
+    throw new DOMException('The operation timed out.', 'TimeoutError')
+  })
+
+  const result = await sendUpdateListingRequest('listing-row-id', 'member-123', makeFields())
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(0)
+  expect(result.errorMessage).toBe(
+    'Timeout: no answer from the backend after ' + listingTimeoutMilliseconds + ' ms.',
+  )
 })

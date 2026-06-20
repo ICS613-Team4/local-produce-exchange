@@ -114,6 +114,7 @@ function ListingDetailPage() {
   } else if (result.ok) {
     // The backend owns this shape, so read the body with one plain cast.
     const listing = result.data as ListingDetail
+    const ownerId = listing.owner_id
     // Show the tag lists as comma-separated text, with a plain fallback so an
     // empty list reads clearly instead of showing nothing.
     let dietaryText = listing.dietary_tags.join(', ')
@@ -137,6 +138,14 @@ function ListingDetailPage() {
     if (localTimeZoneName !== '') {
       timeZoneNote = 'All times are shown in your local time zone (' + localTimeZoneName + ').'
     }
+    let editArea = null
+    if (memberId === ownerId) {
+      editArea = (
+        <p>
+          <Link to={'/listings/' + listing.id + '/edit'}>Edit listing</Link>
+        </p>
+      )
+    }
     // Quantity available (what the poster entered) and remaining quantity (what
     // is left) are two different numbers, so label each on its own line.
     contentArea = (
@@ -153,6 +162,7 @@ function ListingDetailPage() {
         <p>
           <small>{timeZoneNote}</small>
         </p>
+        {editArea}
       </>
     )
   } else if (result.status === 404) {

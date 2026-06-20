@@ -99,6 +99,58 @@ export async function sendCreateListingRequest(
   }
 }
 
+export async function sendUpdateListingRequest(
+  listingId: string,
+  memberId: string,
+  listingFields: ListingFields,
+): Promise<ListingResult> {
+  // The edit endpoint takes the same full listing body as create, but writes it
+  // to an existing row.
+  try {
+    const response = await fetch('/api/listings/' + listingId, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Member-Id': memberId,
+      },
+      body: JSON.stringify(listingFields),
+      signal: AbortSignal.timeout(listingTimeoutMilliseconds),
+    })
+
+    const responseText = await response.text()
+    let data: unknown = ''
+    if (responseText !== '') {
+      try {
+        data = JSON.parse(responseText)
+      } catch {
+        data = responseText
+      }
+    }
+
+    return {
+      ok: response.ok,
+      status: response.status,
+      data: data,
+      errorMessage: '',
+    }
+  } catch (caughtError) {
+    let errorMessage: string
+    if (caughtError instanceof DOMException && caughtError.name === 'TimeoutError') {
+      errorMessage =
+        'Timeout: no answer from the backend after ' + listingTimeoutMilliseconds + ' ms.'
+    } else {
+      errorMessage = 'Request failed: ' + String(caughtError)
+    }
+
+    return {
+      ok: false,
+      status: 0,
+      data: '',
+      errorMessage: errorMessage,
+    }
+  }
+}
+
 export async function sendGetListingRequest(
   listingId: string,
   memberId: string,
