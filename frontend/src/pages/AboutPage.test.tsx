@@ -10,7 +10,7 @@ afterEach(() => {
   cleanup()
 })
 
-test('shows the about page heading and home link', () => {
+test('shows the about page heading and placeholder text', () => {
   render(
     <MemoryRouter>
       <AboutPage />
@@ -19,9 +19,7 @@ test('shows the about page heading and home link', () => {
 
   const heading = screen.getByRole('heading', { name: 'ICS 613 Team 4: About Page' })
   const placeholderText = screen.getByText(/Lorem ipsum dolor sit amet/)
-  const homeLink = screen.getByRole('link', { name: 'Go to home page' })
 
   expect(heading).toBeTruthy()
   expect(placeholderText).toBeTruthy()
-  expect(homeLink.getAttribute('href')).toBe('/')
 })

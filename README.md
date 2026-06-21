@@ -399,18 +399,24 @@ need a running backend.
 frontend/
   src/
     App.test.tsx                Vitest route-registration tests for the React app.
+    components/
+      Layout.test.tsx           Vitest component tests for the shared layout and
+                                auth-aware nav.
     pages/
       AboutPage.test.tsx        Vitest component tests for the about page.
       CreateListingPage.test.tsx
                                 Vitest component tests for listing creation.
       DashboardPage.test.tsx    Vitest component tests for the member dashboard.
+      EditListingPage.test.tsx  Vitest component tests for listing editing.
       HomePage.test.tsx         Vitest component tests for the home page.
       InvitePage.test.tsx       Vitest component tests for invite links.
       ListingDetailPage.test.tsx
                                 Vitest component tests for listing details.
       LoginPage.test.tsx        Vitest component tests for login and logout.
       NotFoundPage.test.tsx     Vitest component tests for unknown routes.
+      ProfilePage.test.tsx      Vitest component tests for the member profile.
       RegisterPage.test.tsx     Vitest component tests for registration.
+      TestPage.test.tsx         Vitest component tests for the sample endpoint page.
     services/
       authService.test.ts       Vitest unit tests for auth API helpers.
       inviteService.test.ts     Vitest unit tests for invite API helpers.
@@ -419,6 +425,7 @@ frontend/
                                 Vitest unit tests for the sample API helper.
     utils/
       formatApiResult.test.ts   Vitest unit tests for response text formatting.
+      formatTimestamp.test.ts   Vitest unit tests for timestamp formatting.
 ```
 
 ### Backend Tests
@@ -434,6 +441,8 @@ backend/
     test_invite.py             pytest unit tests for invite behavior.
     test_listing.py            pytest unit tests for create-listing behavior.
     test_listing_detail.py     pytest unit tests for listing-detail behavior.
+    test_listing_edit.py       pytest unit tests for listing-edit behavior.
+    test_members.py            pytest unit tests for member behavior.
     test_sample_endpoint.py    pytest unit tests for the sample endpoint.
     test_security.py           pytest unit tests for password and invite-token helpers.
 ```

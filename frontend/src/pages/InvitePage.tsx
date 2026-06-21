@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import { Link } from 'react-router'
 
 import { sendCreateInviteRequest } from '../services/inviteService'
 
@@ -73,13 +72,10 @@ function InvitePage() {
   // so the create button never appears and the backend is never called.
   if (memberId === '') {
     return (
-      <>
+      <section>
         <h1>Invite a new member</h1>
-        <p>
-          <Link to="/">Go to home page</Link>
-        </p>
         <p>Please log in to create an invite.</p>
-      </>
+      </section>
     )
   }
 
@@ -117,11 +113,8 @@ function InvitePage() {
   }
 
   return (
-    <>
+    <section>
       <h1>Invite a new member</h1>
-      <p>
-        <Link to="/">Go to home page</Link>
-      </p>
       <p>
         Create an invite token to bring a new person into the community. Share
         it with them so they can register.
@@ -129,7 +122,7 @@ function InvitePage() {
       <button onClick={handleCreateInvite}>Create an invite</button>
       {successArea}
       {errorArea}
-    </>
+    </section>
   )
 }
 

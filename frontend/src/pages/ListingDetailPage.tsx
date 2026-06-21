@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router'
 
 import { sendGetListingRequest } from '../services/listingService'
 import type { ListingDetail, ListingResult } from '../services/listingService'
-import { sendLogoutRequest } from '../services/authService'
+import { authStateChangedEventName } from '../services/authService'
 import { formatApiResult } from '../utils/formatApiResult'
 import { formatTimestamp, getLocalTimeZoneName } from '../utils/formatTimestamp'
 
@@ -30,16 +30,6 @@ function ListingDetailPage() {
   const [result, setResult] = useState<ListingResult | null>(null)
   const [resultListingId, setResultListingId] = useState('')
 
-  async function handleLogout() {
-    await sendLogoutRequest()
-    window.localStorage.removeItem('memberId')
-    window.localStorage.removeItem('memberName')
-    window.localStorage.removeItem('memberEmail')
-    // Reset both: the nav gates on memberId and the line reads memberName.
-    setMemberId('')
-    setMemberName('')
-  }
-
   // Load the listing when the page has a logged-in member. The request number
   // keeps an older response from replacing a newer route's response.
   useEffect(() => {
@@ -62,6 +52,9 @@ function ListingDetailPage() {
         window.localStorage.removeItem('memberEmail')
         setMemberId('')
         setMemberName('')
+        // The route is not changing, so tell the shared nav the login was
+        // cleared by firing the same-tab event it listens for.
+        window.dispatchEvent(new Event(authStateChangedEventName))
         return
       }
       setResult(loadedResult)
@@ -70,31 +63,15 @@ function ListingDetailPage() {
     loadListing()
   }, [listingId, memberId])
 
-  // Build the login-aware navigation area, always shown. Both branches assign,
-  // so it is declared without an initial value (the same shape HomePage uses).
-  let loggedInArea
+  // Show a short status line when logged in. The shared nav owns the log in and
+  // log out controls now, so a logged-out viewer needs nothing here.
+  let loggedInArea = null
   if (memberId !== '') {
     let loggedInLine = 'Logged in.'
     if (memberName !== '') {
       loggedInLine = 'Logged in as ' + memberName + '.'
     }
-    loggedInArea = (
-      <>
-        <p>{loggedInLine}</p>
-        <p>
-          <Link to="/dashboard">Go to dashboard</Link>
-        </p>
-        <p>
-          <button onClick={handleLogout}>Log out</button>
-        </p>
-      </>
-    )
-  } else {
-    loggedInArea = (
-      <p>
-        <Link to="/login">Go to login page</Link>
-      </p>
-    )
+    loggedInArea = <p>{loggedInLine}</p>
   }
 
   // Build the content area with a plain if/else chain, checked in a set order.
@@ -149,7 +126,7 @@ function ListingDetailPage() {
     // Quantity available (what the poster entered) and remaining quantity (what
     // is left) are two different numbers, so label each on its own line.
     contentArea = (
-      <>
+      <article>
         <h2>{listing.title}</h2>
         <p>{listing.description}</p>
         <p>Category: {listing.category}</p>
@@ -163,7 +140,7 @@ function ListingDetailPage() {
           <small>{timeZoneNote}</small>
         </p>
         {editArea}
-      </>
+      </article>
     )
   } else if (result.status === 404) {
     contentArea = <p role="alert">This listing is unavailable.</p>
@@ -190,17 +167,11 @@ function ListingDetailPage() {
   }
 
   return (
-    <>
+    <section>
       <h1>Listing details</h1>
-      <p>
-        <Link to="/">Go to home page</Link>
-      </p>
-      <p>
-        <Link to="/about">Go to about page</Link>
-      </p>
       {loggedInArea}
       {contentArea}
-    </>
+    </section>
   )
 }
 

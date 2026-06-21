@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link, useNavigate, useSearchParams } from 'react-router'
+import { useNavigate, useSearchParams } from 'react-router'
 
 import { sendRegisterRequest } from '../services/authService'
 import { formatApiResult } from '../utils/formatApiResult'
@@ -107,22 +107,27 @@ function RegisterPage() {
   }
 
   return (
-    <>
+    <section>
       <h1>Register</h1>
-      <p>
-        <Link to="/">Go to home page</Link>
-      </p>
       <p>Create your member account with the invite token you received.</p>
       <form onSubmit={handleSubmit}>
         <p>
           <label htmlFor="register-name">Name</label>{' '}
-          <input id="register-name" type="text" required value={name} onChange={handleNameChange} />
+          <input
+            id="register-name"
+            type="text"
+            autoComplete="name"
+            required
+            value={name}
+            onChange={handleNameChange}
+          />
         </p>
         <p>
           <label htmlFor="register-email">Email</label>{' '}
           <input
             id="register-email"
             type="email"
+            autoComplete="email"
             required
             value={email}
             onChange={handleEmailChange}
@@ -133,6 +138,7 @@ function RegisterPage() {
           <input
             id="register-password"
             type="password"
+            autoComplete="new-password"
             required
             value={password}
             onChange={handlePasswordChange}
@@ -143,6 +149,7 @@ function RegisterPage() {
           <input
             id="register-invite-token"
             type="text"
+            autoComplete="off"
             required
             value={inviteToken}
             onChange={handleInviteTokenChange}
@@ -156,7 +163,7 @@ function RegisterPage() {
       </form>
       {errorArea}
       {rawResponseArea}
-    </>
+    </section>
   )
 }
 

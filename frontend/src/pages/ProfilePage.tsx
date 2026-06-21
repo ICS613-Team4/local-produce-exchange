@@ -125,36 +125,30 @@ function ProfilePage() {
 
   if (memberId === null) {
     return (
-      <>
+      <section>
         <h1>Profile</h1>
-        <p>
-          <Link to="/">Go to home page</Link>
-        </p>
         <p>
           Please <Link to="/login">log in</Link> to view your profile.
         </p>
-      </>
+      </section>
     )
   }
 
   if (loading) {
     return (
-      <>
+      <section>
         <h1>Profile</h1>
         <p>Loading&hellip;</p>
-      </>
+      </section>
     )
   }
 
   if (pageError !== '') {
     return (
-      <>
+      <section>
         <h1>Profile</h1>
-        <p>
-          <Link to="/">Go to home page</Link>
-        </p>
         <p role="alert">{pageError}</p>
-      </>
+      </section>
     )
   }
 
@@ -176,11 +170,8 @@ function ProfilePage() {
       )
 
     return (
-      <>
+      <section>
         <h1>Edit Profile</h1>
-        <p>
-          <Link to="/">Go to home page</Link>
-        </p>
         <form onSubmit={handleSaveSubmit}>
           <p>
             <label htmlFor="profile-display-name">Display name</label>{' '}
@@ -223,16 +214,13 @@ function ProfilePage() {
         </form>
         {errorArea}
         {rawResponseArea}
-      </>
+      </section>
     )
   }
 
   return (
-    <>
+    <section>
       <h1>Profile</h1>
-      <p>
-        <Link to="/">Go to home page</Link>
-      </p>
       <p>
         <strong>Name:</strong> {member.name}
       </p>
@@ -252,7 +240,7 @@ function ProfilePage() {
         <strong>Member since:</strong> {new Date(member.created_at).toLocaleDateString()}
       </p>
       {canEdit && <button onClick={handleEditClick}>Edit profile</button>}
-    </>
+    </section>
   )
 }
 

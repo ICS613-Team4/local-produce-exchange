@@ -92,3 +92,14 @@ test('wires the /listings/:id/edit route to the edit listing page', async () => 
 
   expect(await screen.findByRole('button', { name: 'Save changes' })).toBeTruthy()
 })
+
+test('wires the /test route to the test page for a logged-out visitor', () => {
+  // No stored login here, which proves the Test page is open to everyone.
+  window.history.pushState({}, '', '/test')
+  render(<App />)
+
+  // The page heading (not the nav link of the same name) renders, which only
+  // happens if App registered the route.
+  expect(screen.getByRole('heading', { name: 'Test Page' })).toBeTruthy()
+  expect(screen.getByText('Call backend API with valid JSON')).toBeTruthy()
+})

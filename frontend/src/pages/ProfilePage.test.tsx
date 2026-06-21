@@ -218,4 +218,6 @@ test('shows an error message when the profile fetch fails', async () => {
 
   const errorArea = await screen.findByRole('alert')
   expect(errorArea).toBeTruthy()
+  // The page-level home link was removed; the shared nav covers it now.
+  expect(screen.queryByRole('link', { name: 'Go to home page' })).toBeNull()
 })

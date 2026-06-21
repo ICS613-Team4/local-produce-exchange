@@ -291,7 +291,7 @@ test('shows the unavailable message when loading fails with 404', async () => {
   expect(alert.textContent).toBe('This listing is unavailable.')
 })
 
-test('clears stale credentials on a 401 load response', async () => {
+test('clears stale credentials and fires the auth event on a 401 load response', async () => {
   window.localStorage.setItem('memberId', 'stale-id')
   window.localStorage.setItem('memberName', 'Bob Baker')
   window.localStorage.setItem('memberEmail', 'bob@example.com')
@@ -299,14 +299,24 @@ test('clears stale credentials on a 401 load response', async () => {
     return makeFakeResponse(false, 401, { detail: 'Not authenticated. Unknown member.' })
   })
 
+  // Listen for the same-tab event clearStoredLogin fires, so the shared nav can
+  // flip to the logged-out view without a route change.
+  let authEventFired = false
+  function handleAuthEvent() {
+    authEventFired = true
+  }
+  window.addEventListener('auth-state-changed', handleAuthEvent)
+
   renderEditPage()
 
   expect(await screen.findByText('You need to be logged in to see this page.')).toBeTruthy()
-  expect(screen.getByRole('link', { name: 'Go to login page' })).toBeTruthy()
   expect(screen.queryByLabelText('Title')).toBeNull()
   expect(window.localStorage.getItem('memberId')).toBeNull()
   expect(window.localStorage.getItem('memberName')).toBeNull()
   expect(window.localStorage.getItem('memberEmail')).toBeNull()
+  expect(authEventFired).toBe(true)
+
+  window.removeEventListener('auth-state-changed', handleAuthEvent)
 })
 
 test('sends numeric quantity, split tags, and ISO pickup times on save', async () => {
@@ -461,7 +471,7 @@ test('refills the form from the saved response after a successful save', async (
   expect(dietaryInput.value).toBe('Vegan')
 })
 
-test('clears stale credentials on a 401 save response', async () => {
+test('clears stale credentials and fires the auth event on a 401 save response', async () => {
   setLoggedIn()
   const listing = makeActiveListing()
   vi.stubGlobal('fetch', async (_url: string | URL | Request, options: RequestInit | undefined) => {
@@ -470,6 +480,13 @@ test('clears stale credentials on a 401 save response', async () => {
     }
     return makeFakeResponse(true, 200, listing)
   })
+
+  // Listen for the same-tab event clearStoredLogin fires on a save-time 401.
+  let authEventFired = false
+  function handleAuthEvent() {
+    authEventFired = true
+  }
+  window.addEventListener('auth-state-changed', handleAuthEvent)
 
   renderEditPage()
   await waitForLoadedForm()
@@ -480,4 +497,7 @@ test('clears stale credentials on a 401 save response', async () => {
   expect(window.localStorage.getItem('memberName')).toBeNull()
   expect(window.localStorage.getItem('memberEmail')).toBeNull()
   expect(screen.queryByLabelText('Title')).toBeNull()
+  expect(authEventFired).toBe(true)
+
+  window.removeEventListener('auth-state-changed', handleAuthEvent)
 })

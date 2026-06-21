@@ -22,17 +22,19 @@ function renderDashboard() {
   )
 }
 
-test('shows the title and the navigation links', () => {
+test('shows the title and the member action links', () => {
   renderDashboard()
 
   expect(screen.getByRole('heading', { name: 'Member Dashboard' })).toBeTruthy()
 
-  const homeLink = screen.getByRole('link', { name: 'Go to home page' })
-  expect(homeLink.getAttribute('href')).toBe('/')
-
-  const aboutLink = screen.getByRole('link', { name: 'Go to about page' })
-  expect(aboutLink.getAttribute('href')).toBe('/about')
-
   const createLink = screen.getByRole('link', { name: 'Create a listing' })
   expect(createLink.getAttribute('href')).toBe('/listings/create')
+
+  // Moved here from the nav, so the dashboard is the one place that gathers the
+  // member actions.
+  const inviteLink = screen.getByRole('link', { name: 'Invite a new member' })
+  expect(inviteLink.getAttribute('href')).toBe('/invite')
+
+  const profileLink = screen.getByRole('link', { name: 'View profile' })
+  expect(profileLink.getAttribute('href')).toBe('/profile')
 })

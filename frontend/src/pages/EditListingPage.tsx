@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router'
 
-import { sendLogoutRequest } from '../services/authService'
+import { authStateChangedEventName } from '../services/authService'
 import { sendGetListingRequest, sendUpdateListingRequest } from '../services/listingService'
 import type { ListingDetail, ListingResult } from '../services/listingService'
 
@@ -123,6 +123,9 @@ function EditListingPage() {
     window.localStorage.removeItem('memberEmail')
     setMemberId('')
     setMemberName('')
+    // The route is not changing on a stale 401, so tell the shared nav the
+    // login was cleared by firing the same-tab event it listens for.
+    window.dispatchEvent(new Event(authStateChangedEventName))
   }, [])
 
   const fillFormFromListing = useCallback((listing: ListingDetail) => {
@@ -135,11 +138,6 @@ function EditListingPage() {
     setPickupStart(isoToLocalInputValue(listing.pickup_start))
     setPickupEnd(isoToLocalInputValue(listing.pickup_end))
   }, [])
-
-  async function handleLogout() {
-    await sendLogoutRequest()
-    clearStoredLogin()
-  }
 
   useEffect(() => {
     latestRequestNumber.current = latestRequestNumber.current + 1
@@ -290,29 +288,15 @@ function EditListingPage() {
     }
   }
 
-  let loggedInArea
+  // Show a short status line when logged in. The shared nav owns the log in and
+  // log out controls now, so a logged-out viewer needs nothing here.
+  let loggedInArea = null
   if (memberId !== '') {
     let loggedInLine = 'Logged in.'
     if (memberName !== '') {
       loggedInLine = 'Logged in as ' + memberName + '.'
     }
-    loggedInArea = (
-      <>
-        <p>{loggedInLine}</p>
-        <p>
-          <Link to="/dashboard">Go to dashboard</Link>
-        </p>
-        <p>
-          <button onClick={handleLogout}>Log out</button>
-        </p>
-      </>
-    )
-  } else {
-    loggedInArea = (
-      <p>
-        <Link to="/login">Go to login page</Link>
-      </p>
-    )
+    loggedInArea = <p>{loggedInLine}</p>
   }
 
   let contentArea
@@ -452,17 +436,11 @@ function EditListingPage() {
   }
 
   return (
-    <>
+    <section>
       <h1>Edit listing</h1>
-      <p>
-        <Link to="/">Go to home page</Link>
-      </p>
-      <p>
-        <Link to="/about">Go to about page</Link>
-      </p>
       {loggedInArea}
       {contentArea}
-    </>
+    </section>
   )
 }
 

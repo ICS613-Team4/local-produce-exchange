@@ -2,20 +2,20 @@ import { Link } from 'react-router'
 
 function DashboardPage() {
   return (
-    <>
+    <section>
       <h1>Member Dashboard</h1>
-      <p>
-        <Link to="/">Go to home page</Link>
-      </p>
-      <p>
-        <Link to="/about">Go to about page</Link>
-      </p>
       <ul>
         <li>
           <Link to="/listings/create">Create a listing</Link>
         </li>
+        <li>
+          <Link to="/invite">Invite a new member</Link>
+        </li>
+        <li>
+          <Link to="/profile">View profile</Link>
+        </li>
       </ul>
-    </>
+    </section>
   )
 }
 

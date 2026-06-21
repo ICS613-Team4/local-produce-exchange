@@ -1,17 +1,12 @@
-import { Link } from 'react-router'
-
 function AboutPage() {
   return (
-    <>
+    <section>
       <h1>ICS 613 Team 4: About Page</h1>
-      <p>
-        <Link to="/">Go to home page</Link>
-      </p>
       <p>
         Lorem ipsum dolor sit amet, consectetur adipiscing elit. Integer vitae
         lorem at nulla facilisis pretium.
       </p>
-    </>
+    </section>
   )
 }
 
