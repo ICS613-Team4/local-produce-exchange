@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router'
 import { afterEach, expect, test, vi } from 'vitest'
 
@@ -317,4 +317,393 @@ test('ignores an older response after the route changes to another listing', asy
 
   expect(screen.getByText('Second Listing')).toBeTruthy()
   expect(screen.queryByText('First Listing')).toBeNull()
+})
+
+// --- US-17: the owner-only deactivate control ---
+
+// The deactivate flow always fires the load GET first, then the deactivate POST
+// on click. This stub answers any GET with an active listing the logged-in
+// member owns, and runs handlePost for the deactivate POST (so a test can return
+// a response or throw). It records each deactivate POST URL.
+function stubDeactivateFetch(handlePost: () => Promise<FakeResponse>) {
+  const postUrls: string[] = []
+  vi.stubGlobal('fetch', async (url: string | URL | Request, options: RequestInit | undefined) => {
+    const urlText = String(url)
+    let method = 'GET'
+    if (options !== undefined && options.method !== undefined) {
+      method = String(options.method)
+    }
+    if (method === 'POST') {
+      postUrls.push(urlText)
+      return handlePost()
+    }
+    return makeFakeResponse(true, 200, makeActiveListing())
+  })
+  return postUrls
+}
+
+// For the navigation tests: answer each GET with an active listing whose id and
+// title match the requested listing id (pulled from the URL), and run handlePost
+// for the deactivate POST. Both listings are owned by the logged-in member.
+function stubFetchByListingId(handlePost: () => Promise<FakeResponse>) {
+  const postUrls: string[] = []
+  vi.stubGlobal('fetch', async (url: string | URL | Request, options: RequestInit | undefined) => {
+    const urlText = String(url)
+    let method = 'GET'
+    if (options !== undefined && options.method !== undefined) {
+      method = String(options.method)
+    }
+    if (method === 'POST') {
+      postUrls.push(urlText)
+      return handlePost()
+    }
+    const urlParts = urlText.split('/')
+    const requestedId = urlParts[urlParts.length - 1]
+    const listing = makeActiveListing()
+    listing.id = requestedId
+    listing.title = 'Listing ' + requestedId
+    return makeFakeResponse(true, 200, listing)
+  })
+  return postUrls
+}
+
+test('shows the deactivate button to the owner', async () => {
+  setLoggedIn()
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, makeActiveListing())
+  })
+
+  renderDetailPage()
+
+  expect(await screen.findByRole('button', { name: 'Deactivate listing' })).toBeTruthy()
+})
+
+test('hides the deactivate button from a non-owner', async () => {
+  setLoggedIn()
+  const listing = makeActiveListing()
+  listing.owner_id = 'other-member'
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, listing)
+  })
+
+  renderDetailPage()
+
+  expect(await screen.findByText('Backyard Lemons')).toBeTruthy()
+  expect(screen.queryByRole('button', { name: 'Deactivate listing' })).toBeNull()
+})
+
+test('deactivates on confirm: posts, shows the success message, and hides the owner actions', async () => {
+  setLoggedIn()
+  vi.stubGlobal('confirm', () => {
+    return true
+  })
+  const postUrls = stubDeactivateFetch(async () => {
+    return makeFakeResponse(true, 204, {})
+  })
+
+  renderDetailPage()
+
+  const button = await screen.findByRole('button', { name: 'Deactivate listing' })
+  fireEvent.click(button)
+
+  // The success confirmation appears as plain text (not an alert).
+  expect(await screen.findByText('Listing deactivated.')).toBeTruthy()
+  // Exactly one POST went to the deactivate path.
+  expect(postUrls.length).toBe(1)
+  expect(postUrls[0]).toBe('/api/listings/abc/deactivate')
+  // The owner actions are gone: both the Edit link and the Deactivate button.
+  expect(screen.queryByRole('button', { name: 'Deactivate listing' })).toBeNull()
+  expect(screen.queryByRole('link', { name: 'Edit listing' })).toBeNull()
+})
+
+test('does not post when the confirm is cancelled', async () => {
+  setLoggedIn()
+  vi.stubGlobal('confirm', () => {
+    return false
+  })
+  const postUrls = stubDeactivateFetch(async () => {
+    return makeFakeResponse(true, 204, {})
+  })
+
+  renderDetailPage()
+
+  const button = await screen.findByRole('button', { name: 'Deactivate listing' })
+  fireEvent.click(button)
+  await waitForStateUpdates()
+
+  // No deactivate POST was made (the load GET still ran).
+  expect(postUrls.length).toBe(0)
+  // The button is still there, since nothing was deactivated.
+  expect(screen.getByRole('button', { name: 'Deactivate listing' })).toBeTruthy()
+})
+
+test('shows a server error and keeps the deactivate button enabled', async () => {
+  setLoggedIn()
+  vi.stubGlobal('confirm', () => {
+    return true
+  })
+  stubDeactivateFetch(async () => {
+    return makeFakeResponse(false, 500, { detail: 'Server error while deactivating.' })
+  })
+
+  renderDetailPage()
+
+  const button = await screen.findByRole('button', { name: 'Deactivate listing' })
+  fireEvent.click(button)
+
+  const alert = await screen.findByRole('alert')
+  expect(alert.textContent).toBe('Server error while deactivating.')
+  // The button is still on screen and re-enabled, so the user can retry.
+  const buttonAfter = screen.getByRole('button', { name: 'Deactivate listing' })
+  expect(buttonAfter.hasAttribute('disabled')).toBe(false)
+})
+
+test('shows a transport error and keeps the deactivate button enabled', async () => {
+  setLoggedIn()
+  vi.stubGlobal('confirm', () => {
+    return true
+  })
+  stubDeactivateFetch(async () => {
+    throw new DOMException('The operation timed out.', 'TimeoutError')
+  })
+
+  renderDetailPage()
+
+  const button = await screen.findByRole('button', { name: 'Deactivate listing' })
+  fireEvent.click(button)
+
+  const alert = await screen.findByRole('alert')
+  expect(alert.textContent).toContain('Timeout')
+  const buttonAfter = screen.getByRole('button', { name: 'Deactivate listing' })
+  expect(buttonAfter.hasAttribute('disabled')).toBe(false)
+})
+
+test('clears the credentials and shows the logged-out view on a 401', async () => {
+  setLoggedIn()
+  vi.stubGlobal('confirm', () => {
+    return true
+  })
+  stubDeactivateFetch(async () => {
+    return makeFakeResponse(false, 401, { detail: 'Not authenticated. Unknown member.' })
+  })
+
+  // Listen for the same-tab event the page fires after clearing a stale login,
+  // so the shared nav can flip to the logged-out view without a route change.
+  let authEventFired = false
+  function handleAuthEvent() {
+    authEventFired = true
+  }
+  window.addEventListener('auth-state-changed', handleAuthEvent)
+
+  renderDetailPage()
+
+  const button = await screen.findByRole('button', { name: 'Deactivate listing' })
+  fireEvent.click(button)
+
+  // The page falls back to the logged-out view.
+  expect(await screen.findByText('You need to be logged in to see this page.')).toBeTruthy()
+  // Every credential key is cleared.
+  expect(window.localStorage.getItem('memberId')).toBeNull()
+  expect(window.localStorage.getItem('memberName')).toBeNull()
+  expect(window.localStorage.getItem('memberEmail')).toBeNull()
+  // The page told the shared nav the login was cleared.
+  expect(authEventFired).toBe(true)
+
+  window.removeEventListener('auth-state-changed', handleAuthEvent)
+})
+
+test('sends only one POST for a double-click', async () => {
+  setLoggedIn()
+  vi.stubGlobal('confirm', () => {
+    return true
+  })
+  const postUrls = stubDeactivateFetch(async () => {
+    return makeFakeResponse(true, 204, {})
+  })
+
+  renderDetailPage()
+
+  const button = await screen.findByRole('button', { name: 'Deactivate listing' })
+  // Two clicks in the same tick, before React can re-render and disable the
+  // button. Clicking inside one act keeps both in the same tick, so the
+  // synchronous ref guard (not the disabled attribute) is what drops the second
+  // click. Either way only one POST goes out.
+  await act(async () => {
+    button.click()
+    button.click()
+  })
+
+  expect(await screen.findByText('Listing deactivated.')).toBeTruthy()
+  expect(postUrls.length).toBe(1)
+})
+
+test('shows a generic message when a deactivate failure carries no detail', async () => {
+  setLoggedIn()
+  vi.stubGlobal('confirm', () => {
+    return true
+  })
+  // A server error whose body has no detail field falls back to the generic line.
+  stubDeactivateFetch(async () => {
+    return makeFakeResponse(false, 500, {})
+  })
+
+  renderDetailPage()
+
+  const button = await screen.findByRole('button', { name: 'Deactivate listing' })
+  fireEvent.click(button)
+
+  const alert = await screen.findByRole('alert')
+  expect(alert.textContent).toBe('Could not deactivate the listing. Please try again.')
+  const buttonAfter = screen.getByRole('button', { name: 'Deactivate listing' })
+  expect(buttonAfter.hasAttribute('disabled')).toBe(false)
+})
+
+test('resets the deactivate state when the route changes to another listing', async () => {
+  setLoggedIn()
+  vi.stubGlobal('confirm', () => {
+    return true
+  })
+  stubFetchByListingId(async () => {
+    return makeFakeResponse(true, 204, {})
+  })
+
+  render(
+    <MemoryRouter initialEntries={['/listings/first']}>
+      <Routes>
+        <Route path="/listings/:id" element={<DetailPageWithSecondListingButton />} />
+      </Routes>
+    </MemoryRouter>,
+  )
+
+  expect(await screen.findByText('Listing first')).toBeTruthy()
+  const button = await screen.findByRole('button', { name: 'Deactivate listing' })
+  fireEvent.click(button)
+  expect(await screen.findByText('Listing deactivated.')).toBeTruthy()
+
+  // Navigate to a different listing.
+  fireEvent.click(screen.getByRole('button', { name: 'Second listing' }))
+  expect(await screen.findByText('Listing second')).toBeTruthy()
+
+  // The deactivate state did not leak across listings.
+  expect(screen.queryByText('Listing deactivated.')).toBeNull()
+  expect(screen.getByRole('button', { name: 'Deactivate listing' })).toBeTruthy()
+})
+
+test('drops a late deactivate response after navigating to another listing', async () => {
+  setLoggedIn()
+  vi.stubGlobal('confirm', () => {
+    return true
+  })
+  const pendingPost = makePendingResponse()
+  stubFetchByListingId(() => {
+    return pendingPost.promise
+  })
+
+  render(
+    <MemoryRouter initialEntries={['/listings/first']}>
+      <Routes>
+        <Route path="/listings/:id" element={<DetailPageWithSecondListingButton />} />
+      </Routes>
+    </MemoryRouter>,
+  )
+
+  expect(await screen.findByText('Listing first')).toBeTruthy()
+  const button = await screen.findByRole('button', { name: 'Deactivate listing' })
+  // Start the deactivate POST on the first listing but leave it in flight.
+  fireEvent.click(button)
+
+  // Navigate to a second listing before the POST resolves.
+  fireEvent.click(screen.getByRole('button', { name: 'Second listing' }))
+  expect(await screen.findByText('Listing second')).toBeTruthy()
+
+  // Now resolve the old first-listing POST.
+  pendingPost.resolve(makeFakeResponse(true, 204, {}))
+  await waitForStateUpdates()
+
+  // The late response is dropped: the second listing shows no success message and
+  // keeps its owner actions.
+  expect(screen.queryByText('Listing deactivated.')).toBeNull()
+  expect(screen.getByRole('link', { name: 'Edit listing' })).toBeTruthy()
+  expect(screen.getByRole('button', { name: 'Deactivate listing' })).toBeTruthy()
+})
+
+test('a pending deactivate on one listing does not block deactivating another', async () => {
+  // Reproduces the cross-listing re-entry bug: with a component-wide boolean
+  // guard, a request still in flight on listing A wrongly blocked the click on
+  // listing B. The per-listing key guard must let B's click through, firing its
+  // own confirm and its own POST.
+  setLoggedIn()
+  let confirmCount = 0
+  vi.stubGlobal('confirm', () => {
+    confirmCount = confirmCount + 1
+    return true
+  })
+
+  const pendingFirstPost = makePendingResponse()
+  const postUrls: string[] = []
+  vi.stubGlobal('fetch', async (url: string | URL | Request, options: RequestInit | undefined) => {
+    const urlText = String(url)
+    let method = 'GET'
+    if (options !== undefined && options.method !== undefined) {
+      method = String(options.method)
+    }
+    if (method === 'POST') {
+      postUrls.push(urlText)
+      if (urlText.includes('/first/')) {
+        // Listing A's POST stays in flight.
+        return pendingFirstPost.promise
+      }
+      // Listing B's POST resolves right away.
+      return makeFakeResponse(true, 204, {})
+    }
+    const urlParts = urlText.split('/')
+    const requestedId = urlParts[urlParts.length - 1]
+    const listing = makeActiveListing()
+    listing.id = requestedId
+    listing.title = 'Listing ' + requestedId
+    return makeFakeResponse(true, 200, listing)
+  })
+
+  render(
+    <MemoryRouter initialEntries={['/listings/first']}>
+      <Routes>
+        <Route path="/listings/:id" element={<DetailPageWithSecondListingButton />} />
+      </Routes>
+    </MemoryRouter>,
+  )
+
+  // Deactivate listing A; its POST stays pending.
+  expect(await screen.findByText('Listing first')).toBeTruthy()
+  const firstButton = await screen.findByRole('button', { name: 'Deactivate listing' })
+  fireEvent.click(firstButton)
+  expect(confirmCount).toBe(1)
+
+  // Navigate to listing B while A's POST is still in flight.
+  fireEvent.click(screen.getByRole('button', { name: 'Second listing' }))
+  expect(await screen.findByText('Listing second')).toBeTruthy()
+
+  // Click B's Deactivate before A resolves. This must NOT be blocked.
+  const secondButton = await screen.findByRole('button', { name: 'Deactivate listing' })
+  fireEvent.click(secondButton)
+
+  // B's deactivate went through: its success message shows.
+  expect(await screen.findByText('Listing deactivated.')).toBeTruthy()
+  // A second confirm fired and a second POST went out (to B's deactivate path).
+  expect(confirmCount).toBe(2)
+  let firstPostCount = 0
+  let secondPostCount = 0
+  for (const sentUrl of postUrls) {
+    if (sentUrl.includes('/first/')) {
+      firstPostCount = firstPostCount + 1
+    }
+    if (sentUrl.includes('/second/')) {
+      secondPostCount = secondPostCount + 1
+    }
+  }
+  expect(firstPostCount).toBe(1)
+  expect(secondPostCount).toBe(1)
+
+  // Resolve the still-pending A request so nothing dangles.
+  pendingFirstPost.resolve(makeFakeResponse(true, 204, {}))
+  await waitForStateUpdates()
 })

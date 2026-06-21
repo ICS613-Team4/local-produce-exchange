@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router'
 
-import { sendGetListingRequest } from '../services/listingService'
+import { sendDeactivateListingRequest, sendGetListingRequest } from '../services/listingService'
 import type { ListingDetail, ListingResult } from '../services/listingService'
 import { authStateChangedEventName } from '../services/authService'
 import { formatApiResult } from '../utils/formatApiResult'
@@ -29,6 +29,127 @@ function ListingDetailPage() {
   // doubles as the loading state, so no separate loading flag is needed.
   const [result, setResult] = useState<ListingResult | null>(null)
   const [resultListingId, setResultListingId] = useState('')
+
+  // The deactivate control's state, each with one clear meaning.
+  // isDeactivating: a deactivate request is in flight (greys the button).
+  // deactivated: the listing has been deactivated (hides the owner actions).
+  // deactivateMessage: the success or error text to show.
+  const [isDeactivating, setIsDeactivating] = useState(false)
+  const [deactivated, setDeactivated] = useState(false)
+  const [deactivateMessage, setDeactivateMessage] = useState('')
+
+  // Guards against a same-tick double-click on the SAME listing. It holds the
+  // key (listing id + member id) of the deactivate request in flight, or an
+  // empty string when none. A ref updates immediately (not after a re-render),
+  // so two clicks fired in the same tick cannot both pass the check. Keying it
+  // by listing means a request still in flight on one listing does not block a
+  // click on a different listing the user navigated to.
+  const isDeactivatingRef = useRef('')
+
+  // Reset the deactivate state whenever the route or the member changes, so it
+  // never leaks from one listing (or one login) to the next. React allows
+  // adjusting state during render this way when a value it depends on changes;
+  // it is the recommended alternative to resetting inside an effect.
+  const [previousListingId, setPreviousListingId] = useState(listingId)
+  const [previousMemberId, setPreviousMemberId] = useState(memberId)
+  if (previousListingId !== listingId || previousMemberId !== memberId) {
+    setPreviousListingId(listingId)
+    setPreviousMemberId(memberId)
+    setIsDeactivating(false)
+    setDeactivated(false)
+    setDeactivateMessage('')
+  }
+
+  // Deactivate the listing the owner is viewing. The steps run in a set order so
+  // the in-flight guard, the confirm, the stale-route guard, and the result
+  // handling never trip over each other.
+  async function handleDeactivate() {
+    // The key for this click: the listing and member it acts on. Block only when
+    // a request for this SAME key is already in flight (a same-tick double-click
+    // on this listing). A request still in flight on a different listing has a
+    // different key, so it does not block this click.
+    const requestKey = listingId + '|' + memberId
+    if (isDeactivatingRef.current === requestKey) {
+      return
+    }
+    isDeactivatingRef.current = requestKey
+
+    // Ask before doing it. On cancel, release the guard (only if this click still
+    // owns it) and stop.
+    const confirmed = window.confirm('Deactivate this listing? No new requests can be made on it.')
+    if (confirmed === false) {
+      if (isDeactivatingRef.current === requestKey) {
+        isDeactivatingRef.current = ''
+      }
+      return
+    }
+
+    // Mark the request in flight (greys the button) and clear any prior message.
+    setIsDeactivating(true)
+    setDeactivateMessage('')
+
+    // Remember which load this request belongs to, to compare after the await.
+    // The load effect bumps latestRequestNumber on every route or member change,
+    // so a different value afterward means the user moved on. This is the same
+    // stale-response guard the listing load above uses.
+    const requestNumberAtClick = latestRequestNumber.current
+    const deactivateResult = await sendDeactivateListingRequest(listingId, memberId)
+
+    // Release the re-entry guard, but only if this request still owns the key. A
+    // later request for another listing may have taken it over; clearing it
+    // unconditionally would drop that newer request's guard.
+    if (isDeactivatingRef.current === requestKey) {
+      isDeactivatingRef.current = ''
+    }
+
+    // Stale-route guard: if the user navigated to another listing (or logged
+    // out) while this request was in flight, drop the response without touching
+    // any state.
+    if (requestNumberAtClick !== latestRequestNumber.current) {
+      return
+    }
+
+    // The request has finished, whatever the outcome.
+    setIsDeactivating(false)
+
+    // Stale login: a 401 means the saved id no longer works. Clear the creds and
+    // fall back to logged-out, exactly like the GET 401 path above.
+    if (deactivateResult.status === 401) {
+      window.localStorage.removeItem('memberId')
+      window.localStorage.removeItem('memberName')
+      window.localStorage.removeItem('memberEmail')
+      setMemberId('')
+      setMemberName('')
+      // The route is not changing, so tell the shared nav the login was
+      // cleared by firing the same-tab event it listens for.
+      window.dispatchEvent(new Event(authStateChangedEventName))
+      return
+    }
+
+    // Success: hide the owner actions and show a plain confirmation line. The
+    // already-loaded detail text stays on screen (now stale) until the user
+    // navigates; a re-fetch would 404, so we do not re-fetch.
+    if (deactivateResult.ok === true) {
+      setDeactivated(true)
+      setDeactivateMessage('Listing deactivated.')
+      return
+    }
+
+    // Failure, never silent. Pick the message by the same precedence the load
+    // path uses: a transport error or timeout first, then the server's detail,
+    // then a generic line so the message is never empty. The button stays
+    // visible and enabled, so the user can try again right away.
+    let failureMessage = 'Could not deactivate the listing. Please try again.'
+    if (deactivateResult.errorMessage !== '') {
+      failureMessage = deactivateResult.errorMessage
+    } else if (typeof deactivateResult.data === 'object' && deactivateResult.data !== null) {
+      const dataObject = deactivateResult.data as { detail?: unknown }
+      if (typeof dataObject.detail === 'string') {
+        failureMessage = dataObject.detail
+      }
+    }
+    setDeactivateMessage(failureMessage)
+  }
 
   // Load the listing when the page has a logged-in member. The request number
   // keeps an older response from replacing a newer route's response.
@@ -115,13 +236,34 @@ function ListingDetailPage() {
     if (localTimeZoneName !== '') {
       timeZoneNote = 'All times are shown in your local time zone (' + localTimeZoneName + ').'
     }
-    let editArea = null
-    if (memberId === ownerId) {
-      editArea = (
-        <p>
-          <Link to={'/listings/' + listing.id + '/edit'}>Edit listing</Link>
-        </p>
+    // The owner actions: the Edit link and the Deactivate button, shown together
+    // only while the listing has not been deactivated. Once deactivated is true,
+    // the whole block renders nothing, so both controls disappear at once.
+    let ownerActionsArea = null
+    if (memberId === ownerId && deactivated === false) {
+      ownerActionsArea = (
+        <>
+          <p>
+            <Link to={'/listings/' + listing.id + '/edit'}>Edit listing</Link>
+          </p>
+          <p>
+            <button onClick={handleDeactivate} disabled={isDeactivating}>
+              Deactivate listing
+            </button>
+          </p>
+        </>
       )
+    }
+
+    // The deactivate result message. On success it is plain confirmation text;
+    // on failure it is a role="alert" so it is announced. It is built here,
+    // inside the loaded current-listing branch, so a message from a previous
+    // listing cannot flash for one frame after a route change.
+    let deactivateMessageArea = null
+    if (deactivated === true) {
+      deactivateMessageArea = <p>{deactivateMessage}</p>
+    } else if (deactivateMessage !== '') {
+      deactivateMessageArea = <p role="alert">{deactivateMessage}</p>
     }
     // Quantity available (what the poster entered) and remaining quantity (what
     // is left) are two different numbers, so label each on its own line.
@@ -139,7 +281,8 @@ function ListingDetailPage() {
         <p>
           <small>{timeZoneNote}</small>
         </p>
-        {editArea}
+        {ownerActionsArea}
+        {deactivateMessageArea}
       </article>
     )
   } else if (result.status === 404) {
