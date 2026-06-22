@@ -2,6 +2,13 @@
 
 export const authTimeoutMilliseconds = 3000
 
+// Name of the same-tab event fired after code clears stored credentials without
+// navigating (a stale-session 401). The shared nav listens for it so it can flip
+// to the logged-out view. It lives here, exported as one constant, so the name
+// is written once instead of retyped as a raw string in several files. A typo in
+// a literal would fail silently: the listener would just never run.
+export const authStateChangedEventName = "auth-state-changed"
+
 export type AuthResult = {
   ok: boolean
   status: number

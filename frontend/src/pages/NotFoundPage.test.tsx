@@ -14,17 +14,15 @@ afterEach(() => {
   cleanup()
 })
 
-test('an unknown URL renders the not-found page with a home link', () => {
+test('an unknown URL renders the not-found page', () => {
   window.history.pushState({}, '', '/does-not-exist')
   render(<App />)
 
   const heading = screen.getByRole('heading', { name: 'Page not found' })
   const bodyText = screen.getByText('The page you asked for does not exist.')
-  const homeLink = screen.getByRole('link', { name: 'Go to home page' })
 
   expect(heading).toBeTruthy()
   expect(bodyText).toBeTruthy()
-  expect(homeLink.getAttribute('href')).toBe('/')
 })
 
 test('/login renders the login page now that US-02 is implemented', () => {

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link, Navigate, useNavigate } from 'react-router'
+import { Navigate, useNavigate } from 'react-router'
 
 import { sendCreateListingRequest } from '../services/listingService'
 import { formatApiResult } from '../utils/formatApiResult'
@@ -180,11 +180,8 @@ function CreateListingPage() {
   }
 
   return (
-    <>
+    <section>
       <h1>Create a listing</h1>
-      <p>
-        <Link to="/dashboard">Go to dashboard</Link>
-      </p>
       <p>Fill in the details below to post a new listing.</p>
       <form onSubmit={handleSubmit}>
         <p>
@@ -273,7 +270,7 @@ function CreateListingPage() {
       </form>
       {errorArea}
       {rawResponseArea}
-    </>
+    </section>
   )
 }
 

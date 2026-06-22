@@ -173,45 +173,37 @@ test('shows the transport error message when the request times out', async () =>
 
 // --- US-07: HTML5 validation replaces the old JS field check ---
 
-test('marks the email and password inputs for HTML5 validation', () => {
+test('marks the email and password inputs for HTML5 validation and autocomplete', () => {
   renderLoginPage()
 
   // type="email" plus required is the browser-side stand-in for the deleted
-  // "Please fill in every field." JS check.
+  // "Please fill in every field." JS check. The autocomplete tokens tell the
+  // browser and password managers this is a login form, which clears Chrome's
+  // "Input elements should have autocomplete attributes" warning.
   const emailInput = screen.getByLabelText('Email')
   expect(emailInput.getAttribute('type')).toBe('email')
   expect(emailInput.hasAttribute('required')).toBe(true)
+  expect(emailInput.getAttribute('autocomplete')).toBe('username')
 
   const passwordInput = screen.getByLabelText('Password')
   expect(passwordInput.hasAttribute('required')).toBe(true)
+  expect(passwordInput.getAttribute('autocomplete')).toBe('current-password')
 })
 
 // --- US-07: the form is hidden when already logged in ---
 
-test('hides the form and shows the already-logged-in view when logged in', async () => {
+test('hides the form and shows the already-logged-in view when logged in', () => {
   window.localStorage.setItem('memberId', 'a4c135d8-0000-0000-0000-000000000000')
   window.localStorage.setItem('memberName', 'Alice Admin')
   window.localStorage.setItem('memberEmail', 'alice@example.com')
-  // Clicking Log out calls sendLogoutRequest, which posts to the backend.
-  vi.stubGlobal('fetch', async () => {
-    return makeFakeResponse(true, 200, {})
-  })
 
   renderLoginPage()
 
-  // The form is gone and the already-logged-in view shows.
+  // The form is gone and the already-logged-in view shows. The shared nav owns
+  // logout now, so this page no longer carries a dashboard link or a Log out
+  // button.
   expect(screen.queryByLabelText('Email')).toBeNull()
   expect(screen.getByText("You're already logged in as Alice Admin.")).toBeTruthy()
-  expect(screen.getByRole('link', { name: 'Go to dashboard' })).toBeTruthy()
-  const logoutButton = screen.getByRole('button', { name: 'Log out' })
-  expect(logoutButton).toBeTruthy()
-
-  // Logging out clears the three credential keys and brings the form back.
-  fireEvent.click(logoutButton)
-  expect(await screen.findByLabelText('Email')).toBeTruthy()
-  expect(window.localStorage.getItem('memberId')).toBeNull()
-  expect(window.localStorage.getItem('memberName')).toBeNull()
-  expect(window.localStorage.getItem('memberEmail')).toBeNull()
 })
 
 test('shows the registration success message even when logged in', () => {

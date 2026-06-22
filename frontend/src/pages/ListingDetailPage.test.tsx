@@ -112,7 +112,7 @@ async function waitForStateUpdates() {
   })
 }
 
-test('shows the listing details and the logged-in nav for an active listing', async () => {
+test('shows the listing details for an active listing', async () => {
   setLoggedIn()
   vi.stubGlobal('fetch', async () => {
     return makeFakeResponse(true, 200, makeActiveListing())
@@ -147,35 +147,9 @@ test('shows the listing details and the logged-in nav for an active listing', as
   expect(screen.getByText('Pickup end: ' + expectedPickupEnd)).toBeTruthy()
   // A plain-words note tells the user the times are in their own local zone.
   expect(screen.getByText(/All times are shown in your local time zone/)).toBeTruthy()
-  // The logged-in nav shows the dashboard link and the log out button.
-  expect(screen.getByRole('link', { name: 'Go to dashboard' })).toBeTruthy()
-  expect(screen.getByRole('button', { name: 'Log out' })).toBeTruthy()
-  // The home and about links show in this (logged-in) state too.
-  expect(screen.getByRole('link', { name: 'Go to home page' })).toBeTruthy()
-  expect(screen.getByRole('link', { name: 'Go to about page' })).toBeTruthy()
 })
 
-test('logging out clears the stored credentials and shows the logged-out view', async () => {
-  setLoggedIn()
-  vi.stubGlobal('fetch', async () => {
-    return makeFakeResponse(true, 200, makeActiveListing())
-  })
-
-  renderDetailPage()
-  // Wait for the logged-in render, then click Log out.
-  const logoutButton = await screen.findByRole('button', { name: 'Log out' })
-  fireEvent.click(logoutButton)
-
-  // After logout the page switches to the logged-out view.
-  expect(await screen.findByRole('link', { name: 'Go to login page' })).toBeTruthy()
-  expect(screen.queryByRole('button', { name: 'Log out' })).toBeNull()
-  // All three credential keys are cleared.
-  expect(window.localStorage.getItem('memberId')).toBeNull()
-  expect(window.localStorage.getItem('memberName')).toBeNull()
-  expect(window.localStorage.getItem('memberEmail')).toBeNull()
-})
-
-test('a stale-session 401 clears the credentials and shows the logged-out view', async () => {
+test('a stale-session 401 clears the credentials and fires the auth event', async () => {
   // The stored id no longer matches a member, so the backend answers 401.
   window.localStorage.setItem('memberId', 'stale-id')
   window.localStorage.setItem('memberName', 'Bob Baker')
@@ -184,16 +158,26 @@ test('a stale-session 401 clears the credentials and shows the logged-out view',
     return makeFakeResponse(false, 401, { detail: 'Not authenticated. Unknown member.' })
   })
 
+  // Listen for the same-tab event the page fires after clearing a stale login,
+  // so the shared nav can flip to the logged-out view without a route change.
+  let authEventFired = false
+  function handleAuthEvent() {
+    authEventFired = true
+  }
+  window.addEventListener('auth-state-changed', handleAuthEvent)
+
   renderDetailPage()
 
   // The effect clears the creds, so the not-logged-in message appears.
   expect(await screen.findByText('You need to be logged in to see this page.')).toBeTruthy()
-  expect(screen.getByRole('link', { name: 'Go to login page' })).toBeTruthy()
-  expect(screen.queryByRole('button', { name: 'Log out' })).toBeNull()
   // Every credential key is cleared, not just memberId.
   expect(window.localStorage.getItem('memberId')).toBeNull()
   expect(window.localStorage.getItem('memberName')).toBeNull()
   expect(window.localStorage.getItem('memberEmail')).toBeNull()
+  // The page told the shared nav the login was cleared.
+  expect(authEventFired).toBe(true)
+
+  window.removeEventListener('auth-state-changed', handleAuthEvent)
 })
 
 test('shows the unavailable message on a 404', async () => {
@@ -293,10 +277,6 @@ test('renders the not-logged-in message and does not fetch when logged out', asy
   renderDetailPage()
 
   expect(screen.getByText('You need to be logged in to see this page.')).toBeTruthy()
-  expect(screen.getByRole('link', { name: 'Go to login page' })).toBeTruthy()
-  // The home and about links show in the logged-out state as well.
-  expect(screen.getByRole('link', { name: 'Go to home page' })).toBeTruthy()
-  expect(screen.getByRole('link', { name: 'Go to about page' })).toBeTruthy()
   // Logged out, the page must not call the backend.
   await waitForStateUpdates()
   expect(fetchCallCount).toBe(0)

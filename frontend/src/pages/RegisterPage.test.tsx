@@ -193,23 +193,30 @@ test('shows the transport error message when the request times out', async () =>
 
 // --- US-07: HTML5 validation replaces the old JS field check ---
 
-test('marks all four inputs for HTML5 validation', () => {
+test('marks all four inputs for HTML5 validation and autocomplete', () => {
   renderRegisterPage()
 
   // required on every field plus type="email" on the email is the browser-side
-  // stand-in for the deleted "Please fill in every field." JS check.
+  // stand-in for the deleted "Please fill in every field." JS check. The
+  // autocomplete tokens tell the browser this is a new account (so a password
+  // manager offers to save a new password, not fill an old one) and clear
+  // Chrome's "Input elements should have autocomplete attributes" warning.
   const nameInput = screen.getByLabelText('Name')
   expect(nameInput.hasAttribute('required')).toBe(true)
+  expect(nameInput.getAttribute('autocomplete')).toBe('name')
 
   const emailInput = screen.getByLabelText('Email')
   expect(emailInput.getAttribute('type')).toBe('email')
   expect(emailInput.hasAttribute('required')).toBe(true)
+  expect(emailInput.getAttribute('autocomplete')).toBe('email')
 
   const passwordInput = screen.getByLabelText('Password')
   expect(passwordInput.hasAttribute('required')).toBe(true)
+  expect(passwordInput.getAttribute('autocomplete')).toBe('new-password')
 
   const tokenInput = screen.getByLabelText('Invite token')
   expect(tokenInput.hasAttribute('required')).toBe(true)
+  expect(tokenInput.getAttribute('autocomplete')).toBe('off')
 })
 
 // --- US-04: invite token prefilled from a shared link ---

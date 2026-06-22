@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router'
 
-import { sendLoginRequest, sendLogoutRequest } from '../services/authService'
+import { sendLoginRequest } from '../services/authService'
 import { formatApiResult } from '../utils/formatApiResult'
 
 function LoginPage() {
@@ -44,10 +44,11 @@ function LoginPage() {
   const [rawResponseText, setRawResponseText] = useState('')
 
   // Auth truth is memberId: logged in means it is not empty. memberName is read
-  // the same way but used only for the display text (the two can drift). Both
-  // live in state so logging out swaps the form back in without a reload.
-  const [memberId, setMemberId] = useState(window.localStorage.getItem('memberId') ?? '')
-  const [memberName, setMemberName] = useState(window.localStorage.getItem('memberName') ?? '')
+  // the same way but used only for the display text (the two can drift). The
+  // shared nav owns logout now, and logging out from there navigates away from
+  // this page, so these are plain reads with no setters.
+  const memberId = window.localStorage.getItem('memberId') ?? ''
+  const memberName = window.localStorage.getItem('memberName') ?? ''
 
   function handleEmailChange(event: React.ChangeEvent<HTMLInputElement>) {
     setEmail(event.target.value)
@@ -55,16 +56,6 @@ function LoginPage() {
 
   function handlePasswordChange(event: React.ChangeEvent<HTMLInputElement>) {
     setPassword(event.target.value)
-  }
-
-  async function handleLogout() {
-    await sendLogoutRequest()
-    window.localStorage.removeItem('memberId')
-    window.localStorage.removeItem('memberName')
-    window.localStorage.removeItem('memberEmail')
-    // Reset both state values so the form reappears in place.
-    setMemberId('')
-    setMemberName('')
   }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -131,20 +122,11 @@ function LoginPage() {
       )
     }
     return (
-      <>
+      <section>
         <h1>Log in</h1>
-        <p>
-          <Link to="/">Go to home page</Link>
-        </p>
         {loggedInSuccessArea}
         <p>{alreadyLoggedInLine}</p>
-        <p>
-          <Link to="/dashboard">Go to dashboard</Link>
-        </p>
-        <p>
-          <button onClick={handleLogout}>Log out</button>
-        </p>
-      </>
+      </section>
     )
   }
 
@@ -177,11 +159,8 @@ function LoginPage() {
   }
 
   return (
-    <>
+    <section>
       <h1>Log in</h1>
-      <p>
-        <Link to="/">Go to home page</Link>
-      </p>
       <p>Sign in with your registered email and password.</p>
       {successArea}
       <form onSubmit={handleSubmit}>
@@ -190,6 +169,7 @@ function LoginPage() {
           <input
             id="login-email"
             type="email"
+            autoComplete="username"
             required
             value={email}
             onChange={handleEmailChange}
@@ -200,6 +180,7 @@ function LoginPage() {
           <input
             id="login-password"
             type="password"
+            autoComplete="current-password"
             required
             value={password}
             onChange={handlePasswordChange}
@@ -216,7 +197,7 @@ function LoginPage() {
       </p>
       {errorArea}
       {rawResponseArea}
-    </>
+    </section>
   )
 }
 
