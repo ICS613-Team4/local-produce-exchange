@@ -6,7 +6,7 @@ import os
 
 from fastapi import FastAPI
 
-from app.routers import auth, health, invite, listing, members, sample_endpoint
+from app.routers import auth, claim, health, invite, listing, members, sample_endpoint
 
 
 def get_log_level():
@@ -38,6 +38,7 @@ app = FastAPI(title="Surplus: A Local Produce Exchange API")
 
 # Every route in this router starts with /api.
 app.include_router(auth.router, prefix="/api")
+app.include_router(claim.router, prefix="/api")
 app.include_router(health.router, prefix="/api")
 app.include_router(invite.router, prefix="/api")
 app.include_router(listing.router, prefix="/api")
