@@ -2,6 +2,7 @@ import { afterEach, expect, test, vi } from 'vitest'
 
 import {
   listingTimeoutMilliseconds,
+  sendBrowseListingsRequest,
   sendCreateListingRequest,
   sendDeactivateListingRequest,
   sendGetListingRequest,
@@ -389,4 +390,135 @@ test('returns a request failure message when the deactivate request rejects', as
   expect(result.ok).toBe(false)
   expect(result.status).toBe(0)
   expect(result.errorMessage).toBe('Request failed: TypeError: Failed to fetch')
+})
+
+// --- US-06: sendBrowseListingsRequest lists active listings ---
+
+test('browses with no filters, calling the plain listings URL with the member header', async () => {
+  const responseBody = [{ id: 'l1', title: 'Lemons', status: 'active' }]
+  let requestUrl = ''
+  let requestOptions: RequestInit = {}
+  vi.stubGlobal('fetch', async (url: string | URL | Request, options: RequestInit | undefined) => {
+    requestUrl = String(url)
+    if (options !== undefined) {
+      requestOptions = options
+    }
+    return makeFakeResponse(true, 200, JSON.stringify(responseBody))
+  })
+
+  const result = await sendBrowseListingsRequest('member-123', {})
+
+  expect(result.ok).toBe(true)
+  expect(result.status).toBe(200)
+  expect(JSON.stringify(result.data)).toBe(JSON.stringify(responseBody))
+  expect(result.errorMessage).toBe('')
+  // With no filters, the URL carries no query string at all.
+  expect(requestUrl).toBe('/api/listings')
+  expect(requestOptions.method).toBe('GET')
+  expect(JSON.stringify(requestOptions.headers)).toContain('X-Member-Id')
+  expect(JSON.stringify(requestOptions.headers)).toContain('member-123')
+  // The timeout signal must be present so the function can't silently drop it.
+  expect(requestOptions.signal).toBeTruthy()
+})
+
+test('browses with filters, building search text, category, and repeated tag params', async () => {
+  let requestUrl = ''
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    requestUrl = String(url)
+    return makeFakeResponse(true, 200, JSON.stringify([]))
+  })
+
+  const filters = {
+    q: 'lemon',
+    category: 'Fruit',
+    dietary_tags: ['vegan', 'gluten-free'],
+    allergen_tags: ['contains nuts'],
+    limit: 25,
+  }
+  const result = await sendBrowseListingsRequest('member-123', filters)
+
+  expect(result.ok).toBe(true)
+  // The query string carries the search text, the category, each tag as its own
+  // repeated param, and the limit. A space inside a tag is encoded as a plus.
+  expect(requestUrl).toContain('/api/listings?')
+  expect(requestUrl).toContain('q=lemon')
+  expect(requestUrl).toContain('category=Fruit')
+  expect(requestUrl).toContain('dietary_tags=vegan')
+  expect(requestUrl).toContain('dietary_tags=gluten-free')
+  expect(requestUrl).toContain('allergen_tags=contains+nuts')
+  expect(requestUrl).toContain('limit=25')
+})
+
+test('browse omits empty filter fields from the query string', async () => {
+  let requestUrl = ''
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    requestUrl = String(url)
+    return makeFakeResponse(true, 200, JSON.stringify([]))
+  })
+
+  // Empty search text, empty category, and empty tag lists must not appear.
+  const filters = {
+    q: '',
+    category: '',
+    dietary_tags: [],
+    allergen_tags: [],
+  }
+  await sendBrowseListingsRequest('member-123', filters)
+
+  expect(requestUrl).toBe('/api/listings')
+})
+
+test('browse maps an HTTP error response into the result object', async () => {
+  const responseBody = { detail: 'Your account is suspended, so you cannot view listings.' }
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(false, 403, JSON.stringify(responseBody))
+  })
+
+  const result = await sendBrowseListingsRequest('member-123', {})
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(403)
+  expect(JSON.stringify(result.data)).toBe(JSON.stringify(responseBody))
+  expect(result.errorMessage).toBe('')
+})
+
+test('browse returns a timeout message when the request times out', async () => {
+  vi.stubGlobal('fetch', async () => {
+    throw new DOMException('The operation timed out.', 'TimeoutError')
+  })
+
+  const result = await sendBrowseListingsRequest('member-123', {})
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(0)
+  expect(result.errorMessage).toBe(
+    'Timeout: no answer from the backend after ' + listingTimeoutMilliseconds + ' ms.',
+  )
+})
+
+test('browse returns a request failure message when fetch rejects', async () => {
+  vi.stubGlobal('fetch', async () => {
+    throw new TypeError('Failed to fetch')
+  })
+
+  const result = await sendBrowseListingsRequest('member-123', {})
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(0)
+  expect(result.errorMessage).toBe('Request failed: TypeError: Failed to fetch')
+})
+
+test('browse keeps a plain text response body', async () => {
+  // A proxy or server problem can return non-JSON text; the function keeps the
+  // status and the raw body instead of throwing the parse error away.
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(false, 502, 'Bad Gateway')
+  })
+
+  const result = await sendBrowseListingsRequest('member-123', {})
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(502)
+  expect(result.data).toBe('Bad Gateway')
+  expect(result.errorMessage).toBe('')
 })

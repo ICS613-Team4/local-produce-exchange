@@ -42,6 +42,17 @@ export type ListingFields = {
   pickup_end: string
 }
 
+// The optional search text and filters the browse page sends. Every field is
+// optional: a field left out does not narrow the results. dietary_tags and
+// allergen_tags are sent as repeated query params, one per selected tag.
+export type BrowseListingFilters = {
+  q?: string
+  category?: string
+  dietary_tags?: string[]
+  allergen_tags?: string[]
+  limit?: number
+}
+
 export async function sendCreateListingRequest(
   memberId: string,
   listingFields: ListingFields,
@@ -186,6 +197,91 @@ export async function sendDeactivateListingRequest(
       errorMessage: '',
     }
   } catch (caughtError) {
+    let errorMessage: string
+    if (caughtError instanceof DOMException && caughtError.name === 'TimeoutError') {
+      errorMessage =
+        'Timeout: no answer from the backend after ' + listingTimeoutMilliseconds + ' ms.'
+    } else {
+      errorMessage = 'Request failed: ' + String(caughtError)
+    }
+
+    return {
+      ok: false,
+      status: 0,
+      data: '',
+      errorMessage: errorMessage,
+    }
+  }
+}
+
+export async function sendBrowseListingsRequest(
+  memberId: string,
+  filters: BrowseListingFilters,
+): Promise<ListingResult> {
+  // Build the query string from the chosen filters, leaving out anything empty.
+  // Each selected dietary or allergen tag is appended as its own repeated param
+  // (dietary_tags=a&dietary_tags=b), which the backend binds back into a list.
+  const params = new URLSearchParams()
+  if (filters.q !== undefined && filters.q !== '') {
+    params.append('q', filters.q)
+  }
+  if (filters.category !== undefined && filters.category !== '') {
+    params.append('category', filters.category)
+  }
+  if (filters.dietary_tags !== undefined) {
+    for (let index = 0; index < filters.dietary_tags.length; index = index + 1) {
+      params.append('dietary_tags', filters.dietary_tags[index])
+    }
+  }
+  if (filters.allergen_tags !== undefined) {
+    for (let index = 0; index < filters.allergen_tags.length; index = index + 1) {
+      params.append('allergen_tags', filters.allergen_tags[index])
+    }
+  }
+  if (filters.limit !== undefined) {
+    params.append('limit', String(filters.limit))
+  }
+
+  // With no params, ask for the plain /api/listings; otherwise append the query.
+  const queryText = params.toString()
+  let url = '/api/listings'
+  if (queryText !== '') {
+    url = '/api/listings?' + queryText
+  }
+
+  // The acting member's id travels in the X-Member-Id header, the same identity
+  // path the other listing calls use. This is a GET, so there is no body.
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'X-Member-Id': memberId,
+      },
+      // Cancel the request if the backend takes too long to answer.
+      signal: AbortSignal.timeout(listingTimeoutMilliseconds),
+    })
+
+    const responseText = await response.text()
+    let data: unknown = ''
+    if (responseText !== '') {
+      try {
+        data = JSON.parse(responseText)
+      } catch {
+        // If a proxy or server problem returns plain text or HTML, keep the
+        // HTTP status and show the body instead of throwing it away.
+        data = responseText
+      }
+    }
+
+    return {
+      ok: response.ok,
+      status: response.status,
+      data: data,
+      errorMessage: '',
+    }
+  } catch (caughtError) {
+    // Without this catch, a timeout or network failure would print
+    // "Uncaught (in promise)" in the console instead of showing on the page.
     let errorMessage: string
     if (caughtError instanceof DOMException && caughtError.name === 'TimeoutError') {
       errorMessage =
