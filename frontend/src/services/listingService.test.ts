@@ -3,6 +3,7 @@ import { afterEach, expect, test, vi } from 'vitest'
 import {
   listingTimeoutMilliseconds,
   sendCreateListingRequest,
+  sendDeactivateListingRequest,
   sendGetListingRequest,
   sendUpdateListingRequest,
 } from './listingService'
@@ -301,4 +302,91 @@ test('returns a timeout message when the update request times out', async () => 
   expect(result.errorMessage).toBe(
     'Timeout: no answer from the backend after ' + listingTimeoutMilliseconds + ' ms.',
   )
+})
+
+// --- US-17: sendDeactivateListingRequest deactivates one listing ---
+
+test('posts to the deactivate URL with the member id header and no body', async () => {
+  let requestUrl = ''
+  let requestOptions: RequestInit = {}
+  vi.stubGlobal('fetch', async (url: string | URL | Request, options: RequestInit | undefined) => {
+    requestUrl = String(url)
+    if (options !== undefined) {
+      requestOptions = options
+    }
+    // The endpoint answers 204 with an empty body on success.
+    return makeFakeResponse(true, 204, '')
+  })
+
+  const result = await sendDeactivateListingRequest('listing-row-id', 'member-123')
+
+  // A 204 empty body parses to ok true with an empty-string data.
+  expect(result.ok).toBe(true)
+  expect(result.status).toBe(204)
+  expect(result.data).toBe('')
+  expect(result.errorMessage).toBe('')
+  expect(requestUrl).toBe('/api/listings/listing-row-id/deactivate')
+  expect(requestOptions.method).toBe('POST')
+  expect(JSON.stringify(requestOptions.headers)).toContain('X-Member-Id')
+  expect(JSON.stringify(requestOptions.headers)).toContain('member-123')
+  expect(requestOptions.signal).toBeTruthy()
+  // The deactivate call sends no request body.
+  expect(requestOptions.body).toBeUndefined()
+})
+
+test('maps a deactivate HTTP error response into the result object', async () => {
+  const responseBody = {
+    detail: 'You can only deactivate your own listing.',
+  }
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(false, 403, JSON.stringify(responseBody))
+  })
+
+  const result = await sendDeactivateListingRequest('listing-row-id', 'member-123')
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(403)
+  expect(JSON.stringify(result.data)).toBe(JSON.stringify(responseBody))
+  expect(result.errorMessage).toBe('')
+})
+
+test('keeps a plain text body on a deactivate request', async () => {
+  // A proxy or server problem can return non-JSON text; the function keeps the
+  // status and the raw body instead of throwing the parse error away.
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(false, 502, 'Bad Gateway')
+  })
+
+  const result = await sendDeactivateListingRequest('listing-row-id', 'member-123')
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(502)
+  expect(result.data).toBe('Bad Gateway')
+  expect(result.errorMessage).toBe('')
+})
+
+test('returns a timeout message when the deactivate request times out', async () => {
+  vi.stubGlobal('fetch', async () => {
+    throw new DOMException('The operation timed out.', 'TimeoutError')
+  })
+
+  const result = await sendDeactivateListingRequest('listing-row-id', 'member-123')
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(0)
+  expect(result.errorMessage).toBe(
+    'Timeout: no answer from the backend after ' + listingTimeoutMilliseconds + ' ms.',
+  )
+})
+
+test('returns a request failure message when the deactivate request rejects', async () => {
+  vi.stubGlobal('fetch', async () => {
+    throw new TypeError('Failed to fetch')
+  })
+
+  const result = await sendDeactivateListingRequest('listing-row-id', 'member-123')
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(0)
+  expect(result.errorMessage).toBe('Request failed: TypeError: Failed to fetch')
 })

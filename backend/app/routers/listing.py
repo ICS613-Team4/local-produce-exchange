@@ -373,3 +373,82 @@ def edit_listing(
         status=status_out,
         created_at=created_at_out,
     )
+
+
+@router.post("/listings/{listing_id}/deactivate", status_code=204)
+def deactivate_listing(
+    listing_id: str,
+    current_member: Member = Depends(get_current_member),
+    session: Session = Depends(get_db_session),
+) -> None:
+    # The owner takes their own active listing out of circulation. This endpoint
+    # only flips status to "deactivated"; it never touches deactivated_by, which
+    # stays the admin-only signal (US-27). The checks run in the same order as
+    # edit_listing so the two endpoints behave the same way.
+
+    # Active-member gate. A suspended account gets a suspension-specific message;
+    # any other non-active status gets the generic one. This runs before the
+    # ownership check, so even the owner is blocked while suspended.
+    if current_member.status != "active":
+        if current_member.status == "suspended":
+            raise HTTPException(
+                status_code=403,
+                detail="Your account is suspended, so you cannot deactivate a listing.",
+            )
+        raise HTTPException(
+            status_code=403,
+            detail="Your account is not active, so you cannot deactivate a listing.",
+        )
+
+    # A value that is not a real UUID cannot match any listing, so treat it as
+    # not found rather than a server error.
+    try:
+        listing_uuid = uuid.UUID(listing_id)
+    except (ValueError, AttributeError, TypeError):
+        raise HTTPException(status_code=404, detail="This listing is unavailable.")
+
+    # Load the row. A down or unmigrated database returns 503, matching the other
+    # endpoints.
+    try:
+        row = session.scalars(select(Listing).where(Listing.id == listing_uuid)).first()
+    except Exception as error:
+        logger.error("Reading a listing for deactivate failed: %s", error)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Could not read the listing right now. "
+                "Make sure the database is running and migrated."
+            ),
+        )
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="This listing is unavailable.")
+
+    # Ownership gate (Scenario 2). A member can only deactivate their own
+    # listing; another member's listing stays active.
+    if row.owner_id != current_member.id:
+        raise HTTPException(status_code=403, detail="You can only deactivate your own listing.")
+
+    # Only an active listing can be deactivated. Any non-active status reads as
+    # unavailable, the same as edit treats it.
+    if row.status != "active":
+        raise HTTPException(status_code=404, detail="This listing is unavailable.")
+
+    # The one state change this story owns. Leave deactivated_by null on purpose.
+    row.status = "deactivated"
+
+    try:
+        session.commit()
+    except Exception as error:
+        session.rollback()
+        logger.error("Deactivating a listing failed: %s", error)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Could not deactivate the listing right now. "
+                "Make sure the database is running and migrated."
+            ),
+        )
+
+    # FastAPI sends 204 with an empty body given status_code=204.
+    return None

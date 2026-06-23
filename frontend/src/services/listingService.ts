@@ -151,6 +151,58 @@ export async function sendUpdateListingRequest(
   }
 }
 
+export async function sendDeactivateListingRequest(
+  listingId: string,
+  memberId: string,
+): Promise<ListingResult> {
+  // The deactivate endpoint flips the listing's status to "deactivated". It
+  // takes no request body: the listing id is in the URL and the acting member
+  // rides in the X-Member-Id header. A success answers 204 with an empty body,
+  // which the parser below keeps as an empty string, so success is read off
+  // result.ok.
+  try {
+    const response = await fetch('/api/listings/' + listingId + '/deactivate', {
+      method: 'POST',
+      headers: {
+        'X-Member-Id': memberId,
+      },
+      signal: AbortSignal.timeout(listingTimeoutMilliseconds),
+    })
+
+    const responseText = await response.text()
+    let data: unknown = ''
+    if (responseText !== '') {
+      try {
+        data = JSON.parse(responseText)
+      } catch {
+        data = responseText
+      }
+    }
+
+    return {
+      ok: response.ok,
+      status: response.status,
+      data: data,
+      errorMessage: '',
+    }
+  } catch (caughtError) {
+    let errorMessage: string
+    if (caughtError instanceof DOMException && caughtError.name === 'TimeoutError') {
+      errorMessage =
+        'Timeout: no answer from the backend after ' + listingTimeoutMilliseconds + ' ms.'
+    } else {
+      errorMessage = 'Request failed: ' + String(caughtError)
+    }
+
+    return {
+      ok: false,
+      status: 0,
+      data: '',
+      errorMessage: errorMessage,
+    }
+  }
+}
+
 export async function sendGetListingRequest(
   listingId: string,
   memberId: string,

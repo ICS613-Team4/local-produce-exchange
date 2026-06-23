@@ -127,11 +127,12 @@ It's read-only, on purpose. pgweb signs in as a database login that can read
 every table but change nothing: PostgreSQL itself rejects any insert, update,
 delete, or schema change it tries. Treat pgweb as a window, not a workbench.
 
-Here's why. Every change to this database, both the table layout and the data,
-goes through an Alembic migration that's committed to source control. That keeps
+Here's why. Schema changes (the table layout) go through an Alembic migration
+that's committed to source control. Demo rows go through `seed.py`. Real user
+data changes go through the app's own routes and API, not by hand. That keeps
 each change reviewed, repeatable, and applied the same way on every machine. An
 edit typed into a browser would skip all of that and drift your database away
-from everyone else's. So when you need to change something, write a migration
+from everyone else's. So when you need to change the schema, write a migration
 (see "Schema Changes" below) instead of reaching for pgweb.
 
 ### Locally
@@ -442,6 +443,7 @@ backend/
     test_listing.py            pytest unit tests for create-listing behavior.
     test_listing_detail.py     pytest unit tests for listing-detail behavior.
     test_listing_edit.py       pytest unit tests for listing-edit behavior.
+    test_listing_deactivate.py pytest unit tests for deactivate-listing behavior.
     test_members.py            pytest unit tests for member behavior.
     test_sample_endpoint.py    pytest unit tests for the sample endpoint.
     test_security.py           pytest unit tests for password and invite-token helpers.
@@ -488,12 +490,18 @@ if it's still going. Here are the steps, in order:
 1. Check out the repository.
 2. Set up Node.js 22, with the npm cache keyed to `frontend/package-lock.json`.
 3. Set up Astral uv (pinned to release 8.2.0).
-4. Install all dependencies with `npm run setup`.
-5. Run the linters with `npm run lint`.
-6. Build the frontend with `npm run build`, which runs the TypeScript compiler
+4. Check that `frontend/package-lock.json` is the canonical one. This rebuilds
+   the lock from the manifests in a temp directory (the same way `npm run lock`
+   does) and fails if the committed lock differs. It catches a lock file that
+   was pruned by running `npm install` on Windows or Mac, which can drop the
+   optional packages other operating systems need. If it fails, run
+   `npm run lock` at the repo root and commit the result.
+5. Install all dependencies with `npm run setup`.
+6. Run the linters with `npm run lint`.
+7. Build the frontend with `npm run build`, which runs the TypeScript compiler
    and then bundles with vite. This catches type errors and build-only
    failures such as Sass errors.
-7. Run the unit tests with `npm test`.
+8. Run the unit tests with `npm test`.
 
 If you push a newer commit to the same branch or pull request while a run is
 going, GitHub cancels the older one, since it's testing a commit that's no
