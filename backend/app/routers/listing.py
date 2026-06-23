@@ -9,9 +9,10 @@
 import logging
 import uuid
 from datetime import datetime, timezone
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import or_, select
 from sqlalchemy.dialects.postgresql import Range
 from sqlalchemy.orm import Session
 
@@ -154,6 +155,111 @@ def create_listing(
         status="active",
         created_at=created_at,
     )
+
+
+@router.get("/listings")
+def browse_listings(
+    q: Annotated[str | None, Query()] = None,
+    category: Annotated[str | None, Query()] = None,
+    dietary_tags: Annotated[list[str] | None, Query()] = None,
+    allergen_tags: Annotated[list[str] | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    current_member: Member = Depends(get_current_member),
+    session: Session = Depends(get_db_session),
+) -> list[ListingResponse]:
+    # Browse, search, and filter active listings (US-06 / UC-06). A logged-in,
+    # active member sends optional search text and filters; the route returns the
+    # active listings that match, newest first.
+
+    # Permission gate. Same active-member rule and exact messages as get_listing:
+    # the insecure X-Member-Id header means a forged suspended id could otherwise
+    # read listings, so a non-active acting member is denied.
+    if current_member.status != "active":
+        if current_member.status == "suspended":
+            raise HTTPException(
+                status_code=403,
+                detail="Your account is suspended, so you cannot view listings.",
+            )
+        raise HTTPException(
+            status_code=403,
+            detail="Your account is not active, so you cannot view listings.",
+        )
+
+    # Build the query one piece at a time. Start from active-only (the browse-side
+    # half of US-17/US-27: a deactivated listing must not appear), then add each
+    # filter the caller actually sent. A filter left out does not narrow the
+    # results. All the filters are ANDed together.
+    statement = select(Listing).where(Listing.status == "active")
+    if q is not None and q.strip() != "":
+        # Search text matches the title or the description, case-insensitive.
+        pattern = "%" + q.strip() + "%"
+        statement = statement.where(
+            or_(Listing.title.ilike(pattern), Listing.description.ilike(pattern))
+        )
+    if category is not None and category.strip() != "":
+        statement = statement.where(Listing.category == category.strip())
+    if dietary_tags:
+        # .contains([...]) emits the GIN-indexed Postgres @> operator: keep a row
+        # only when its dietary tags include every selected tag.
+        statement = statement.where(Listing.dietary_tags.contains(dietary_tags))
+    if allergen_tags:
+        statement = statement.where(Listing.allergen_tags.contains(allergen_tags))
+    statement = statement.order_by(Listing.created_at.desc()).limit(limit)
+
+    # Wrap the read so a down or unmigrated database returns 503 instead of an
+    # unhandled error, matching the other listing routes.
+    try:
+        rows = session.scalars(statement).all()
+    except Exception as error:
+        logger.error("Browsing listings failed: %s", error)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Could not read listings right now. "
+                "Make sure the database is running and migrated: "
+                "npm run db:up, then npm run db:migrate, then npm run db:seed."
+            ),
+        )
+
+    # Turn each row into a response item, reusing get_listing's guards. Skip a
+    # row whose pickup window is missing, unbounded, or equal-bound (ListingResponse
+    # cannot represent it) rather than failing the whole list, and coerce a null
+    # description or category to an empty string.
+    results = []
+    for row in rows:
+        pickup_window = row.pickup_window
+        if pickup_window is None:
+            continue
+        pickup_start = pickup_window.lower
+        pickup_end = pickup_window.upper
+        if pickup_start is None or pickup_end is None:
+            continue
+        if pickup_end <= pickup_start:
+            continue
+        description = row.description
+        if description is None:
+            description = ""
+        category_value = row.category
+        if category_value is None:
+            category_value = ""
+        results.append(
+            ListingResponse(
+                id=str(row.id),
+                owner_id=str(row.owner_id),
+                title=row.title,
+                description=description,
+                category=category_value,
+                total_quantity=row.total_quantity,
+                remaining_quantity=row.remaining_quantity,
+                dietary_tags=row.dietary_tags,
+                allergen_tags=row.allergen_tags,
+                pickup_start=pickup_start,
+                pickup_end=pickup_end,
+                status=row.status,
+                created_at=row.created_at,
+            )
+        )
+    return results
 
 
 @router.get("/listings/{listing_id}")

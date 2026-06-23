@@ -1,6 +1,7 @@
 import { BrowserRouter, Route, Routes } from 'react-router'
 import Layout from './components/Layout.tsx'
 import AboutPage from './pages/AboutPage.tsx'
+import BrowsePage from './pages/BrowsePage.tsx'
 import CreateListingPage from './pages/CreateListingPage.tsx'
 import DashboardPage from './pages/DashboardPage.tsx'
 import EditListingPage from './pages/EditListingPage.tsx'
@@ -11,6 +12,7 @@ import LoginPage from './pages/LoginPage.tsx'
 import NotFoundPage from './pages/NotFoundPage.tsx'
 import ProfilePage from './pages/ProfilePage.tsx'
 import RegisterPage from './pages/RegisterPage.tsx'
+import RequireAuth from './components/RequireAuth.tsx'
 import TestPage from './pages/TestPage.tsx'
 
 function App() {
@@ -22,12 +24,19 @@ function App() {
           <Route path="/about" element={<AboutPage />} />
           <Route path="/test" element={<TestPage />} />
           <Route path="/login" element={<LoginPage />} />
-          <Route path="/profile" element={<ProfilePage />} />
           <Route path="/register" element={<RegisterPage />} />
-          <Route path="/invite" element={<InvitePage />} />
-          <Route path="/dashboard" element={<DashboardPage />} />
-          <Route path="/listings/create" element={<CreateListingPage />} />
-          <Route path="/listings/:id/edit" element={<EditListingPage />} />
+          {/* Member-only pages. RequireAuth wraps them as one group, so the
+              login check lives in a single place instead of in each page. A
+              logged-out visitor (or a stored id the backend rejects) sees the
+              "please log in" message instead of the page. */}
+          <Route element={<RequireAuth />}>
+            <Route path="/profile" element={<ProfilePage />} />
+            <Route path="/invite" element={<InvitePage />} />
+            <Route path="/dashboard" element={<DashboardPage />} />
+            <Route path="/listings/create" element={<CreateListingPage />} />
+            <Route path="/listings/:id/edit" element={<EditListingPage />} />
+          </Route>
+          <Route path="/browse" element={<BrowsePage />} />
           <Route path="/listings/:id" element={<ListingDetailPage />} />
           {/* The "*" path matches only when no route above does, so every
               unknown URL shows the not-found page instead of a blank screen. */}

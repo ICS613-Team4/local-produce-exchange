@@ -93,6 +93,23 @@ test('wires the /listings/:id/edit route to the edit listing page', async () => 
   expect(await screen.findByRole('button', { name: 'Save changes' })).toBeTruthy()
 })
 
+test('wires the /browse route to the browse page when a member is logged in', async () => {
+  window.history.pushState({}, '', '/browse')
+  window.localStorage.setItem('memberId', 'member-123')
+  window.localStorage.setItem('memberName', 'Bob Baker')
+
+  // The browse page loads the full list on open, so answer that fetch.
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, [])
+  })
+
+  render(<App />)
+
+  // The browse page heading renders, which only happens if App registered the
+  // route.
+  expect(await screen.findByRole('heading', { name: 'Browse listings' })).toBeTruthy()
+})
+
 test('wires the /test route to the test page for a logged-out visitor', () => {
   // No stored login here, which proves the Test page is open to everyone.
   window.history.pushState({}, '', '/test')
@@ -102,4 +119,16 @@ test('wires the /test route to the test page for a logged-out visitor', () => {
   // happens if App registered the route.
   expect(screen.getByRole('heading', { name: 'Test Page' })).toBeTruthy()
   expect(screen.getByText('Call backend API with valid JSON')).toBeTruthy()
+})
+
+test('guards the /dashboard route, showing the log-in message when logged out', () => {
+  // No stored login. The dashboard is a member-only route, so App wraps it in
+  // RequireAuth. This proves the guard is wired in App.tsx, not just correct in
+  // isolation: the dashboard heading must not show, the log-in message must.
+  window.history.pushState({}, '', '/dashboard')
+  render(<App />)
+
+  expect(screen.queryByRole('heading', { name: 'Member Dashboard' })).toBeNull()
+  const loginLink = screen.getByRole('link', { name: 'log in' })
+  expect(loginLink.getAttribute('href')).toBe('/login')
 })
