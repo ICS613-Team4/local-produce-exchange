@@ -38,3 +38,14 @@ export function getLocalTimeZoneName(): string {
   }
   return timeZoneName
 }
+
+// Builds the one-line note that tells the viewer the times on the page are in
+// their own local time zone, naming the zone when the browser can report it.
+// Every page that shows timestamps uses this so the wording is identical.
+export function getLocalTimeZoneNote(): string {
+  const timeZoneName = getLocalTimeZoneName()
+  if (timeZoneName === '') {
+    return 'All times are shown in your local time zone.'
+  }
+  return 'All times are shown in your local time zone (' + timeZoneName + ').'
+}

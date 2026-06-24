@@ -3,7 +3,7 @@ import { Link, Navigate } from 'react-router'
 
 import { sendBrowseListingsRequest } from '../services/listingService'
 import type { BrowseListingFilters, ListingDetail, ListingResult } from '../services/listingService'
-import { formatTimestamp } from '../utils/formatTimestamp'
+import { formatTimestamp, getLocalTimeZoneNote } from '../utils/formatTimestamp'
 
 // The filter choices are the demo vocabulary from backend/app/seed.py. Create
 // and edit still allow free-form categories and tags, so for R1 browse only
@@ -171,6 +171,9 @@ function BrowsePage() {
     )
   }
 
+  // The note that tells the viewer the pickup times are in their local zone.
+  const timeZoneNote = getLocalTimeZoneNote()
+
   // Build the results area with a plain if/else chain, checked in a set order.
   let resultsArea
   if (result === null) {
@@ -199,18 +202,23 @@ function BrowsePage() {
         }
         const pickupStartText = formatTimestamp(listing.pickup_start)
         const pickupEndText = formatTimestamp(listing.pickup_end)
+        const postedText = formatTimestamp(listing.created_at)
         listingCards.push(
           <li key={listing.id}>
             <article>
               <h2>
                 <Link to={'/listings/' + listing.id}>{listing.title}</Link>
               </h2>
+              <p>Posted on: {postedText}</p>
               <p>Category: {listing.category}</p>
               <p>Remaining quantity: {listing.remaining_quantity}</p>
               <p>Dietary tags: {dietaryText}</p>
               <p>Allergen tags: {allergenText}</p>
               <p>
-                Pickup: {pickupStartText} to {pickupEndText}
+                Pickup Window: {pickupStartText} to {pickupEndText}
+              </p>
+              <p>
+                <small>{timeZoneNote}</small>
               </p>
             </article>
           </li>,

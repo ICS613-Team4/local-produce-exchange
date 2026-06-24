@@ -202,10 +202,28 @@ test('shows a transport error when the request fails', async () => {
   expect(errorArea.textContent).toContain('Request failed')
 })
 
-test('shows a generic message when the error detail is a list', async () => {
+test('shows the specific field message when the error detail is a list', async () => {
   window.localStorage.setItem('memberId', 'member-123')
   vi.stubGlobal('fetch', async () => {
-    return makeFakeResponse(false, 422, JSON.stringify({ detail: [{ msg: 'bad' }] }))
+    return makeFakeResponse(
+      false,
+      422,
+      JSON.stringify({ detail: [{ msg: 'String should have at least 8 characters' }] }),
+    )
+  })
+
+  renderCreatePage()
+  fillForm()
+  submitForm()
+
+  const errorArea = await screen.findByRole('alert')
+  expect(errorArea.textContent).toBe('String should have at least 8 characters')
+})
+
+test('falls back to a generic message when a list detail has no usable msg', async () => {
+  window.localStorage.setItem('memberId', 'member-123')
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(false, 422, JSON.stringify({ detail: [{ type: 'missing' }] }))
   })
 
   renderCreatePage()

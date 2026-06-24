@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import Range
 
 from app.db import SessionLocal
+from app.models.claim import Claim
 from app.models.listing import Listing
 from app.models.member import InviteToken, Member, MemberProfile
 from app.models.sample_data import SampleData
@@ -290,16 +291,88 @@ def seed_listings(session):
         print("Inserted " + str(inserted_count) + " listings.")
 
 
+def find_listing_by_owner_and_title(session, owner, title):
+    # Look a demo listing up by its owner and title, the same seed identity
+    # add_listing_if_missing uses, so this works across databases with different
+    # generated listing ids.
+    statement = select(Listing).where(Listing.owner_id == owner.id).where(Listing.title == title)
+    listing = session.scalars(statement).first()
+    return listing
+
+
+def seed_claims(session):
+    # A few demo pending requests so the request-queue page, the dashboard
+    # widget, and the listing detail control have visible content. Guarded by the
+    # empty-table check so re-running the seed adds no duplicate claims.
+    if not table_is_empty(session, Claim):
+        print("Claims already present. Skipping claims.")
+        return
+
+    # Claims point at listings and members, so look those up first. If any are
+    # missing, skip rather than insert a claim with a broken reference.
+    bob = find_member_by_email(session, "bob@example.com")
+    carol = find_member_by_email(session, "carol@example.com")
+    dave = find_member_by_email(session, "dave@example.com")
+    if bob is None or carol is None or dave is None:
+        print("Seed members are missing, so claims were skipped.")
+        return
+
+    lemons = find_listing_by_owner_and_title(session, dave, "Backyard Meyer Lemons")
+    kabocha = find_listing_by_owner_and_title(session, bob, "Kabocha Squash")
+    if lemons is None or kabocha is None:
+        print("Demo listings are missing, so claims were skipped.")
+        return
+
+    # Stagger requested_at so the oldest-first queue order is visible on the page.
+    # On Dave's lemons, Bob's request comes first, then Carol's a minute later.
+    now = datetime.now(timezone.utc)
+    bob_lemons_time = now - timedelta(minutes=10)
+    carol_lemons_time = now - timedelta(minutes=9)
+    dave_kabocha_time = now - timedelta(minutes=8)
+
+    # The claimant always differs from the listing owner (the self-request guard
+    # in the create-claim route). Pending requests do not lower remaining_quantity;
+    # only approval does that in US-11, so the listing quantities are left alone.
+    bob_on_lemons = Claim(
+        listing_id=lemons.id,
+        claimant_id=bob.id,
+        requested_quantity=3,
+        status="requested",
+        requested_at=bob_lemons_time,
+    )
+    carol_on_lemons = Claim(
+        listing_id=lemons.id,
+        claimant_id=carol.id,
+        requested_quantity=2,
+        status="requested",
+        requested_at=carol_lemons_time,
+    )
+    dave_on_kabocha = Claim(
+        listing_id=kabocha.id,
+        claimant_id=dave.id,
+        requested_quantity=1,
+        status="requested",
+        requested_at=dave_kabocha_time,
+    )
+
+    session.add(bob_on_lemons)
+    session.add(carol_on_lemons)
+    session.add(dave_on_kabocha)
+    print("Inserted 3 pending demo claims.")
+
+
 def seed_database():
     session = SessionLocal()
     try:
         # Order matters: members come before profiles, invite tokens, and
-        # listings, because those three point back at members.
+        # listings, because those three point back at members. Claims come last
+        # because they point at both listings and members.
         seed_sample_data(session)
         seed_members(session)
         seed_profiles(session)
         seed_invite_tokens(session)
         seed_listings(session)
+        seed_claims(session)
         session.commit()
     finally:
         session.close()

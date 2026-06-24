@@ -11,6 +11,7 @@ from sqlalchemy.dialects.postgresql import Range
 from sqlalchemy.orm import sessionmaker
 
 from app import seed
+from app.models.claim import Claim
 from app.models.listing import Listing
 from app.models.member import InviteToken, Member, MemberProfile
 from app.models.sample_data import SampleData
@@ -114,6 +115,34 @@ def test_seed_database_inserts_all_groups(db_connection, monkeypatch):
     assert count_rows(session_factory, MemberProfile) == 4
     assert count_rows(session_factory, InviteToken) == 2
     assert count_rows(session_factory, Listing) == 8
+    assert count_rows(session_factory, Claim) == 3
+
+
+def test_seed_database_inserts_demo_claims(db_connection, monkeypatch):
+    # US-10: the seed adds a few pending demo claims so the request-queue page,
+    # the dashboard widget, and the detail control have visible content.
+    session_factory = bind_seed_to_connection(db_connection, monkeypatch)
+    seed.seed_database()
+
+    session = session_factory()
+    try:
+        claims = session.scalars(select(Claim)).all()
+        assert len(claims) == 3
+        quantities = []
+        listing_ids = set()
+        for claim in claims:
+            # Every demo claim is pending and points at a listing and a claimant.
+            assert claim.status == "requested"
+            assert claim.listing_id is not None
+            assert claim.claimant_id is not None
+            quantities.append(claim.requested_quantity)
+            listing_ids.add(claim.listing_id)
+        quantities.sort()
+        assert quantities == [1, 2, 3]
+        # The three claims span two listings: two on the lemons, one on the squash.
+        assert len(listing_ids) == 2
+    finally:
+        session.close()
 
 
 def test_seed_database_inserts_listings_owned_by_members(db_connection, monkeypatch):
@@ -145,6 +174,9 @@ def test_seed_database_does_not_duplicate_rows(db_connection, monkeypatch):
     assert count_rows(session_factory, MemberProfile) == 4
     assert count_rows(session_factory, InviteToken) == 2
     assert count_rows(session_factory, Listing) == 8
+    # The claim guard (table_is_empty on Claim) keeps the second run from adding
+    # duplicate demo claims.
+    assert count_rows(session_factory, Claim) == 3
 
 
 def test_seed_restores_deleted_invite_tokens(db_connection, monkeypatch):
@@ -166,15 +198,20 @@ def test_seed_restores_deleted_invite_tokens(db_connection, monkeypatch):
 
 def test_seed_restores_deleted_listings(db_connection, monkeypatch):
     # The listing group restores the same way: emptying it and re-running the
-    # seed puts the demo listings back without touching the other groups.
+    # seed puts the demo listings back without touching the other groups. Claims
+    # point at listings with no cascade delete, so the demo claims must be cleared
+    # before the listings can be, and re-seeding restores both.
     session_factory = bind_seed_to_connection(db_connection, monkeypatch)
     seed.seed_database()
 
+    delete_all_rows(session_factory, Claim)
     delete_all_rows(session_factory, Listing)
     assert count_rows(session_factory, Listing) == 0
+    assert count_rows(session_factory, Claim) == 0
 
     seed.seed_database()
     assert count_rows(session_factory, Listing) == 8
+    assert count_rows(session_factory, Claim) == 3
     assert count_rows(session_factory, Member) == 4
 
 
@@ -199,6 +236,26 @@ def test_seed_listings_skips_when_members_missing(db_session):
     seed.seed_listings(db_session)
 
     rows = db_session.scalars(select(Listing)).all()
+    assert len(rows) == 0
+
+
+def test_seed_claims_skips_when_members_missing(db_session):
+    # With no members, seed_claims finds no claimant and skips rather than
+    # inserting a claim with a broken reference.
+    seed.seed_claims(db_session)
+
+    rows = db_session.scalars(select(Claim)).all()
+    assert len(rows) == 0
+
+
+def test_seed_claims_skips_when_listings_missing(db_session):
+    # With members present but no demo listings, seed_claims finds no listing to
+    # attach a claim to and skips.
+    seed.seed_members(db_session)
+
+    seed.seed_claims(db_session)
+
+    rows = db_session.scalars(select(Claim)).all()
     assert len(rows) == 0
 
 

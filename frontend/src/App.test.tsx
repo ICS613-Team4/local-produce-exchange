@@ -54,7 +54,11 @@ test('wires the /listings/:id route to the listing detail page', async () => {
     status: 'active',
     created_at: '2026-06-19T00:00:00.000Z',
   }
-  vi.stubGlobal('fetch', async () => {
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    const urlText = String(url)
+    if (urlText.includes('/api/request-queues')) {
+      return makeFakeResponse(true, 200, { groups: [] })
+    }
     return makeFakeResponse(true, 200, listing)
   })
 
@@ -84,7 +88,11 @@ test('wires the /listings/:id/edit route to the edit listing page', async () => 
     status: 'active',
     created_at: '2026-06-19T00:00:00.000Z',
   }
-  vi.stubGlobal('fetch', async () => {
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    const urlText = String(url)
+    if (urlText.includes('/api/request-queues')) {
+      return makeFakeResponse(true, 200, { groups: [] })
+    }
     return makeFakeResponse(true, 200, listing)
   })
 
@@ -129,6 +137,62 @@ test('guards the /dashboard route, showing the log-in message when logged out', 
   render(<App />)
 
   expect(screen.queryByRole('heading', { name: 'Member Dashboard' })).toBeNull()
+  const loginLink = screen.getByRole('link', { name: 'log in' })
+  expect(loginLink.getAttribute('href')).toBe('/login')
+})
+
+test('wires the /requests route inside RequireAuth for a logged-in member', async () => {
+  window.history.pushState({}, '', '/requests')
+  window.localStorage.setItem('memberId', 'member-123')
+  window.localStorage.setItem('memberName', 'Bob Baker')
+
+  // RequireAuth validates the stored id, then the page loads its queues. A 200
+  // for both lets the page render; an empty queue shows the global empty message.
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, { groups: [] })
+  })
+
+  render(<App />)
+
+  // The requests page heading renders, which only happens if App registered the
+  // route inside the RequireAuth group and let a logged-in member through.
+  expect(await screen.findByRole('heading', { name: 'Requests from other members' })).toBeTruthy()
+})
+
+test('guards the /requests route, showing the log-in message when logged out', () => {
+  // No stored login. The requests page is member-only, so App wraps it in
+  // RequireAuth: the page heading must not show, the log-in message must.
+  window.history.pushState({}, '', '/requests')
+  render(<App />)
+
+  expect(screen.queryByRole('heading', { name: 'Requests from other members' })).toBeNull()
+  const loginLink = screen.getByRole('link', { name: 'log in' })
+  expect(loginLink.getAttribute('href')).toBe('/login')
+})
+
+test('wires the /my-requests route inside RequireAuth for a logged-in member', async () => {
+  window.history.pushState({}, '', '/my-requests')
+  window.localStorage.setItem('memberId', 'member-123')
+  window.localStorage.setItem('memberName', 'Bob Baker')
+
+  // RequireAuth validates the stored id, then the page loads its requests. A 200
+  // for both lets the page render; an empty list shows the page's empty message.
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, { groups: [] })
+  })
+
+  render(<App />)
+
+  // The outgoing-requests page heading renders, which only happens if App
+  // registered the route inside RequireAuth and let a logged-in member through.
+  expect(await screen.findByRole('heading', { name: 'Requests you have made' })).toBeTruthy()
+})
+
+test('guards the /my-requests route, showing the log-in message when logged out', () => {
+  window.history.pushState({}, '', '/my-requests')
+  render(<App />)
+
+  expect(screen.queryByRole('heading', { name: 'Requests you have made' })).toBeNull()
   const loginLink = screen.getByRole('link', { name: 'log in' })
   expect(loginLink.getAttribute('href')).toBe('/login')
 })

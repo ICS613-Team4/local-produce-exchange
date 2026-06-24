@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { Navigate, useNavigate } from 'react-router'
 
 import { sendCreateListingRequest } from '../services/listingService'
-import { formatApiResult } from '../utils/formatApiResult'
 
 function CreateListingPage() {
   const navigate = useNavigate()
@@ -22,9 +21,6 @@ function CreateListingPage() {
 
   // Holds the message shown in the error area. Empty means no error.
   const [errorMessage, setErrorMessage] = useState('')
-
-  // Holds the raw backend response after a failed submit, for debugging.
-  const [rawResponseText, setRawResponseText] = useState('')
 
   // Blocks a second submit while the first request is still in flight, so a
   // fast double-click cannot create two listings.
@@ -125,7 +121,6 @@ function CreateListingPage() {
       setErrorMessage(
         'The listing was created, but the app could not open its page. Go to the dashboard.',
       )
-      setRawResponseText('')
       return
     }
 
@@ -135,7 +130,6 @@ function CreateListingPage() {
     if (result.errorMessage !== '') {
       // A transport failure: timeout or network error.
       setErrorMessage(result.errorMessage)
-      setRawResponseText('')
       return
     }
 
@@ -150,11 +144,27 @@ function CreateListingPage() {
     if (typeof detail === 'string') {
       setErrorMessage(detail)
     } else if (Array.isArray(detail)) {
-      setErrorMessage('Please check your entries and try again.')
+      // A 422 lists one entry per field problem, each with a plain-words "msg".
+      // Show those messages instead of a generic line or the raw JSON, joined
+      // with a semicolon when more than one field is wrong.
+      const fieldMessages = []
+      for (let index = 0; index < detail.length; index = index + 1) {
+        const entry = detail[index]
+        if (typeof entry === 'object' && entry !== null) {
+          const entryObject = entry as { msg?: unknown }
+          if (typeof entryObject.msg === 'string') {
+            fieldMessages.push(entryObject.msg)
+          }
+        }
+      }
+      if (fieldMessages.length > 0) {
+        setErrorMessage(fieldMessages.join('; '))
+      } else {
+        setErrorMessage('Please check your entries and try again.')
+      }
     } else {
       setErrorMessage('Could not create the listing (HTTP ' + result.status + ').')
     }
-    setRawResponseText(formatApiResult(result.ok, result.status, result.data))
   }
 
   // Not logged in: send the visitor to the login page. Returning <Navigate>
@@ -167,16 +177,6 @@ function CreateListingPage() {
   let errorArea = <></>
   if (errorMessage !== '') {
     errorArea = <p role="alert">{errorMessage}</p>
-  }
-
-  // After a failed submit, also show the raw backend response.
-  let rawResponseArea = <></>
-  if (rawResponseText !== '') {
-    rawResponseArea = (
-      <pre style={{ border: '1px solid black', padding: '10px', whiteSpace: 'pre-wrap' }}>
-        {rawResponseText}
-      </pre>
-    )
   }
 
   return (
@@ -269,7 +269,6 @@ function CreateListingPage() {
         </button>
       </form>
       {errorArea}
-      {rawResponseArea}
     </section>
   )
 }

@@ -140,7 +140,51 @@ test('shows the backend message on a 409 duplicate-email response', async () => 
   expect(screen.queryByText('login page')).toBeNull()
 })
 
-test('shows the fixed message when a 422 returns a list of field errors', async () => {
+test('shows the specific field message when a 422 returns a list of field errors', async () => {
+  const responseBody = {
+    detail: [
+      {
+        type: 'string_too_short',
+        loc: ['body', 'password'],
+        msg: 'String should have at least 8 characters',
+      },
+    ],
+  }
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(false, 422, responseBody)
+  })
+
+  renderRegisterPage()
+  fillForm('New Person', 'new@example.com', 'short', 'tok-1')
+  submitForm()
+
+  const errorArea = await screen.findByRole('alert')
+  expect(errorArea.textContent).toBe('String should have at least 8 characters')
+  expect(screen.queryByText('login page')).toBeNull()
+})
+
+test('joins multiple 422 field messages with a semicolon', async () => {
+  const responseBody = {
+    detail: [
+      { type: 'string_too_short', loc: ['body', 'password'], msg: 'String should have at least 8 characters' },
+      { type: 'value_error', loc: ['body', 'email'], msg: 'value is not a valid email address' },
+    ],
+  }
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(false, 422, responseBody)
+  })
+
+  renderRegisterPage()
+  fillForm('New Person', 'new@example.com', 'short', 'tok-1')
+  submitForm()
+
+  const errorArea = await screen.findByRole('alert')
+  expect(errorArea.textContent).toBe(
+    'String should have at least 8 characters; value is not a valid email address',
+  )
+})
+
+test('falls back to a generic message when a 422 list has no usable msg', async () => {
   const responseBody = {
     detail: [{ type: 'string_too_short', loc: ['body', 'password'] }],
   }
@@ -154,7 +198,6 @@ test('shows the fixed message when a 422 returns a list of field errors', async 
 
   const errorArea = await screen.findByRole('alert')
   expect(errorArea.textContent).toBe('Please check your entries and try again.')
-  expect(screen.queryByText('login page')).toBeNull()
 })
 
 test('shows a fallback message when the error body has no detail', async () => {

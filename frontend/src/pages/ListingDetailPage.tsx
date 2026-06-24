@@ -3,6 +3,8 @@ import { Link, useParams } from 'react-router'
 
 import { sendDeactivateListingRequest, sendGetListingRequest } from '../services/listingService'
 import type { ListingDetail, ListingResult } from '../services/listingService'
+import { sendGetRequestQueuesRequest } from '../services/requestQueueService'
+import type { RequestQueuesResponse } from '../services/requestQueueService'
 import { authStateChangedEventName } from '../services/authService'
 import { formatApiResult } from '../utils/formatApiResult'
 import { formatTimestamp, getLocalTimeZoneName } from '../utils/formatTimestamp'
@@ -46,6 +48,15 @@ function ListingDetailPage() {
   // click on a different listing the user navigated to.
   const isDeactivatingRef = useRef('')
 
+  // Counts pending-count loads so an older count response cannot overwrite a
+  // newer one. Separate from latestRequestNumber, which already guards the
+  // listing load and the deactivate action.
+  const latestPendingCountRequestNumber = useRef(0)
+
+  // The owner-only pending-request count. null means hidden (not loaded yet, or
+  // the count fetch failed); a number means show "Pending requests: N", even 0.
+  const [pendingCount, setPendingCount] = useState<number | null>(null)
+
   // Reset the deactivate state whenever the route or the member changes, so it
   // never leaks from one listing (or one login) to the next. React allows
   // adjusting state during render this way when a value it depends on changes;
@@ -58,6 +69,9 @@ function ListingDetailPage() {
     setIsDeactivating(false)
     setDeactivated(false)
     setDeactivateMessage('')
+    // Clear the pending count too, so a previous listing's count never flashes
+    // before the new listing's count loads.
+    setPendingCount(null)
   }
 
   // Deactivate the listing the owner is viewing. The steps run in a set order so
@@ -184,6 +198,66 @@ function ListingDetailPage() {
     loadListing()
   }, [listingId, memberId])
 
+  // Work out whether the loaded listing belongs to the viewer, and its id. These
+  // drive the owner-only pending-count fetch below. They are read off the loaded
+  // result, so they are empty until the current listing has loaded.
+  let loadedListingId = ''
+  let loadedOwnerId = ''
+  if (result !== null && result.ok && resultListingId === listingId) {
+    const loadedListing = result.data as ListingDetail
+    loadedListingId = loadedListing.id
+    loadedOwnerId = loadedListing.owner_id
+  }
+  const viewerOwnsLoadedListing = loadedListingId !== '' && loadedOwnerId === memberId
+
+  // Once the listing is loaded and the viewer owns it, fetch that listing's
+  // pending-request count for the owner control. It uses its own stale-response
+  // ref so a late count answer never disturbs the listing load or the deactivate
+  // guard. A non-owner view, or any failure, leaves the count hidden.
+  useEffect(() => {
+    latestPendingCountRequestNumber.current = latestPendingCountRequestNumber.current + 1
+    if (viewerOwnsLoadedListing === false) {
+      // The count only shows inside the owner block, so a non-owner view needs
+      // no fetch and no reset here (the render-time reset above clears it).
+      return
+    }
+    const requestNumber = latestPendingCountRequestNumber.current
+    async function loadPendingCount() {
+      const countResult = await sendGetRequestQueuesRequest(memberId, loadedListingId)
+      if (requestNumber !== latestPendingCountRequestNumber.current) {
+        return
+      }
+      if (countResult.status === 401) {
+        // Same stale-session handling as the listing-load and deactivate paths:
+        // clear the creds, fall back to logged-out, and tell the shared nav.
+        window.localStorage.removeItem('memberId')
+        window.localStorage.removeItem('memberName')
+        window.localStorage.removeItem('memberEmail')
+        setMemberId('')
+        setMemberName('')
+        window.dispatchEvent(new Event(authStateChangedEventName))
+        return
+      }
+      if (countResult.ok === false) {
+        // Leave the count hidden on any other failure; the detail stays usable.
+        setPendingCount(null)
+        return
+      }
+      // The backend returns at most one group for this single listing. Read its
+      // pending count, defaulting to 0 when the listing has no pending requests.
+      const responseData = countResult.data as RequestQueuesResponse
+      const groups = responseData.groups
+      let count = 0
+      for (let index = 0; index < groups.length; index = index + 1) {
+        if (groups[index].listing_id === loadedListingId) {
+          count = groups[index].pending.length
+        }
+      }
+      setPendingCount(count)
+    }
+    loadPendingCount()
+  }, [viewerOwnsLoadedListing, loadedListingId, memberId])
+
   // Show a short status line when logged in. The shared nav owns the log in and
   // log out controls now, so a logged-out viewer needs nothing here.
   let loggedInArea = null
@@ -228,6 +302,7 @@ function ListingDetailPage() {
     // formatted time already ends with the zone's short name (like "HST").
     const pickupStartText = formatTimestamp(listing.pickup_start)
     const pickupEndText = formatTimestamp(listing.pickup_end)
+    const postedText = formatTimestamp(listing.created_at)
     // Spell out, in plain words, that the times above are in the viewer's own
     // local zone, the way calendar and event sites do. We add the IANA zone
     // name (like "Pacific/Honolulu") when the browser can report it.
@@ -241,6 +316,12 @@ function ListingDetailPage() {
     // the whole block renders nothing, so both controls disappear at once.
     let ownerActionsArea = null
     if (memberId === ownerId && deactivated === false) {
+      // The pending-request count line only shows once the count has loaded; it
+      // stays hidden while loading or after a count-fetch failure.
+      let pendingCountLine = null
+      if (pendingCount !== null) {
+        pendingCountLine = <p>Pending requests: {pendingCount}</p>
+      }
       ownerActionsArea = (
         <>
           <p>
@@ -250,6 +331,10 @@ function ListingDetailPage() {
             <button onClick={handleDeactivate} disabled={isDeactivating}>
               Deactivate listing
             </button>
+          </p>
+          {pendingCountLine}
+          <p>
+            <Link to={'/requests?listing=' + listing.id}>View requests</Link>
           </p>
         </>
       )
@@ -271,13 +356,14 @@ function ListingDetailPage() {
       <article>
         <h2>{listing.title}</h2>
         <p>{listing.description}</p>
+        <p>Posted on: {postedText}</p>
         <p>Category: {listing.category}</p>
         <p>Quantity available: {listing.total_quantity}</p>
         <p>Remaining quantity: {listing.remaining_quantity}</p>
         <p>Dietary tags: {dietaryText}</p>
         <p>Allergen tags: {allergenText}</p>
-        <p>Pickup start: {pickupStartText}</p>
-        <p>Pickup end: {pickupEndText}</p>
+        <p>Pickup Window Start: {pickupStartText}</p>
+        <p>Pickup Window End: {pickupEndText}</p>
         <p>
           <small>{timeZoneNote}</small>
         </p>

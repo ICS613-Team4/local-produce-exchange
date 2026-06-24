@@ -88,6 +88,16 @@ test('renders the controls and lists the active listings on open', async () => {
   // The listing title shows after the open load, linking to its detail page.
   const titleLink = await screen.findByRole('link', { name: 'Backyard Meyer Lemons' })
   expect(titleLink.getAttribute('href')).toBe('/listings/l1')
+
+  // Each card shows the date the listing was posted, in the viewer's local zone.
+  // Build the expected text the same way the page does, so this passes on any
+  // machine's locale or time zone.
+  const timeZoneOptions = { timeZoneName: 'short' as const }
+  const postedExpected = new Date('2026-06-19T00:00:00.000Z').toLocaleString(undefined, timeZoneOptions)
+  expect(screen.getByText('Posted on: ' + postedExpected)).toBeTruthy()
+
+  // The local time-zone note shows under each card's pickup time.
+  expect(screen.getByText(/All times are shown in your local time zone/)).toBeTruthy()
 })
 
 test('shows the empty message when nothing matches', async () => {
