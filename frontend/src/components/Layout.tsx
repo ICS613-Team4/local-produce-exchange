@@ -29,10 +29,11 @@ function Layout() {
   }, [])
 
   // Read the stored login during render. A member is logged in when memberId is
-  // not empty. The nav does not need memberName. Both triggers above (a route
-  // change or the auth event) re-render the nav, so this read always reflects the
-  // latest localStorage.
+  // not empty. memberName is the display name shown next to Logout. Both triggers
+  // above (a route change or the auth event) re-render the nav, so this read
+  // always reflects the latest localStorage.
   const memberId = window.localStorage.getItem('memberId') ?? ''
+  const memberName = window.localStorage.getItem('memberName') ?? ''
   const isLoggedIn = memberId !== ''
 
   async function handleLogout() {
@@ -48,9 +49,16 @@ function Layout() {
     await sendLogoutRequest()
   }
 
+  // The label shown next to Logout when signed in: the stored name, or a plain
+  // "(Logged in)" when no name is stored.
+  let loggedInLabel = '(Logged in)'
+  if (memberName !== '') {
+    loggedInLabel = '(Logged in as ' + memberName + ')'
+  }
+
   // Build the nav links once into a single variable, so the returned markup stays
   // short. Logged-out visitors only see public pages and the way in; logged-in
-  // members see their workflow links and a Log out button.
+  // members see their workflow links and a Logout button.
   let navItems
   if (isLoggedIn) {
     navItems = (
@@ -69,8 +77,9 @@ function Layout() {
         </li>
         <li>
           <Link to="/" onClick={handleLogout}>
-            Log out
-          </Link>
+            Logout
+          </Link>{' '}
+          {loggedInLabel}
         </li>
       </>
     )

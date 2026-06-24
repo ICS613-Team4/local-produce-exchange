@@ -79,7 +79,7 @@ test('shows the logged-out nav when no member is stored', () => {
   expect(screen.queryByRole('link', { name: 'Create listing' })).toBeNull()
   expect(screen.queryByRole('link', { name: 'Invite a New Member' })).toBeNull()
   expect(screen.queryByRole('link', { name: 'View Profile' })).toBeNull()
-  expect(screen.queryByRole('link', { name: 'Log out' })).toBeNull()
+  expect(screen.queryByRole('link', { name: 'Logout' })).toBeNull()
 })
 
 test('shows the logged-in nav when a member is stored', () => {
@@ -90,7 +90,7 @@ test('shows the logged-in nav when a member is stored', () => {
   expect(screen.getByRole('link', { name: 'About' })).toBeTruthy()
   expect(screen.getByRole('link', { name: 'Test Page' })).toBeTruthy()
   expect(screen.getByRole('link', { name: 'Dashboard' })).toBeTruthy()
-  expect(screen.getByRole('link', { name: 'Log out' })).toBeTruthy()
+  expect(screen.getByRole('link', { name: 'Logout' })).toBeTruthy()
 
   expect(screen.queryByRole('link', { name: 'Log in' })).toBeNull()
   expect(screen.queryByRole('link', { name: 'Register' })).toBeNull()
@@ -98,6 +98,9 @@ test('shows the logged-in nav when a member is stored', () => {
   expect(screen.queryByRole('link', { name: 'Create listing' })).toBeNull()
   expect(screen.queryByRole('link', { name: 'Invite a New Member' })).toBeNull()
   expect(screen.queryByRole('link', { name: 'View Profile' })).toBeNull()
+  // The Requests link was removed from the global nav; reach requests from the
+  // dashboard link list instead.
+  expect(screen.queryByRole('link', { name: 'Requests' })).toBeNull()
 })
 
 test('logging out clears credentials, fires the event, and shows the logged-out nav', async () => {
@@ -114,11 +117,11 @@ test('logging out clears credentials, fires the event, and shows the logged-out 
 
   renderLayoutAt('/dashboard')
 
-  fireEvent.click(screen.getByRole('link', { name: 'Log out' }))
+  fireEvent.click(screen.getByRole('link', { name: 'Logout' }))
 
   // The nav flips back to the logged-out set once logout finishes.
   expect(await screen.findByRole('link', { name: 'Log in' })).toBeTruthy()
-  expect(screen.queryByRole('link', { name: 'Log out' })).toBeNull()
+  expect(screen.queryByRole('link', { name: 'Logout' })).toBeNull()
 
   expect(sendLogoutRequest).toHaveBeenCalled()
   expect(window.localStorage.getItem('memberId')).toBeNull()
@@ -142,16 +145,31 @@ test('re-reads localStorage on a route change after a child writes memberId', as
   expect(screen.queryByRole('link', { name: 'Log in' })).toBeNull()
 })
 
+test('shows the logged-in member name next to Logout', () => {
+  window.localStorage.setItem('memberId', 'member-123')
+  window.localStorage.setItem('memberName', 'Bob Baker')
+  renderLayoutAt('/dashboard')
+
+  expect(screen.getByText('(Logged in as Bob Baker)')).toBeTruthy()
+})
+
+test('shows a plain logged-in label when no name is stored', () => {
+  window.localStorage.setItem('memberId', 'member-123')
+  renderLayoutAt('/dashboard')
+
+  expect(screen.getByText('(Logged in)')).toBeTruthy()
+})
+
 test('re-reads localStorage on the auth event without a route change', async () => {
   // Start logged in on /detail. The nav shows the logged-in set.
   window.localStorage.setItem('memberId', 'member-123')
   renderLayoutAt('/detail')
-  expect(screen.getByRole('link', { name: 'Log out' })).toBeTruthy()
+  expect(screen.getByRole('link', { name: 'Logout' })).toBeTruthy()
 
   // The child clears memberId and fires the event, without navigating.
   fireEvent.click(screen.getByRole('button', { name: 'fake stale clear' }))
 
   // The event makes the nav re-read and show the logged-out set, same route.
   expect(await screen.findByRole('link', { name: 'Log in' })).toBeTruthy()
-  expect(screen.queryByRole('link', { name: 'Log out' })).toBeNull()
+  expect(screen.queryByRole('link', { name: 'Logout' })).toBeNull()
 })

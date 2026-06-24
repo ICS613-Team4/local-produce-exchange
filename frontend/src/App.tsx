@@ -10,8 +10,10 @@ import InvitePage from './pages/InvitePage.tsx'
 import ListingDetailPage from './pages/ListingDetailPage.tsx'
 import LoginPage from './pages/LoginPage.tsx'
 import NotFoundPage from './pages/NotFoundPage.tsx'
+import MyRequestsPage from './pages/MyRequestsPage.tsx'
 import ProfilePage from './pages/ProfilePage.tsx'
 import RegisterPage from './pages/RegisterPage.tsx'
+import RequestQueuesPage from './pages/RequestQueuesPage.tsx'
 import RequireAuth from './components/RequireAuth.tsx'
 import TestPage from './pages/TestPage.tsx'
 
@@ -33,6 +35,8 @@ function App() {
             <Route path="/profile" element={<ProfilePage />} />
             <Route path="/invite" element={<InvitePage />} />
             <Route path="/dashboard" element={<DashboardPage />} />
+            <Route path="/requests" element={<RequestQueuesPage />} />
+            <Route path="/my-requests" element={<MyRequestsPage />} />
             <Route path="/listings/create" element={<CreateListingPage />} />
             <Route path="/listings/:id/edit" element={<EditListingPage />} />
           </Route>

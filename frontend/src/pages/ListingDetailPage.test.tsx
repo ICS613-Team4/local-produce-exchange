@@ -45,6 +45,47 @@ function makeFakeResponse(ok: boolean, status: number, body: object): FakeRespon
   return fakeResponse
 }
 
+// Most listing tests now trigger a second fetch: the owner-only pending-count
+// call to /api/request-queues. This helper answers the listing GET with the
+// given response and answers that count call with an empty queue, so a listing
+// test that is not about the count never has to handle it.
+function stubListingFetch(getListingResponse: () => FakeResponse) {
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    const urlText = String(url)
+    if (urlText.includes('/api/request-queues')) {
+      return makeFakeResponse(true, 200, { groups: [] })
+    }
+    return getListingResponse()
+  })
+}
+
+// A request-queue response body for one listing with the given pending count,
+// used by the pending-count control tests.
+function makeCountQueueBody(listingId: string, pendingCount: number) {
+  const pending = []
+  for (let index = 0; index < pendingCount; index = index + 1) {
+    pending.push({
+      id: listingId + '-c' + index,
+      claimant_id: 'm' + index,
+      claimant_name: 'Member ' + index,
+      requested_quantity: 1,
+      requested_at: '2026-07-01T09:00:00.000Z',
+    })
+  }
+  const body = {
+    groups: [
+      {
+        listing_id: listingId,
+        listing_title: 'Lemons',
+        listing_status: 'active',
+        remaining_quantity: 4,
+        pending: pending,
+      },
+    ],
+  }
+  return body
+}
+
 // A full active-listing body with two distinct quantity values and both tag
 // groups, so the tests can prove each is shown under the right label.
 function makeActiveListing() {
@@ -114,9 +155,7 @@ async function waitForStateUpdates() {
 
 test('shows the listing details for an active listing', async () => {
   setLoggedIn()
-  vi.stubGlobal('fetch', async () => {
-    return makeFakeResponse(true, 200, makeActiveListing())
-  })
+  stubListingFetch(() => makeFakeResponse(true, 200, makeActiveListing()))
 
   renderDetailPage()
 
@@ -143,8 +182,11 @@ test('shows the listing details for an active listing', async () => {
     undefined,
     timeZoneOptions,
   )
-  expect(screen.getByText('Pickup start: ' + expectedPickupStart)).toBeTruthy()
-  expect(screen.getByText('Pickup end: ' + expectedPickupEnd)).toBeTruthy()
+  expect(screen.getByText('Pickup Window Start: ' + expectedPickupStart)).toBeTruthy()
+  expect(screen.getByText('Pickup Window End: ' + expectedPickupEnd)).toBeTruthy()
+  // The posted date shows, in the viewer's local zone.
+  const expectedPosted = new Date('2026-06-19T00:00:00.000Z').toLocaleString(undefined, timeZoneOptions)
+  expect(screen.getByText('Posted on: ' + expectedPosted)).toBeTruthy()
   // A plain-words note tells the user the times are in their own local zone.
   expect(screen.getByText(/All times are shown in your local time zone/)).toBeTruthy()
 })
@@ -201,9 +243,7 @@ test('shows None for empty tag lists and the plain logged-in line with no stored
   const listing = makeActiveListing()
   listing.dietary_tags = []
   listing.allergen_tags = []
-  vi.stubGlobal('fetch', async () => {
-    return makeFakeResponse(true, 200, listing)
-  })
+  stubListingFetch(() => makeFakeResponse(true, 200, listing))
 
   renderDetailPage()
 
@@ -229,9 +269,7 @@ test('shows the detail message on a generic HTTP error', async () => {
 
 test('shows the edit link when the logged-in member owns the listing', async () => {
   setLoggedIn()
-  vi.stubGlobal('fetch', async () => {
-    return makeFakeResponse(true, 200, makeActiveListing())
-  })
+  stubListingFetch(() => makeFakeResponse(true, 200, makeActiveListing()))
 
   renderDetailPage()
 
@@ -243,9 +281,7 @@ test('hides the edit link when another member owns the listing', async () => {
   setLoggedIn()
   const listing = makeActiveListing()
   listing.owner_id = 'other-member'
-  vi.stubGlobal('fetch', async () => {
-    return makeFakeResponse(true, 200, listing)
-  })
+  stubListingFetch(() => makeFakeResponse(true, 200, listing))
 
   renderDetailPage()
 
@@ -337,6 +373,9 @@ function stubDeactivateFetch(handlePost: () => Promise<FakeResponse>) {
       postUrls.push(urlText)
       return handlePost()
     }
+    if (urlText.includes('/api/request-queues')) {
+      return makeFakeResponse(true, 200, { groups: [] })
+    }
     return makeFakeResponse(true, 200, makeActiveListing())
   })
   return postUrls
@@ -357,6 +396,9 @@ function stubFetchByListingId(handlePost: () => Promise<FakeResponse>) {
       postUrls.push(urlText)
       return handlePost()
     }
+    if (urlText.includes('/api/request-queues')) {
+      return makeFakeResponse(true, 200, { groups: [] })
+    }
     const urlParts = urlText.split('/')
     const requestedId = urlParts[urlParts.length - 1]
     const listing = makeActiveListing()
@@ -369,9 +411,7 @@ function stubFetchByListingId(handlePost: () => Promise<FakeResponse>) {
 
 test('shows the deactivate button to the owner', async () => {
   setLoggedIn()
-  vi.stubGlobal('fetch', async () => {
-    return makeFakeResponse(true, 200, makeActiveListing())
-  })
+  stubListingFetch(() => makeFakeResponse(true, 200, makeActiveListing()))
 
   renderDetailPage()
 
@@ -382,9 +422,7 @@ test('hides the deactivate button from a non-owner', async () => {
   setLoggedIn()
   const listing = makeActiveListing()
   listing.owner_id = 'other-member'
-  vi.stubGlobal('fetch', async () => {
-    return makeFakeResponse(true, 200, listing)
-  })
+  stubListingFetch(() => makeFakeResponse(true, 200, listing))
 
   renderDetailPage()
 
@@ -656,6 +694,9 @@ test('a pending deactivate on one listing does not block deactivating another', 
       // Listing B's POST resolves right away.
       return makeFakeResponse(true, 204, {})
     }
+    if (urlText.includes('/api/request-queues')) {
+      return makeFakeResponse(true, 200, { groups: [] })
+    }
     const urlParts = urlText.split('/')
     const requestedId = urlParts[urlParts.length - 1]
     const listing = makeActiveListing()
@@ -706,4 +747,138 @@ test('a pending deactivate on one listing does not block deactivating another', 
   // Resolve the still-pending A request so nothing dangles.
   pendingFirstPost.resolve(makeFakeResponse(true, 204, {}))
   await waitForStateUpdates()
+})
+
+// --- US-10: the owner-only pending-request control ---
+
+test('shows the pending-request count and the View requests link to the owner', async () => {
+  setLoggedIn()
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    const urlText = String(url)
+    if (urlText.includes('/api/request-queues')) {
+      return makeFakeResponse(true, 200, makeCountQueueBody('abc', 2))
+    }
+    return makeFakeResponse(true, 200, makeActiveListing())
+  })
+
+  renderDetailPage()
+
+  expect(await screen.findByText('Pending requests: 2')).toBeTruthy()
+  const viewLink = screen.getByRole('link', { name: 'View requests' })
+  expect(viewLink.getAttribute('href')).toBe('/requests?listing=abc')
+})
+
+test('hides the pending-request count and View requests link from a non-owner', async () => {
+  setLoggedIn()
+  const listing = makeActiveListing()
+  listing.owner_id = 'other-member'
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    const urlText = String(url)
+    if (urlText.includes('/api/request-queues')) {
+      return makeFakeResponse(true, 200, makeCountQueueBody('abc', 2))
+    }
+    return makeFakeResponse(true, 200, listing)
+  })
+
+  renderDetailPage()
+
+  expect(await screen.findByText('Backyard Lemons')).toBeTruthy()
+  expect(screen.queryByText(/Pending requests:/)).toBeNull()
+  expect(screen.queryByRole('link', { name: 'View requests' })).toBeNull()
+})
+
+test('a count-fetch 401 clears the credentials and falls back to logged-out', async () => {
+  setLoggedIn()
+  let authEventFired = false
+  function handleAuthEvent() {
+    authEventFired = true
+  }
+  window.addEventListener('auth-state-changed', handleAuthEvent)
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    const urlText = String(url)
+    if (urlText.includes('/api/request-queues')) {
+      return makeFakeResponse(false, 401, { detail: 'Not authenticated. Unknown member.' })
+    }
+    return makeFakeResponse(true, 200, makeActiveListing())
+  })
+
+  renderDetailPage()
+
+  expect(await screen.findByText('You need to be logged in to see this page.')).toBeTruthy()
+  expect(window.localStorage.getItem('memberId')).toBeNull()
+  expect(authEventFired).toBe(true)
+
+  window.removeEventListener('auth-state-changed', handleAuthEvent)
+})
+
+test('a count-fetch failure leaves the detail page usable without the count', async () => {
+  setLoggedIn()
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    const urlText = String(url)
+    if (urlText.includes('/api/request-queues')) {
+      return makeFakeResponse(false, 503, { detail: 'down' })
+    }
+    return makeFakeResponse(true, 200, makeActiveListing())
+  })
+
+  renderDetailPage()
+
+  expect(await screen.findByText('Backyard Lemons')).toBeTruthy()
+  // The owner control still shows the View requests link; only the count hides.
+  expect(screen.getByRole('link', { name: 'View requests' })).toBeTruthy()
+  expect(screen.queryByText(/Pending requests:/)).toBeNull()
+})
+
+test('drops a late count response after the route changes to another listing', async () => {
+  setLoggedIn()
+  const firstCount = makePendingResponse()
+  const secondCount = makePendingResponse()
+  let countCallCount = 0
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    const urlText = String(url)
+    if (urlText.includes('/api/request-queues')) {
+      countCallCount = countCallCount + 1
+      if (countCallCount === 1) {
+        return firstCount.promise
+      }
+      if (countCallCount === 2) {
+        return secondCount.promise
+      }
+      throw new Error('Unexpected count fetch')
+    }
+    // A listing GET: answer with a listing whose id matches the requested id,
+    // owned by the logged-in member.
+    const urlParts = urlText.split('/')
+    const requestedId = urlParts[urlParts.length - 1]
+    const listing = makeActiveListing()
+    listing.id = requestedId
+    listing.title = 'Listing ' + requestedId
+    return makeFakeResponse(true, 200, listing)
+  })
+
+  render(
+    <MemoryRouter initialEntries={['/listings/first']}>
+      <Routes>
+        <Route path="/listings/:id" element={<DetailPageWithSecondListingButton />} />
+      </Routes>
+    </MemoryRouter>,
+  )
+
+  // The first listing loads; its count request is left in flight.
+  expect(await screen.findByText('Listing first')).toBeTruthy()
+
+  // Navigate to the second listing; its count request is also in flight.
+  fireEvent.click(screen.getByRole('button', { name: 'Second listing' }))
+  expect(await screen.findByText('Listing second')).toBeTruthy()
+
+  // Resolve the second (current) count first.
+  secondCount.resolve(makeFakeResponse(true, 200, makeCountQueueBody('second', 5)))
+  expect(await screen.findByText('Pending requests: 5')).toBeTruthy()
+
+  // The stale first count resolves last and must be dropped.
+  firstCount.resolve(makeFakeResponse(true, 200, makeCountQueueBody('first', 99)))
+  await waitForStateUpdates()
+
+  expect(screen.getByText('Pending requests: 5')).toBeTruthy()
+  expect(screen.queryByText('Pending requests: 99')).toBeNull()
 })

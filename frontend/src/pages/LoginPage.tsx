@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router'
 
 import { sendLoginRequest } from '../services/authService'
-import { formatApiResult } from '../utils/formatApiResult'
 
 function LoginPage() {
   const navigate = useNavigate()
@@ -39,9 +38,6 @@ function LoginPage() {
 
   // Holds the message shown in the error area. Empty means no error.
   const [errorMessage, setErrorMessage] = useState('')
-
-  // Holds the raw backend response after a failed submit, for debugging.
-  const [rawResponseText, setRawResponseText] = useState('')
 
   // Auth truth is memberId: logged in means it is not empty. memberName is read
   // the same way but used only for the display text (the two can drift). The
@@ -81,7 +77,6 @@ function LoginPage() {
     if (result.errorMessage !== '') {
       // A transport failure: timeout or network error.
       setErrorMessage(result.errorMessage)
-      setRawResponseText('')
       return
     }
 
@@ -95,11 +90,27 @@ function LoginPage() {
     if (typeof detail === 'string') {
       setErrorMessage(detail)
     } else if (Array.isArray(detail)) {
-      setErrorMessage('Please check your entries and try again.')
+      // A 422 lists one entry per field problem, each with a plain-words "msg".
+      // Show those messages instead of a generic line or the raw JSON, joined
+      // with a semicolon when more than one field is wrong.
+      const fieldMessages = []
+      for (let index = 0; index < detail.length; index = index + 1) {
+        const entry = detail[index]
+        if (typeof entry === 'object' && entry !== null) {
+          const entryObject = entry as { msg?: unknown }
+          if (typeof entryObject.msg === 'string') {
+            fieldMessages.push(entryObject.msg)
+          }
+        }
+      }
+      if (fieldMessages.length > 0) {
+        setErrorMessage(fieldMessages.join('; '))
+      } else {
+        setErrorMessage('Please check your entries and try again.')
+      }
     } else {
       setErrorMessage('Login failed (HTTP ' + result.status + ').')
     }
-    setRawResponseText(formatApiResult(result.ok, result.status, result.data))
   }
 
   // Logged-in branch: hide the form and show an "already logged in" view, so a
@@ -148,16 +159,6 @@ function LoginPage() {
     errorArea = <p role="alert">{errorMessage}</p>
   }
 
-  // After a failed submit, also show the raw backend response.
-  let rawResponseArea = <></>
-  if (rawResponseText !== '') {
-    rawResponseArea = (
-      <pre style={{ border: '1px solid black', padding: '10px', whiteSpace: 'pre-wrap' }}>
-        {rawResponseText}
-      </pre>
-    )
-  }
-
   return (
     <section>
       <h1>Log in</h1>
@@ -196,7 +197,6 @@ function LoginPage() {
         Don't have an account? <Link to="/register">Register here</Link>
       </p>
       {errorArea}
-      {rawResponseArea}
     </section>
   )
 }

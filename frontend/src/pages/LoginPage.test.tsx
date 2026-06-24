@@ -138,6 +138,23 @@ test('shows the suspension message on a 403 response', async () => {
   expect(screen.queryByText('dashboard page')).toBeNull()
 })
 
+test('shows the specific field message when a 422 returns a list of field errors', async () => {
+  const responseBody = {
+    detail: [{ type: 'value_error', loc: ['body', 'email'], msg: 'value is not a valid email address' }],
+  }
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(false, 422, responseBody)
+  })
+
+  renderLoginPage()
+  fillForm('alice@example.com', 'password')
+  submitForm()
+
+  const errorArea = await screen.findByRole('alert')
+  expect(errorArea.textContent).toBe('value is not a valid email address')
+  expect(screen.queryByText('dashboard page')).toBeNull()
+})
+
 test('shows a fallback message when the error body has no detail', async () => {
   vi.stubGlobal('fetch', async () => {
     const fakeResponse = {
