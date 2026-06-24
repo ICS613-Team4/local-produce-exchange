@@ -150,7 +150,7 @@ test('renders the grouped queue with names, quantities, and remaining quantity',
   renderRequestsPage('/requests')
 
   expect(await screen.findByText('Backyard Meyer Lemons')).toBeTruthy()
-  expect(screen.getByText('Remaining quantity: 24')).toBeTruthy()
+  expect(screen.getByText('Your Remaining Quantity: 24')).toBeTruthy()
   expect(screen.getByText(/Bob Baker requested 3/)).toBeTruthy()
   expect(screen.getByText(/Carol Chen requested 2/)).toBeTruthy()
   // The local time-zone note shows under the queue.
@@ -166,7 +166,16 @@ test('shows the pending rows oldest-first', async () => {
   renderRequestsPage('/requests')
 
   expect(await screen.findByText(/Bob Baker requested 3/)).toBeTruthy()
-  const rows = screen.getAllByRole('listitem')
+  // Each request row now also holds an Approve/Deny sub-list, so keep only the
+  // list items that are request rows (their text reads "... requested ...").
+  const allItems = screen.getAllByRole('listitem')
+  const rows = []
+  for (let index = 0; index < allItems.length; index = index + 1) {
+    const item = allItems[index]
+    if (item.textContent !== null && item.textContent.includes('requested')) {
+      rows.push(item)
+    }
+  }
   // Bob's older request renders before Carol's newer one.
   expect(rows[0].textContent).toContain('Bob Baker')
   expect(rows[1].textContent).toContain('Carol Chen')
@@ -353,4 +362,197 @@ test('drops a late response after the listing filter changes', async () => {
 
   expect(screen.getByText('Second Listing')).toBeTruthy()
   expect(screen.queryByText('First Listing')).toBeNull()
+})
+
+// --- US-11: approve / deny from the queue ---
+
+// Routes the GET queue load and the PATCH approve/deny call to their own
+// responses, so a test can shape both. The decision response is the ClaimResponse
+// the page reads back after a successful approve or deny.
+function stubQueueAndDecision(decisionResponse: () => FakeResponse) {
+  vi.stubGlobal('fetch', async (_url: string | URL | Request, options: RequestInit | undefined) => {
+    let method = 'GET'
+    if (options !== undefined && options.method !== undefined) {
+      method = String(options.method)
+    }
+    if (method === 'PATCH') {
+      return decisionResponse()
+    }
+    return makeFakeResponse(true, 200, makeQueuesBody())
+  })
+}
+
+test('shows Approve and Deny buttons for every pending request', async () => {
+  setLoggedIn()
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, makeQueuesBody())
+  })
+
+  renderRequestsPage('/requests')
+
+  // Two pending rows (Bob and Carol), so two of each button.
+  const approveButtons = await screen.findAllByRole('button', { name: 'Approve this request' })
+  const denyButtons = screen.getAllByRole('button', { name: 'Deny this request' })
+  expect(approveButtons.length).toBe(2)
+  expect(denyButtons.length).toBe(2)
+})
+
+test('approving swaps the buttons for a confirmation and lowers the remaining quantity', async () => {
+  setLoggedIn()
+  vi.stubGlobal('confirm', () => {
+    return true
+  })
+  const approveResponse = {
+    id: 'c1',
+    listing_id: 'lemons',
+    claimant_id: 'bob',
+    requested_quantity: 3,
+    approved_quantity: 3,
+    status: 'approved',
+    requested_at: '2026-07-01T09:00:00.000Z',
+    approved_at: '2026-07-02T10:00:00.000Z',
+  }
+  stubQueueAndDecision(() => makeFakeResponse(true, 200, approveResponse))
+
+  renderRequestsPage('/requests')
+
+  const approveButtons = await screen.findAllByRole('button', { name: 'Approve this request' })
+  // Remaining quantity starts at 24.
+  expect(screen.getByText('Your Remaining Quantity: 24')).toBeTruthy()
+
+  // Approve Bob's request (the first, oldest row).
+  fireEvent.click(approveButtons[0])
+
+  // Bob's buttons are replaced by the approved line naming the quantity.
+  expect(await screen.findByText(/You approved: 3 on:/)).toBeTruthy()
+  // The remaining quantity dropped by the approved amount, 24 - 3 = 21.
+  expect(screen.getByText('Your Remaining Quantity: 21')).toBeTruthy()
+})
+
+test('shows the partial approved quantity when less was allocated than requested', async () => {
+  setLoggedIn()
+  vi.stubGlobal('confirm', () => {
+    return true
+  })
+  // Bob asked for 3 but only 2 were allocated.
+  const approveResponse = {
+    id: 'c1',
+    listing_id: 'lemons',
+    claimant_id: 'bob',
+    requested_quantity: 3,
+    approved_quantity: 2,
+    status: 'approved',
+    requested_at: '2026-07-01T09:00:00.000Z',
+    approved_at: '2026-07-02T10:00:00.000Z',
+  }
+  stubQueueAndDecision(() => makeFakeResponse(true, 200, approveResponse))
+
+  renderRequestsPage('/requests')
+
+  const approveButtons = await screen.findAllByRole('button', { name: 'Approve this request' })
+  fireEvent.click(approveButtons[0])
+
+  expect(await screen.findByText(/You approved: 2 on:/)).toBeTruthy()
+  // Remaining dropped by the allocated 2, 24 - 2 = 22.
+  expect(screen.getByText('Your Remaining Quantity: 22')).toBeTruthy()
+})
+
+test('denying swaps the buttons for a denied line and leaves the quantity alone', async () => {
+  setLoggedIn()
+  vi.stubGlobal('confirm', () => {
+    return true
+  })
+  const denyResponse = {
+    id: 'c1',
+    listing_id: 'lemons',
+    claimant_id: 'bob',
+    requested_quantity: 3,
+    status: 'denied',
+    requested_at: '2026-07-01T09:00:00.000Z',
+    denied_at: '2026-07-02T10:00:00.000Z',
+  }
+  stubQueueAndDecision(() => makeFakeResponse(true, 200, denyResponse))
+
+  renderRequestsPage('/requests')
+
+  const denyButtons = await screen.findAllByRole('button', { name: 'Deny this request' })
+  fireEvent.click(denyButtons[0])
+
+  expect(await screen.findByText(/You denied this request on:/)).toBeTruthy()
+  // Denying allocates nothing, so the remaining quantity is unchanged.
+  expect(screen.getByText('Your Remaining Quantity: 24')).toBeTruthy()
+})
+
+test('cancelling the confirm does not send a decision', async () => {
+  setLoggedIn()
+  vi.stubGlobal('confirm', () => {
+    return false
+  })
+  let patchCount = 0
+  vi.stubGlobal('fetch', async (_url: string | URL | Request, options: RequestInit | undefined) => {
+    let method = 'GET'
+    if (options !== undefined && options.method !== undefined) {
+      method = String(options.method)
+    }
+    if (method === 'PATCH') {
+      patchCount = patchCount + 1
+      return makeFakeResponse(true, 200, {})
+    }
+    return makeFakeResponse(true, 200, makeQueuesBody())
+  })
+
+  renderRequestsPage('/requests')
+
+  const approveButtons = await screen.findAllByRole('button', { name: 'Approve this request' })
+  fireEvent.click(approveButtons[0])
+  await waitForStateUpdates()
+
+  // No PATCH went out, and the buttons are still there.
+  expect(patchCount).toBe(0)
+  expect(screen.getAllByRole('button', { name: 'Approve this request' }).length).toBe(2)
+})
+
+test('the approve confirm warns it is final and names the quantity', async () => {
+  setLoggedIn()
+  let confirmMessage = ''
+  vi.stubGlobal('confirm', (message: string) => {
+    confirmMessage = message
+    return false
+  })
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, makeQueuesBody())
+  })
+
+  renderRequestsPage('/requests')
+
+  const approveButtons = await screen.findAllByRole('button', { name: 'Approve this request' })
+  fireEvent.click(approveButtons[0])
+
+  expect(confirmMessage.toLowerCase()).toContain('final')
+  // Bob asked for 3, and 24 remain, so 3 will be allocated.
+  expect(confirmMessage).toContain('3')
+})
+
+test('a decision failure shows the server message and keeps the buttons', async () => {
+  setLoggedIn()
+  vi.stubGlobal('confirm', () => {
+    return true
+  })
+  let alertMessage = ''
+  vi.stubGlobal('alert', (message: string) => {
+    alertMessage = message
+  })
+  stubQueueAndDecision(() =>
+    makeFakeResponse(false, 409, { detail: 'This request is not pending, so it cannot be approved.' }),
+  )
+
+  renderRequestsPage('/requests')
+
+  const approveButtons = await screen.findAllByRole('button', { name: 'Approve this request' })
+  fireEvent.click(approveButtons[0])
+  await waitForStateUpdates()
+
+  // The server's plain-words detail is shown, and the buttons stay for a retry.
+  expect(alertMessage).toContain('not pending')
+  expect(screen.getAllByRole('button', { name: 'Approve this request' }).length).toBe(2)
 })

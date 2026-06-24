@@ -40,42 +40,57 @@ function makeFakeResponse(ok: boolean, status: number, body: object): FakeRespon
   return fakeResponse
 }
 
-// Two listings the caller has requested on, newest listing first, each group
-// holding the caller's own request (claimant_name is the caller's name).
+// One request in each of the three sections.
 function makeMyRequestsBody() {
   const body = {
-    groups: [
+    pending: [
       {
-        listing_id: 'lemons',
-        listing_title: 'Backyard Meyer Lemons',
-        listing_status: 'active',
-        remaining_quantity: 24,
-        pending: [
-          {
-            id: 'c1',
-            claimant_id: 'me',
-            claimant_name: 'Dave Diaz',
-            requested_quantity: 3,
-            requested_at: '2026-07-01T09:00:00.000Z',
-          },
-        ],
-      },
-      {
-        listing_id: 'kabocha',
-        listing_title: 'Kabocha Squash',
-        listing_status: 'active',
-        remaining_quantity: 4,
-        pending: [
-          {
-            id: 'c2',
-            claimant_id: 'me',
-            claimant_name: 'Dave Diaz',
-            requested_quantity: 1,
-            requested_at: '2026-07-01T10:00:00.000Z',
-          },
-        ],
+        id: 'p1',
+        listing_id: 'l1',
+        listing_title: 'Apples',
+        requested_quantity: 3,
+        approved_quantity: null,
+        status: 'requested',
+        requested_at: '2026-07-01T09:00:00.000Z',
+        approved_at: null,
+        denied_at: null,
       },
     ],
+    approved: [
+      {
+        id: 'a1',
+        listing_id: 'l2',
+        listing_title: 'Bananas',
+        requested_quantity: 5,
+        approved_quantity: 2,
+        status: 'approved',
+        requested_at: '2026-07-01T08:00:00.000Z',
+        approved_at: '2026-07-02T10:00:00.000Z',
+        denied_at: null,
+      },
+    ],
+    denied: [
+      {
+        id: 'd1',
+        listing_id: 'l3',
+        listing_title: 'Cherries',
+        requested_quantity: 4,
+        approved_quantity: null,
+        status: 'denied',
+        requested_at: '2026-07-01T07:00:00.000Z',
+        approved_at: null,
+        denied_at: '2026-07-02T11:00:00.000Z',
+      },
+    ],
+  }
+  return body
+}
+
+function makeEmptyBody() {
+  const body = {
+    pending: [],
+    approved: [],
+    denied: [],
   }
   return body
 }
@@ -92,7 +107,7 @@ async function waitForStateUpdates() {
   })
 }
 
-test('renders the outgoing requests grouped by listing with timestamps', async () => {
+test('renders Pending, Approved, and Denied sections with their requests', async () => {
   setLoggedIn()
   vi.stubGlobal('fetch', async () => {
     return makeFakeResponse(true, 200, makeMyRequestsBody())
@@ -100,16 +115,23 @@ test('renders the outgoing requests grouped by listing with timestamps', async (
 
   renderMyRequestsPage()
 
-  expect(await screen.findByText('Backyard Meyer Lemons')).toBeTruthy()
-  expect(screen.getByText('Kabocha Squash')).toBeTruthy()
-  expect(screen.getByText('Remaining quantity: 24')).toBeTruthy()
-  expect(screen.getByText(/You requested 3/)).toBeTruthy()
-  expect(screen.getByText(/You requested 1/)).toBeTruthy()
-  // The local time-zone note shows under the groups.
+  // The three section headings, in order.
+  expect(await screen.findByRole('heading', { level: 2, name: 'Pending' })).toBeTruthy()
+  const headings = screen.getAllByRole('heading', { level: 2 })
+  expect(headings[0].textContent).toBe('Pending')
+  expect(headings[1].textContent).toBe('Approved')
+  expect(headings[2].textContent).toBe('Denied')
+
+  // Each request shows in the right section with the right wording.
+  expect(screen.getByText(/Apples: You requested 3 on/)).toBeTruthy()
+  expect(screen.getByText(/Bananas: You were approved for: 2 on/)).toBeTruthy()
+  expect(screen.getByText(/Cherries: Your request for 4 was denied on:/)).toBeTruthy()
+
+  // The local time-zone note shows under the sections.
   expect(screen.getByText(/All times are shown in your local time zone/)).toBeTruthy()
 })
 
-test('renders the groups in the order the backend returns them', async () => {
+test('shows the Exchange Thread link only on approved requests', async () => {
   setLoggedIn()
   vi.stubGlobal('fetch', async () => {
     return makeFakeResponse(true, 200, makeMyRequestsBody())
@@ -117,35 +139,84 @@ test('renders the groups in the order the backend returns them', async () => {
 
   renderMyRequestsPage()
 
-  expect(await screen.findByText('Backyard Meyer Lemons')).toBeTruthy()
-  const headings = screen.getAllByRole('heading', { level: 2 })
-  // Newest listing first, exactly as the backend ordered them.
-  expect(headings[0].textContent).toBe('Backyard Meyer Lemons')
-  expect(headings[1].textContent).toBe('Kabocha Squash')
+  await screen.findByRole('heading', { level: 2, name: 'Approved' })
+  // Exactly one approved request, so exactly one Exchange Thread link.
+  const threadLinks = screen.getAllByRole('link', { name: 'Arrange the Exchange' })
+  expect(threadLinks.length).toBe(1)
+  expect(threadLinks[0].getAttribute('href')).toContain('/exchange-thread')
+  // The link sits on the approved row (the same list item as the Bananas text).
+  const approvedRow = screen.getByText(/Bananas: You were approved for: 2 on/).closest('li')
+  expect(approvedRow?.querySelector('a')).toBeTruthy()
 })
 
-test('marks a deactivated listing group with a suffix', async () => {
+test('separates the three sections with horizontal rules', async () => {
   setLoggedIn()
-  const body = makeMyRequestsBody()
-  body.groups[0].listing_status = 'deactivated'
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, makeMyRequestsBody())
+  })
+
+  renderMyRequestsPage()
+
+  await screen.findByRole('heading', { level: 2, name: 'Pending' })
+  // Two <hr> elements separate the three sections. An <hr> has the separator role.
+  const separators = screen.getAllByRole('separator')
+  expect(separators.length).toBe(2)
+})
+
+test('shows a per-section empty message when a section has no requests', async () => {
+  setLoggedIn()
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, makeEmptyBody())
+  })
+
+  renderMyRequestsPage()
+
+  expect(await screen.findByText('You have no pending requests.')).toBeTruthy()
+  expect(screen.getByText('You have no approved requests.')).toBeTruthy()
+  expect(screen.getByText('You have no denied requests.')).toBeTruthy()
+})
+
+test('renders a section newest-first in the order the backend returns', async () => {
+  setLoggedIn()
+  const body = {
+    pending: [
+      {
+        id: 'newer',
+        listing_id: 'l1',
+        listing_title: 'Newer',
+        requested_quantity: 1,
+        approved_quantity: null,
+        status: 'requested',
+        requested_at: '2026-07-01T15:00:00.000Z',
+        approved_at: null,
+        denied_at: null,
+      },
+      {
+        id: 'older',
+        listing_id: 'l2',
+        listing_title: 'Older',
+        requested_quantity: 1,
+        approved_quantity: null,
+        status: 'requested',
+        requested_at: '2026-07-01T09:00:00.000Z',
+        approved_at: null,
+        denied_at: null,
+      },
+    ],
+    approved: [],
+    denied: [],
+  }
   vi.stubGlobal('fetch', async () => {
     return makeFakeResponse(true, 200, body)
   })
 
   renderMyRequestsPage()
 
-  expect(await screen.findByText('Backyard Meyer Lemons (deactivated)')).toBeTruthy()
-})
-
-test('shows the empty message when the member has made no requests', async () => {
-  setLoggedIn()
-  vi.stubGlobal('fetch', async () => {
-    return makeFakeResponse(true, 200, { groups: [] })
-  })
-
-  renderMyRequestsPage()
-
-  expect(await screen.findByText('You have not made any requests yet.')).toBeTruthy()
+  await screen.findByText(/Newer: You requested/)
+  // The list items render in the backend's order: Newer before Older.
+  const rows = screen.getAllByRole('listitem')
+  expect(rows[0].textContent).toContain('Newer')
+  expect(rows[1].textContent).toContain('Older')
 })
 
 test('a stale-session 401 clears the credentials and fires the auth event', async () => {
@@ -201,7 +272,7 @@ test('renders the not-logged-in message and does not fetch when logged out', asy
   let fetchCallCount = 0
   vi.stubGlobal('fetch', async () => {
     fetchCallCount = fetchCallCount + 1
-    return makeFakeResponse(true, 200, { groups: [] })
+    return makeFakeResponse(true, 200, makeEmptyBody())
   })
 
   renderMyRequestsPage()

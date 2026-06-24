@@ -204,7 +204,13 @@ def browse_listings(
         statement = statement.where(Listing.dietary_tags.contains(dietary_tags))
     if allergen_tags:
         statement = statement.where(Listing.allergen_tags.contains(allergen_tags))
-    statement = statement.order_by(Listing.created_at.desc()).limit(limit)
+    # Order newest first, with the id as a tiebreaker so the order is total and
+    # deterministic. Without the tiebreaker, listings that share a created_at
+    # (seed rows all get the same now() inside one transaction) sort in an
+    # arbitrary order, and with LIMIT that means an unrelated UPDATE on one row
+    # could shuffle which rows fall in the window. The unique id breaks every tie
+    # the same way every time.
+    statement = statement.order_by(Listing.created_at.desc(), Listing.id.desc()).limit(limit)
 
     # Wrap the read so a down or unmigrated database returns 503 instead of an
     # unhandled error, matching the other listing routes.

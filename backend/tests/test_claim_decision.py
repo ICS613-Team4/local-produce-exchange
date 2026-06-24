@@ -171,29 +171,74 @@ def test_deny_claim_persists_denied_fields(db_session):
 # --- Scenario 3: conflict prevention ---------------------------------------
 
 
-def test_approve_rejects_when_quantity_exceeds_remaining(db_session):
-    """Approving a claim that would exceed remaining_quantity is rejected."""
+def test_approve_partial_fills_when_quantity_exceeds_remaining(db_session):
+    """Approving more than what is left allocates only the remaining amount.
+
+    A request for 5 against a remaining quantity of 2 is approved for 2, not 5.
+    The original requested_quantity is unchanged, so the record shows both
+    numbers, and the listing drains to exactly 0.
+    """
     poster = insert_member(db_session, email="poster@example.com", name="Poster")
     listing_id = insert_listing(db_session, poster, remaining_quantity=2)
     claimant = insert_member(db_session, email="claimant@example.com", name="Claimant")
     claim_id = insert_claim(db_session, listing_id, claimant, quantity=5)
 
-    with pytest.raises(HTTPException) as raised:
-        approve_claim(str(claim_id), poster, db_session)
+    response = approve_claim(str(claim_id), poster, db_session)
 
-    assert raised.value.status_code == 409
-    assert "exceeds" in raised.value.detail.lower()
+    assert response.status == "approved"
+    # Allocated min(requested=5, remaining=2) = 2.
+    assert response.approved_quantity == 2
+    # The requested amount the member asked for is left as is.
+    assert response.requested_quantity == 5
 
-    # Nothing changed.
+    # The persisted claim row shows the partial allocation.
     claim_row = db_session.scalars(
         select(Claim).where(Claim.id == claim_id)
+    ).first()
+    assert claim_row.status == "approved"
+    assert claim_row.approved_quantity == 2
+
+    # The listing dropped by the allocated amount, to exactly 0, never below.
+    listing_row = db_session.scalars(
+        select(Listing).where(Listing.id == listing_id)
+    ).first()
+    assert listing_row.remaining_quantity == 0
+
+
+def test_approve_rejects_when_no_remaining_quantity(db_session):
+    """Approving when nothing is left returns 409 and allocates nothing.
+
+    A zero allocation is not allowed (approved_quantity must be greater than 0),
+    so a listing with no remaining quantity cannot approve another request.
+    """
+    poster = insert_member(db_session, email="poster@example.com", name="Poster")
+    listing_id = insert_listing(db_session, poster, remaining_quantity=5)
+
+    # First member takes all 5, draining the listing to 0.
+    claimant_a = insert_member(db_session, email="a@example.com", name="A")
+    claim_a = insert_claim(db_session, listing_id, claimant_a, quantity=5)
+    approve_claim(str(claim_a), poster, db_session)
+
+    # Second member's pending request now finds nothing left.
+    claimant_b = insert_member(db_session, email="b@example.com", name="B")
+    claim_b = insert_claim(db_session, listing_id, claimant_b, quantity=2)
+
+    with pytest.raises(HTTPException) as raised:
+        approve_claim(str(claim_b), poster, db_session)
+
+    assert raised.value.status_code == 409
+    assert "no remaining" in raised.value.detail.lower()
+
+    # The second claim is untouched, and the listing is still at 0.
+    claim_row = db_session.scalars(
+        select(Claim).where(Claim.id == claim_b)
     ).first()
     assert claim_row.status == "requested"
 
     listing_row = db_session.scalars(
         select(Listing).where(Listing.id == listing_id)
     ).first()
-    assert listing_row.remaining_quantity == 2
+    assert listing_row.remaining_quantity == 0
 
 
 def test_approve_boundary_exact_remaining_succeeds(db_session):

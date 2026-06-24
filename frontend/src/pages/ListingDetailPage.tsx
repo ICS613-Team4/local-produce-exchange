@@ -3,8 +3,15 @@ import { Link, useParams } from 'react-router'
 
 import { sendDeactivateListingRequest, sendGetListingRequest } from '../services/listingService'
 import type { ListingDetail, ListingResult } from '../services/listingService'
-import { sendGetRequestQueuesRequest } from '../services/requestQueueService'
-import type { RequestQueuesResponse } from '../services/requestQueueService'
+import {
+  sendCreateClaimRequest,
+  sendGetMyClaimRequest,
+  sendGetRequestQueuesRequest,
+} from '../services/requestQueueService'
+import type {
+  ClaimDecisionResponse,
+  RequestQueuesResponse,
+} from '../services/requestQueueService'
 import { authStateChangedEventName } from '../services/authService'
 import { formatApiResult } from '../utils/formatApiResult'
 import { formatTimestamp, getLocalTimeZoneName } from '../utils/formatTimestamp'
@@ -57,6 +64,37 @@ function ListingDetailPage() {
   // the count fetch failed); a number means show "Pending requests: N", even 0.
   const [pendingCount, setPendingCount] = useState<number | null>(null)
 
+  // The non-owner request form's state.
+  // requestQuantity: the textfield value, kept as a string so the input stays
+  //   controlled and an empty field reads as empty (not 0).
+  // isRequesting: a submit is in flight, which greys the button.
+  // requestMessage: the error line shown under the form on a failed submit.
+  const [requestQuantity, setRequestQuantity] = useState('')
+  const [isRequesting, setIsRequesting] = useState(false)
+  const [requestMessage, setRequestMessage] = useState('')
+
+  // Blocks a second submit fired in the same tick (a rapid double-click) before
+  // the in-flight state has updated. A ref changes immediately, unlike state, so
+  // two clicks in one tick cannot both pass. This pairs with the disabled button
+  // (which stops later clicks) and the backend guard (the real duplicate gate).
+  const isRequestingRef = useRef(false)
+
+  // The viewer's own claim on this listing, or null when they have not requested
+  // it. A member may make only one request per listing, so this is at most one
+  // claim. It drives what shows in place of the form: a pending, denied, or
+  // approved line. Loaded for non-owners and set straight from the create
+  // response after a successful submit. null also means "no request yet", which
+  // is when the form shows.
+  const latestMyClaimRequestNumber = useRef(0)
+  const [myClaim, setMyClaim] = useState<ClaimDecisionResponse | null>(null)
+
+  // Whether the my-claim fetch has finished. It starts false so the page can
+  // tell "not loaded yet" apart from "loaded, no request". Without this the
+  // request form would flash for a moment on load (myClaim is null at first,
+  // which looks like "no request"), then get replaced once the real status
+  // arrives. While this is false, the page shows nothing in the request area.
+  const [myClaimLoaded, setMyClaimLoaded] = useState(false)
+
   // Reset the deactivate state whenever the route or the member changes, so it
   // never leaks from one listing (or one login) to the next. React allows
   // adjusting state during render this way when a value it depends on changes;
@@ -72,6 +110,15 @@ function ListingDetailPage() {
     // Clear the pending count too, so a previous listing's count never flashes
     // before the new listing's count loads.
     setPendingCount(null)
+    // Clear the request form and the loaded claim so a value, message, or status
+    // never carries from one listing (or login) to the next. The in-flight ref is
+    // not touched here (a ref cannot be written during render); the submit handler
+    // always releases it right after its request finishes.
+    setRequestQuantity('')
+    setIsRequesting(false)
+    setRequestMessage('')
+    setMyClaim(null)
+    setMyClaimLoaded(false)
   }
 
   // Deactivate the listing the owner is viewing. The steps run in a set order so
@@ -165,6 +212,89 @@ function ListingDetailPage() {
     setDeactivateMessage(failureMessage)
   }
 
+  // Submit a request for some quantity of this listing. The browser's HTML5
+  // validation on the input already blocks an empty, zero, negative, fractional,
+  // or too-large value before this runs, but the backend validates again and is
+  // the real gate, so a bad value still returns a 422 the catch below shows.
+  async function handleRequestSubmit(submitEvent: React.FormEvent<HTMLFormElement>) {
+    // Stop the browser's default full-page form submit; this is a single-page app.
+    submitEvent.preventDefault()
+
+    // Block a second submit fired in the same tick (a rapid double-click) before
+    // the in-flight state below has had a chance to disable the button. The ref
+    // updates immediately, so the second click returns here.
+    if (isRequestingRef.current === true) {
+      return
+    }
+
+    // Ask for a final confirmation. A request cannot be changed once made, so the
+    // member should be sure. On cancel, do nothing.
+    const confirmed = window.confirm(
+      'Submit this request? This is final, and you cannot edit or change a request after making it.',
+    )
+    if (confirmed === false) {
+      return
+    }
+
+    // Claim the in-flight guard now that the member has confirmed.
+    isRequestingRef.current = true
+
+    // Turn the textfield string into a number for the API call.
+    const quantityNumber = Number(requestQuantity)
+
+    setIsRequesting(true)
+    setRequestMessage('')
+
+    // Remember which load this submit belongs to, to compare after the await, so
+    // a response that lands after the user navigated away is dropped.
+    const requestNumberAtSubmit = latestRequestNumber.current
+    const claimResult = await sendCreateClaimRequest(listingId, memberId, quantityNumber)
+
+    // Release the in-flight guard now the request has finished.
+    isRequestingRef.current = false
+
+    if (requestNumberAtSubmit !== latestRequestNumber.current) {
+      return
+    }
+
+    setIsRequesting(false)
+
+    // Stale login: a 401 means the saved id no longer works. Clear the creds and
+    // fall back to logged-out, like the other paths on this page.
+    if (claimResult.status === 401) {
+      window.localStorage.removeItem('memberId')
+      window.localStorage.removeItem('memberName')
+      window.localStorage.removeItem('memberEmail')
+      setMemberId('')
+      setMemberName('')
+      window.dispatchEvent(new Event(authStateChangedEventName))
+      return
+    }
+
+    // Success: store the new claim so the form is replaced by the status line.
+    // The create endpoint returns the new claim (status "requested"), the same
+    // shape the my-claim fetch loads, so the render path is shared.
+    if (claimResult.ok === true) {
+      const responseData = claimResult.data as ClaimDecisionResponse
+      setMyClaim(responseData)
+      setRequestMessage('')
+      return
+    }
+
+    // Failure, never silent. Prefer a transport error or timeout, then the
+    // server's detail text, then a generic line so the message is never empty.
+    let failureMessage = 'Could not submit your request. Please try again.'
+    if (claimResult.errorMessage !== '') {
+      failureMessage = claimResult.errorMessage
+    } else if (typeof claimResult.data === 'object' && claimResult.data !== null) {
+      const dataObject = claimResult.data as { detail?: unknown }
+      if (typeof dataObject.detail === 'string') {
+        failureMessage = dataObject.detail
+      }
+    }
+    setRequestMessage(failureMessage)
+  }
+
   // Load the listing when the page has a logged-in member. The request number
   // keeps an older response from replacing a newer route's response.
   useEffect(() => {
@@ -209,6 +339,10 @@ function ListingDetailPage() {
     loadedOwnerId = loadedListing.owner_id
   }
   const viewerOwnsLoadedListing = loadedListingId !== '' && loadedOwnerId === memberId
+  // The mirror image: the listing has loaded and the viewer is NOT its owner.
+  // This drives the request form and the viewer's own-claim status fetch below.
+  const viewerIsNonOwnerOfLoaded =
+    loadedListingId !== '' && loadedOwnerId !== '' && loadedOwnerId !== memberId
 
   // Once the listing is loaded and the viewer owns it, fetch that listing's
   // pending-request count for the owner control. It uses its own stale-response
@@ -257,6 +391,53 @@ function ListingDetailPage() {
     }
     loadPendingCount()
   }, [viewerOwnsLoadedListing, loadedListingId, memberId])
+
+  // For a non-owner viewer, load their own claim on this listing (if any) so the
+  // page can show their request status, even after a reload. Its own stale-
+  // response ref keeps a late answer from disturbing the other fetches. A
+  // successful submit sets myClaim directly, so this only runs on a listing or
+  // member change, never overwriting a just-made request.
+  useEffect(() => {
+    latestMyClaimRequestNumber.current = latestMyClaimRequestNumber.current + 1
+    if (viewerIsNonOwnerOfLoaded === false) {
+      // The form and status only show for a non-owner, so an owner view needs no
+      // fetch (the render-time reset above already cleared any prior claim).
+      return
+    }
+    const requestNumber = latestMyClaimRequestNumber.current
+    async function loadMyClaim() {
+      const claimResult = await sendGetMyClaimRequest(loadedListingId, memberId)
+      if (requestNumber !== latestMyClaimRequestNumber.current) {
+        return
+      }
+      if (claimResult.status === 401) {
+        // Same stale-session handling as the other fetches on this page.
+        window.localStorage.removeItem('memberId')
+        window.localStorage.removeItem('memberName')
+        window.localStorage.removeItem('memberEmail')
+        setMemberId('')
+        setMemberName('')
+        window.dispatchEvent(new Event(authStateChangedEventName))
+        return
+      }
+      if (claimResult.ok === false) {
+        // On any failure, fall back to the form (no known claim), and mark the
+        // check done so the loading line gives way.
+        setMyClaim(null)
+        setMyClaimLoaded(true)
+        return
+      }
+      // The body is the claim object, or null when the viewer has not requested
+      // this listing. A null (or non-object) body means show the form.
+      if (claimResult.data !== null && typeof claimResult.data === 'object') {
+        setMyClaim(claimResult.data as ClaimDecisionResponse)
+      } else {
+        setMyClaim(null)
+      }
+      setMyClaimLoaded(true)
+    }
+    loadMyClaim()
+  }, [viewerIsNonOwnerOfLoaded, loadedListingId, memberId])
 
   // Show a short status line when logged in. The shared nav owns the log in and
   // log out controls now, so a logged-out viewer needs nothing here.
@@ -350,6 +531,97 @@ function ListingDetailPage() {
     } else if (deactivateMessage !== '') {
       deactivateMessageArea = <p role="alert">{deactivateMessage}</p>
     }
+    // The non-owner request area. What it shows depends on the viewer's own claim
+    // on this listing:
+    //   - no claim yet: the quantity textfield and Submit button.
+    //   - requested (pending): "You requested X quantity on: Y".
+    //   - denied: a short line saying the request was denied.
+    //   - approved: the approved quantity and time, plus a link to invite the
+    //     member to the Exchange Thread (a feature not built yet, stubbed below).
+    //   - withdrawn: a short line; the member already requested, so no new form.
+    // The form uses native HTML5 validation only (whole numbers via step, at
+    // least 1 via min, no more than the remaining quantity via max, required), so
+    // no custom JavaScript checks the value. The backend validates again and is
+    // the real gate; a value that slips past the browser comes back as a 422
+    // whose message shows in the alert below.
+    let requestArea = null
+    let requestMessageArea = null
+    if (memberId !== ownerId) {
+      if (myClaimLoaded === false) {
+        // The claim status is still loading. Show nothing yet (not the form and
+        // no placeholder text), so the form does not flash before an existing
+        // request's status replaces it. requestArea stays null.
+        requestArea = null
+      } else if (myClaim === null) {
+        // No request made yet, so show the form.
+        requestArea = (
+          <form onSubmit={handleRequestSubmit}>
+            <label>
+              Request quantity:{' '}
+              <input
+                type="number"
+                min="1"
+                max={listing.remaining_quantity}
+                step="1"
+                required
+                value={requestQuantity}
+                onChange={(changeEvent) => setRequestQuantity(changeEvent.target.value)}
+              />
+            </label>{' '}
+            <button type="submit" disabled={isRequesting}>
+              Submit
+            </button>
+          </form>
+        )
+        // The failure line, announced with role="alert".
+        if (requestMessage !== '') {
+          requestMessageArea = <p role="alert">{requestMessage}</p>
+        }
+      } else if (myClaim.status === 'requested') {
+        // The request is in, waiting on the owner. Show the pending line.
+        const requestedAtText = formatTimestamp(myClaim.requested_at)
+        requestArea = (
+          <p>
+            You requested {myClaim.requested_quantity} quantity on: {requestedAtText}
+          </p>
+        )
+      } else if (myClaim.status === 'denied') {
+        // Denied. The spec asks for a plain "was denied" line, nothing more.
+        requestArea = <p>Your request was denied.</p>
+      } else if (myClaim.status === 'approved') {
+        // Approved. Show the approved quantity and when, plus the Exchange Thread
+        // link. Read approved_quantity and approved_at safely (both are set on an
+        // approval, but the type allows null).
+        let approvedQuantity = 0
+        if (myClaim.approved_quantity !== null) {
+          approvedQuantity = myClaim.approved_quantity
+        }
+        let approvedAtValue = ''
+        if (myClaim.approved_at !== null) {
+          approvedAtValue = myClaim.approved_at
+        }
+        const approvedAtText = formatTimestamp(approvedAtValue)
+        // Stub: the Exchange Thread feature is not built yet, so this link points
+        // at a placeholder route for now.
+        const exchangeThreadTarget = '/exchange-thread?claim=' + myClaim.id
+        requestArea = (
+          <>
+            <p>
+              Your request was approved for {approvedQuantity} on: {approvedAtText}.
+            </p>
+            <p>
+              <Link to={exchangeThreadTarget}>Arrange the Exchange</Link>
+            </p>
+          </>
+        )
+      } else {
+        // A withdrawn (cancelled) request. The member already requested this
+        // listing, so the backend will not accept another; show a short line
+        // instead of the form.
+        requestArea = <p>You withdrew your request.</p>
+      }
+    }
+
     // Quantity available (what the poster entered) and remaining quantity (what
     // is left) are two different numbers, so label each on its own line.
     contentArea = (
@@ -364,6 +636,8 @@ function ListingDetailPage() {
         <p>Allergen tags: {allergenText}</p>
         <p>Pickup Window Start: {pickupStartText}</p>
         <p>Pickup Window End: {pickupEndText}</p>
+        {requestArea}
+        {requestMessageArea}
         <p>
           <small>{timeZoneNote}</small>
         </p>

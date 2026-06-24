@@ -1,9 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router'
 
-import { sendGetRequestQueuesRequest } from '../services/requestQueueService'
+import {
+  sendGetRequestQueuesRequest,
+  sendDecideClaimRequest,
+} from '../services/requestQueueService'
 import type {
+  ClaimDecisionResponse,
   ListingQueueGroup,
+  QueueClaimItem,
   RequestQueuesResponse,
   RequestQueuesResult,
 } from '../services/requestQueueService'
@@ -35,6 +40,162 @@ function RequestQueuesPage() {
   // data for one frame.
   const [result, setResult] = useState<RequestQueuesResult | null>(null)
   const [resultFilter, setResultFilter] = useState('')
+
+  // Records the requests the owner has just approved or denied on this page, so
+  // their Approve/Deny buttons turn into a "You approved/denied this request
+  // on: X" line. Keyed by claim id; each value holds the verb ("approved" or
+  // "denied") and the timestamp the backend recorded the decision.
+  type ClaimDecision = {
+    verb: string
+    approvedQuantity: number
+    decidedAt: string
+  }
+  const [decisions, setDecisions] = useState<Record<string, ClaimDecision>>({})
+
+  // Approve or deny one pending request. Asks for a final confirmation that
+  // names the quantity, makes the API call, and on success records the decision
+  // so the row swaps its buttons for the result line.
+  async function handleDecision(
+    item: QueueClaimItem,
+    remainingQuantity: number,
+    decision: string,
+  ) {
+    let confirmMessage
+    if (decision === 'approve') {
+      // Partial fill: the listing allocates as much as the request asks for, but
+      // never more than what is left. Show the amount that will actually be
+      // allocated, and call out when it is less than what was requested.
+      let allocatedQuantity = item.requested_quantity
+      if (remainingQuantity < item.requested_quantity) {
+        allocatedQuantity = remainingQuantity
+      }
+      confirmMessage =
+        'This is final. Approving this request will allocate ' +
+        allocatedQuantity +
+        ' item(s) to ' +
+        item.claimant_name +
+        '.'
+      if (allocatedQuantity < item.requested_quantity) {
+        confirmMessage =
+          confirmMessage +
+          ' They requested ' +
+          item.requested_quantity +
+          ', but only ' +
+          remainingQuantity +
+          ' remain.'
+      }
+      confirmMessage = confirmMessage + ' Continue?'
+    } else {
+      confirmMessage =
+        'This is final. Denying this request is permanent. The ' +
+        item.requested_quantity +
+        ' item(s) asked for will not be allocated. Continue?'
+    }
+
+    const confirmed = window.confirm(confirmMessage)
+    if (confirmed === false) {
+      return
+    }
+
+    const decisionResult = await sendDecideClaimRequest(memberId, item.id, decision)
+
+    // A timeout or network failure comes back with status 0 and a message.
+    if (decisionResult.errorMessage !== '') {
+      window.alert(decisionResult.errorMessage)
+      return
+    }
+
+    // Any HTTP failure (for example a 403 non-owner, a 409 already-decided, or a
+    // 503). Show the server's plain-words detail, with a fallback line.
+    if (decisionResult.ok === false) {
+      let detailMessage = 'Could not update the request. Please try again.'
+      if (typeof decisionResult.data === 'object' && decisionResult.data !== null) {
+        const dataObject = decisionResult.data as { detail?: unknown }
+        if (typeof dataObject.detail === 'string') {
+          detailMessage = dataObject.detail
+        }
+      }
+      window.alert(detailMessage)
+      return
+    }
+
+    // Success. Read the timestamp the backend stamped for this decision, and the
+    // amount it actually allocated (only meaningful for an approval).
+    const responseData = decisionResult.data as ClaimDecisionResponse
+    let decidedAt = ''
+    let verb: string
+    let approvedQuantity = 0
+    if (decision === 'approve') {
+      verb = 'approved'
+      if (responseData.approved_at !== null) {
+        decidedAt = responseData.approved_at
+      }
+      if (responseData.approved_quantity !== null) {
+        approvedQuantity = responseData.approved_quantity
+      }
+    } else {
+      verb = 'denied'
+      if (responseData.denied_at !== null) {
+        decidedAt = responseData.denied_at
+      }
+    }
+
+    // Add this claim to the decisions map without mutating the old object.
+    const newDecisions: Record<string, ClaimDecision> = {}
+    for (const key in decisions) {
+      newDecisions[key] = decisions[key]
+    }
+    newDecisions[item.id] = {
+      verb: verb,
+      approvedQuantity: approvedQuantity,
+      decidedAt: decidedAt,
+    }
+    setDecisions(newDecisions)
+
+    // Approving allocates the items, so the backend lowered the listing's
+    // remaining quantity. Lower the displayed number to match, without a
+    // re-fetch (a re-fetch would drop the just-approved row, hiding the result
+    // line above). Denying changes no quantity, so only approve updates this.
+    // Build new objects rather than mutating the held result in place.
+    if (decision === 'approve' && result !== null) {
+      // Use the amount the backend actually allocated (a partial fill can make
+      // this less than the requested amount), not the requested amount.
+      const allocatedQuantity = approvedQuantity
+      const oldResponse = result.data as RequestQueuesResponse
+      const newGroups = []
+      for (let groupIndex = 0; groupIndex < oldResponse.groups.length; groupIndex = groupIndex + 1) {
+        const oldGroup = oldResponse.groups[groupIndex]
+        if (oldGroup.listing_id === responseData.listing_id) {
+          // The backend never allocates more than what is left, so this
+          // subtraction should not go negative. Clamp at 0 anyway in case the
+          // displayed number was stale, so the page never shows a negative
+          // remaining quantity.
+          let loweredRemaining = oldGroup.remaining_quantity - allocatedQuantity
+          if (loweredRemaining < 0) {
+            loweredRemaining = 0
+          }
+          const updatedGroup: ListingQueueGroup = {
+            listing_id: oldGroup.listing_id,
+            listing_title: oldGroup.listing_title,
+            listing_status: oldGroup.listing_status,
+            remaining_quantity: loweredRemaining,
+            pending: oldGroup.pending,
+          }
+          newGroups.push(updatedGroup)
+        } else {
+          newGroups.push(oldGroup)
+        }
+      }
+      const newResponse: RequestQueuesResponse = { groups: newGroups }
+      const newResult: RequestQueuesResult = {
+        ok: result.ok,
+        status: result.status,
+        data: newResponse,
+        errorMessage: result.errorMessage,
+      }
+      setResult(newResult)
+    }
+  }
 
   // Load the queues when the page has a logged-in member. The request number
   // keeps an older response from replacing a newer load.
@@ -79,16 +240,58 @@ function RequestQueuesPage() {
     for (let index = 0; index < group.pending.length; index = index + 1) {
       const item = group.pending[index]
       const requestedAtText = formatTimestamp(item.requested_at)
+
+      // The sub-bullets under each request. Once the owner has approved or denied
+      // it on this page, show the result line instead of the buttons.
+      let actionSubList
+      const existingDecision = decisions[item.id]
+      if (existingDecision !== undefined) {
+        const decidedAtText = formatTimestamp(existingDecision.decidedAt)
+        let resultLine
+        if (existingDecision.verb === 'approved') {
+          resultLine = (
+            <li>
+              You approved: {existingDecision.approvedQuantity} on: {decidedAtText}
+            </li>
+          )
+        } else {
+          resultLine = <li>You denied this request on: {decidedAtText}</li>
+        }
+        actionSubList = <ul>{resultLine}</ul>
+      } else {
+        actionSubList = (
+          <ul>
+            <li>
+              <button
+                type="button"
+                onClick={() => handleDecision(item, group.remaining_quantity, 'approve')}
+              >
+                Approve this request
+              </button>
+            </li>
+            <li>
+              <button
+                type="button"
+                onClick={() => handleDecision(item, group.remaining_quantity, 'deny')}
+              >
+                Deny this request
+              </button>
+            </li>
+          </ul>
+        )
+      }
+
       rowItems.push(
         <li key={item.id}>
           {item.claimant_name} requested {item.requested_quantity} ({requestedAtText})
+          {actionSubList}
         </li>,
       )
     }
     return (
       <article key={group.listing_id}>
         <h2>{titleText}</h2>
-        <p>Remaining quantity: {group.remaining_quantity}</p>
+        <p>Your Remaining Quantity: {group.remaining_quantity}</p>
         <ul>{rowItems}</ul>
       </article>
     )

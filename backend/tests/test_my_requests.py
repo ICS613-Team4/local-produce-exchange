@@ -1,5 +1,5 @@
-# Tests for the outgoing-requests endpoint (the caller's own pending requests on
-# other members' listings). The mirror of test_request_queues.py.
+# Tests for the my-requests endpoint: the caller's own requests, split into three
+# sections (pending, approved, denied), each newest-first with an id tiebreaker.
 # Run from the project root with:
 # uv run --locked --all-groups --directory backend pytest tests/test_my_requests.py -v
 
@@ -47,8 +47,6 @@ def insert_listing(session, owner, title="Fresh Tomatoes", status="active", crea
         pickup_window=Range(start, end, bounds="[)"),
         status=status,
     )
-    # now() is the same for every insert inside one test transaction, so a test
-    # that needs distinct created_at values passes them in explicitly.
     if created_at is not None:
         listing.created_at = created_at
     session.add(listing)
@@ -56,57 +54,109 @@ def insert_listing(session, owner, title="Fresh Tomatoes", status="active", crea
     return listing
 
 
-def insert_claim(session, listing, claimant, requested_quantity=1, status="requested", requested_at=None):
+def insert_claim(
+    session,
+    listing,
+    claimant,
+    requested_quantity=1,
+    status="requested",
+    requested_at=None,
+    approved_quantity=None,
+    approved_at=None,
+    denied_at=None,
+):
     if requested_at is None:
         requested_at = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
     claim = Claim(
         listing_id=listing.id,
         claimant_id=claimant.id,
         requested_quantity=requested_quantity,
+        approved_quantity=approved_quantity,
         status=status,
         requested_at=requested_at,
+        approved_at=approved_at,
+        denied_at=denied_at,
     )
     session.add(claim)
     session.commit()
     return claim
 
 
-# --- happy path -------------------------------------------------------------
+# --- the three sections -----------------------------------------------------
 
 
-def test_my_requests_happy_path(db_session):
-    # The caller has pending requests on two listings owned by other members. The
-    # response has one group per listing, newest listing first, each group holding
-    # the caller's own request with the caller's name and quantity.
+def test_my_requests_splits_into_pending_approved_denied(db_session):
+    # The caller has one request in each state. Each lands in its own section with
+    # the right fields.
     caller = insert_member(db_session, email="cara@example.com", name="Cara")
-    poster_one = insert_member(db_session, email="p1@example.com", name="Poster One")
-    poster_two = insert_member(db_session, email="p2@example.com", name="Poster Two")
-    older_time = datetime(2026, 6, 1, 9, 0, tzinfo=timezone.utc)
-    newer_time = datetime(2026, 6, 2, 9, 0, tzinfo=timezone.utc)
-    older_listing = insert_listing(db_session, poster_one, title="Apples", created_at=older_time)
-    newer_listing = insert_listing(db_session, poster_two, title="Zucchini", created_at=newer_time)
-    insert_claim(db_session, older_listing, caller, requested_quantity=3)
-    insert_claim(db_session, newer_listing, caller, requested_quantity=4)
+    poster = insert_member(db_session, email="poster@example.com", name="Poster")
+    listing_pending = insert_listing(db_session, poster, title="Apples")
+    listing_approved = insert_listing(db_session, poster, title="Bananas")
+    listing_denied = insert_listing(db_session, poster, title="Cherries")
+
+    insert_claim(db_session, listing_pending, caller, requested_quantity=3)
+    approved_at = datetime(2026, 7, 2, 10, 0, tzinfo=timezone.utc)
+    insert_claim(
+        db_session,
+        listing_approved,
+        caller,
+        requested_quantity=5,
+        status="approved",
+        approved_quantity=2,
+        approved_at=approved_at,
+    )
+    denied_at = datetime(2026, 7, 2, 11, 0, tzinfo=timezone.utc)
+    insert_claim(
+        db_session,
+        listing_denied,
+        caller,
+        requested_quantity=4,
+        status="denied",
+        denied_at=denied_at,
+    )
 
     response = get_my_requests(caller, db_session)
 
-    assert len(response.groups) == 2
-    # Newest listing first.
-    assert response.groups[0].listing_title == "Zucchini"
-    assert response.groups[1].listing_title == "Apples"
-    # Each group holds the caller's own single request, named for the caller.
-    first_group = response.groups[0]
-    assert len(first_group.pending) == 1
-    assert first_group.pending[0].claimant_name == "Cara"
-    assert first_group.pending[0].requested_quantity == 4
-    second_group = response.groups[1]
-    assert second_group.pending[0].claimant_name == "Cara"
-    assert second_group.pending[0].requested_quantity == 3
+    assert len(response.pending) == 1
+    assert response.pending[0].listing_title == "Apples"
+    assert response.pending[0].requested_quantity == 3
+    assert response.pending[0].status == "requested"
+
+    assert len(response.approved) == 1
+    assert response.approved[0].listing_title == "Bananas"
+    assert response.approved[0].requested_quantity == 5
+    assert response.approved[0].approved_quantity == 2
+    assert response.approved[0].approved_at is not None
+    assert response.approved[0].status == "approved"
+
+    assert len(response.denied) == 1
+    assert response.denied[0].listing_title == "Cherries"
+    assert response.denied[0].requested_quantity == 4
+    assert response.denied[0].denied_at is not None
+    assert response.denied[0].status == "denied"
+
+
+def test_my_requests_pending_is_newest_first(db_session):
+    # Two pending requests on different listings, with distinct requested_at. The
+    # newer one comes first.
+    caller = insert_member(db_session, email="cara@example.com", name="Cara")
+    poster = insert_member(db_session, email="poster@example.com", name="Poster")
+    listing_one = insert_listing(db_session, poster, title="Older")
+    listing_two = insert_listing(db_session, poster, title="Newer")
+    older_time = datetime(2026, 7, 1, 9, 0, tzinfo=timezone.utc)
+    newer_time = datetime(2026, 7, 1, 15, 0, tzinfo=timezone.utc)
+    insert_claim(db_session, listing_one, caller, requested_at=older_time)
+    insert_claim(db_session, listing_two, caller, requested_at=newer_time)
+
+    response = get_my_requests(caller, db_session)
+
+    assert len(response.pending) == 2
+    assert response.pending[0].listing_title == "Newer"
+    assert response.pending[1].listing_title == "Older"
 
 
 def test_my_requests_scopes_to_the_caller(db_session):
-    # Another member's request on the same listing is never in the caller's
-    # outgoing view.
+    # Another member's request on the same listing is never in the caller's view.
     caller = insert_member(db_session, email="cara@example.com", name="Cara")
     other = insert_member(db_session, email="other@example.com", name="Other")
     poster = insert_member(db_session, email="poster@example.com", name="Poster")
@@ -116,35 +166,36 @@ def test_my_requests_scopes_to_the_caller(db_session):
 
     response = get_my_requests(caller, db_session)
 
-    assert len(response.groups) == 1
-    assert len(response.groups[0].pending) == 1
-    assert response.groups[0].pending[0].claimant_name == "Cara"
-    assert response.groups[0].pending[0].requested_quantity == 2
+    assert len(response.pending) == 1
+    assert response.pending[0].requested_quantity == 2
+    assert response.approved == []
+    assert response.denied == []
 
 
-def test_my_requests_empty_when_no_pending(db_session):
+def test_my_requests_all_sections_empty_when_no_requests(db_session):
     caller = insert_member(db_session, email="cara@example.com", name="Cara")
 
     response = get_my_requests(caller, db_session)
 
-    assert response.groups == []
+    assert response.pending == []
+    assert response.approved == []
+    assert response.denied == []
 
 
-@pytest.mark.parametrize(
-    "excluded_status",
-    ["approved", "picked_up", "completed", "cancelled", "denied"],
-)
-def test_my_requests_excludes_non_requested_status(db_session, excluded_status):
-    # Only a "requested" claim is pending, so a non-requested claim by the caller
-    # produces no group.
+@pytest.mark.parametrize("other_status", ["picked_up", "completed", "cancelled"])
+def test_my_requests_excludes_other_statuses(db_session, other_status):
+    # Only pending, approved, and denied have sections. A claim in any other state
+    # (picked up, completed, withdrawn) shows in none of them.
     caller = insert_member(db_session, email="cara@example.com", name="Cara")
     poster = insert_member(db_session, email="poster@example.com", name="Poster")
     listing = insert_listing(db_session, poster, title="Lemons")
-    insert_claim(db_session, listing, caller, status=excluded_status)
+    insert_claim(db_session, listing, caller, status=other_status)
 
     response = get_my_requests(caller, db_session)
 
-    assert response.groups == []
+    assert response.pending == []
+    assert response.approved == []
+    assert response.denied == []
 
 
 # --- caller status gate -----------------------------------------------------
@@ -189,12 +240,13 @@ def test_my_requests_returns_503_on_claims_load_error(broken_session):
 
 
 # A claim row whose listing relationship read fails, to reach the listing-read
-# try/except.
+# try/except inside build_my_request_items.
 class ListingReadFails:
     def __init__(self):
         self.id = uuid.uuid4()
         self.requested_quantity = 1
         self.requested_at = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+        self.status = "requested"
 
     @property
     def listing(self):
@@ -210,6 +262,8 @@ class ScalarsListStub:
 
 
 class ListingReadFailsSession:
+    # Every scalars call (pending, approved, denied) returns the same claim list,
+    # so the first section build reaches the failing listing read.
     def __init__(self, claims):
         self.claims = claims
 
@@ -248,3 +302,32 @@ def test_my_requests_route_is_wired_with_get_method():
             if route.path == "/api/my-requests" and "GET" in route.methods:
                 found_route = route
     assert found_route is not None
+
+
+# --- deterministic ordering: ties break by id -------------------------------
+
+
+def test_my_requests_pending_order_is_deterministic_when_requested_at_ties(db_session):
+    # Two pending requests (on different listings) share a requested_at. They come
+    # out newest-first with the claim id descending as the tiebreaker, so the
+    # order is repeatable instead of arbitrary.
+    caller = insert_member(db_session, email="cara@example.com", name="Cara")
+    poster = insert_member(db_session, email="poster@example.com", name="Poster")
+    listing_one = insert_listing(db_session, poster, title="One")
+    listing_two = insert_listing(db_session, poster, title="Two")
+    tied_time = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+    claim_one = insert_claim(db_session, listing_one, caller, requested_at=tied_time)
+    claim_two = insert_claim(db_session, listing_two, caller, requested_at=tied_time)
+
+    # Same requested_at, so break the tie by claim id descending.
+    ids_desc = sorted([claim_one.id, claim_two.id], reverse=True)
+    expected_ids = []
+    for claim_id in ids_desc:
+        expected_ids.append(str(claim_id))
+
+    response = get_my_requests(caller, db_session)
+
+    pending_ids = []
+    for item in response.pending:
+        pending_ids.append(item.id)
+    assert pending_ids == expected_ids
