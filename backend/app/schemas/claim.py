@@ -1,12 +1,13 @@
 # Pydantic shapes for the claim endpoints.
 #
 # CreateClaimPayload carries the quantity the recipient wants.
-# ClaimResponse is the shape returned after a successful create.
+# ClaimResponse is the shape returned by create, approve, and deny.
 # The three request-queue shapes below (US-10) describe the poster's view of the
 # pending requests on their listings: one pending row, one listing's group of
 # rows, and the whole response.
 
 from datetime import datetime
+from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -20,8 +21,11 @@ class ClaimResponse(BaseModel):
     listing_id: str
     claimant_id: str
     requested_quantity: int
+    approved_quantity: Optional[int] = None
     status: str
     requested_at: datetime
+    approved_at: Optional[datetime] = None
+    denied_at: Optional[datetime] = None
 
 
 # One pending request in a listing's queue (US-10). The poster sees who asked,
