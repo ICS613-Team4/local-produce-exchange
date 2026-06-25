@@ -466,3 +466,61 @@ def test_request_queues_route_is_wired_with_get_method():
             if route.path == "/api/request-queues" and "GET" in route.methods:
                 found_route = route
     assert found_route is not None
+
+
+# --- deterministic ordering: ties break by id -------------------------------
+
+
+def test_queue_pending_order_is_deterministic_when_requested_at_ties(db_session):
+    # Two pending claims with the SAME requested_at must come out in a stable
+    # order. The queue breaks the tie by claim id ascending, so the order is
+    # repeatable instead of arbitrary.
+    owner = insert_member(db_session, email="owner@example.com")
+    listing = insert_listing(db_session, owner)
+    ann = insert_member(db_session, email="ann@example.com", name="Ann")
+    bob = insert_member(db_session, email="bob@example.com", name="Bob")
+    tied_time = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+    claim_ann = insert_claim(db_session, listing, ann, requested_at=tied_time)
+    claim_bob = insert_claim(db_session, listing, bob, requested_at=tied_time)
+
+    # The rule: same requested_at, so break the tie by claim id ascending.
+    ids_sorted = sorted([claim_ann.id, claim_bob.id])
+    expected_ids = []
+    for claim_id in ids_sorted:
+        expected_ids.append(str(claim_id))
+
+    response = get_request_queues(None, owner, db_session)
+
+    assert len(response.groups) == 1
+    pending_ids = []
+    for item in response.groups[0].pending:
+        pending_ids.append(item.id)
+    assert pending_ids == expected_ids
+
+
+def test_queue_group_order_is_deterministic_when_created_at_ties(db_session):
+    # Two of the owner's listings share a created_at and each has a pending
+    # claim. The groups must come out in a stable order: newest-first, with the
+    # listing id descending as the tiebreaker.
+    owner = insert_member(db_session, email="owner@example.com")
+    tied_time = datetime(2026, 6, 1, 0, 0, tzinfo=timezone.utc)
+    listing_one = insert_listing(db_session, owner, title="One", created_at=tied_time)
+    listing_two = insert_listing(db_session, owner, title="Two", created_at=tied_time)
+    ann = insert_member(db_session, email="ann@example.com", name="Ann")
+    bob = insert_member(db_session, email="bob@example.com", name="Bob")
+    insert_claim(db_session, listing_one, ann)
+    insert_claim(db_session, listing_two, bob)
+
+    # The rule: same created_at, so break the tie by listing id descending.
+    listing_ids_desc = sorted([listing_one.id, listing_two.id], reverse=True)
+    expected_listing_ids = []
+    for listing_id in listing_ids_desc:
+        expected_listing_ids.append(str(listing_id))
+
+    response = get_request_queues(None, owner, db_session)
+
+    assert len(response.groups) == 2
+    group_listing_ids = []
+    for group in response.groups:
+        group_listing_ids.append(group.listing_id)
+    assert group_listing_ids == expected_listing_ids

@@ -164,6 +164,57 @@ def test_browse_returns_newest_first(db_session):
     assert results[1].title == "Older"
 
 
+def test_browse_order_is_deterministic_when_timestamps_tie(db_session):
+    """Listings that share a created_at break the tie by id, so the LIMIT window
+    is stable even after an unrelated UPDATE to a listing row.
+
+    This is the dashboard bug: several listings shared one created_at (every seed
+    row gets the same now() inside one transaction), the order among the ties was
+    arbitrary, and the LIMIT picked an arbitrary subset. Approving a request runs
+    an UPDATE on a listing row, which reshuffled which subset showed. The id
+    tiebreaker makes the order total, so the same rows show every time.
+    """
+    member = insert_member(db_session, "active")
+    shared_created_at = datetime(2026, 6, 1, 0, 0, tzinfo=timezone.utc)
+    listings = []
+    for index in range(6):
+        listing = insert_listing(
+            db_session,
+            member,
+            title="Tie " + str(index),
+            created_at=shared_created_at,
+        )
+        listings.append(listing)
+
+    # The deterministic rule: same created_at, so newest-first ties break by id
+    # descending. Postgres orders uuids the same way Python does (by their 128-bit
+    # value), so this predicts the exact window.
+    all_ids = []
+    for listing in listings:
+        all_ids.append(listing.id)
+    ids_by_rule = sorted(all_ids, reverse=True)
+    expected_top_three = []
+    for index in range(3):
+        expected_top_three.append(str(ids_by_rule[index]))
+
+    first = browse_listings(limit=3, current_member=member, session=db_session)
+    first_ids = []
+    for item in first:
+        first_ids.append(item.id)
+    assert first_ids == expected_top_three
+
+    # Update one listing row the way approving a request does (it lowers a
+    # listing's remaining_quantity). The window must not move.
+    listings[0].remaining_quantity = 1
+    db_session.commit()
+
+    second = browse_listings(limit=3, current_member=member, session=db_session)
+    second_ids = []
+    for item in second:
+        second_ids.append(item.id)
+    assert second_ids == first_ids
+
+
 # --- active-only: a listing that is no longer active is left out ---
 
 

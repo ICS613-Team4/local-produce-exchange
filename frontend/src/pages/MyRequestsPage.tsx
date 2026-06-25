@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
+import { Link } from 'react-router'
 
 import { sendGetMyRequestsRequest } from '../services/requestQueueService'
 import type {
-  ListingQueueGroup,
-  RequestQueuesResponse,
+  MyRequestItem,
+  MyRequestsResponse,
   RequestQueuesResult,
 } from '../services/requestQueueService'
 import { authStateChangedEventName } from '../services/authService'
@@ -14,9 +15,8 @@ import { formatTimestamp, getLocalTimeZoneNote } from '../utils/formatTimestamp'
 const notLoggedInMessage = 'You need to be logged in to see this page.'
 
 // The outgoing view: the requests the logged-in member has made on other
-// members' listings. It mirrors RequestQueuesPage (the incoming view) in its
-// listing-title format, oldest-first rows with timestamps, the local time-zone
-// note, and the newest-listing-first group order, but it has no listing filter.
+// members' listings, split into three sections (Pending, Approved, Denied). Each
+// section is newest-first, the order the backend already returns.
 function MyRequestsPage() {
   // Counts loads so an older response cannot overwrite a newer one (for example
   // after a stale session is cleared).
@@ -58,30 +58,68 @@ function MyRequestsPage() {
     loadMyRequests()
   }, [memberId])
 
-  // Build the markup for one listing's group: the title (with a "(deactivated)"
-  // suffix when the listing is deactivated), the remaining quantity, and the
-  // caller's request row with its timestamp. Same format as the incoming view.
-  function buildGroupView(group: ListingQueueGroup) {
-    let titleText = group.listing_title
-    if (group.listing_status === 'deactivated') {
-      titleText = group.listing_title + ' (deactivated)'
-    }
-    const rowItems = []
-    for (let index = 0; index < group.pending.length; index = index + 1) {
-      const item = group.pending[index]
-      const requestedAtText = formatTimestamp(item.requested_at)
-      rowItems.push(
+  // Build the row text for one request. Each section shows the listing title, the
+  // quantity that matters for that state, and the time it entered that state.
+  function buildRequestRow(item: MyRequestItem) {
+    if (item.status === 'approved') {
+      // Show the approved quantity (a partial approval can be less than asked)
+      // and when it was approved.
+      let approvedQuantity = 0
+      if (item.approved_quantity !== null) {
+        approvedQuantity = item.approved_quantity
+      }
+      let approvedAtText = ''
+      if (item.approved_at !== null) {
+        approvedAtText = formatTimestamp(item.approved_at)
+      }
+      // Stub link to the (not-built) Exchange Thread feature, the same one the
+      // listing detail page shows on an approved request.
+      const exchangeThreadTarget = '/exchange-thread?claim=' + item.id
+      return (
         <li key={item.id}>
-          You requested {item.requested_quantity} ({requestedAtText})
-        </li>,
+          {item.listing_title}: You were approved for: {approvedQuantity} on {approvedAtText}{' '}
+          <Link to={exchangeThreadTarget}>Arrange the Exchange</Link>
+        </li>
       )
     }
+    if (item.status === 'denied') {
+      let deniedAtText = ''
+      if (item.denied_at !== null) {
+        deniedAtText = formatTimestamp(item.denied_at)
+      }
+      return (
+        <li key={item.id}>
+          {item.listing_title}: Your request for {item.requested_quantity} was denied on:{' '}
+          {deniedAtText}
+        </li>
+      )
+    }
+    // Pending.
+    const requestedAtText = formatTimestamp(item.requested_at)
     return (
-      <article key={group.listing_id}>
-        <h2>{titleText}</h2>
-        <p>Remaining quantity: {group.remaining_quantity}</p>
-        <ul>{rowItems}</ul>
-      </article>
+      <li key={item.id}>
+        {item.listing_title}: You requested {item.requested_quantity} on {requestedAtText}
+      </li>
+    )
+  }
+
+  // Build one section: its heading, then either the rows or a short empty line.
+  function buildSection(heading: string, items: MyRequestItem[], emptyText: string) {
+    let body
+    if (items.length === 0) {
+      body = <p>{emptyText}</p>
+    } else {
+      const rows = []
+      for (let index = 0; index < items.length; index = index + 1) {
+        rows.push(buildRequestRow(items[index]))
+      }
+      body = <ul>{rows}</ul>
+    }
+    return (
+      <section>
+        <h2>{heading}</h2>
+        {body}
+      </section>
     )
   }
 
@@ -97,24 +135,34 @@ function MyRequestsPage() {
   } else if (result.errorMessage !== '') {
     contentArea = <p role="alert">{result.errorMessage}</p>
   } else if (result.ok) {
-    const responseData = result.data as RequestQueuesResponse
-    const groups = responseData.groups
-    if (groups.length === 0) {
-      contentArea = <p>You have not made any requests yet.</p>
-    } else {
-      const groupViews = []
-      for (let index = 0; index < groups.length; index = index + 1) {
-        groupViews.push(buildGroupView(groups[index]))
-      }
-      contentArea = (
-        <>
-          <div>{groupViews}</div>
-          <p>
-            <small>{timeZoneNote}</small>
-          </p>
-        </>
-      )
-    }
+    const responseData = result.data as MyRequestsResponse
+    const pendingSection = buildSection(
+      'Pending',
+      responseData.pending,
+      'You have no pending requests.',
+    )
+    const approvedSection = buildSection(
+      'Approved',
+      responseData.approved,
+      'You have no approved requests.',
+    )
+    const deniedSection = buildSection(
+      'Denied',
+      responseData.denied,
+      'You have no denied requests.',
+    )
+    contentArea = (
+      <>
+        {pendingSection}
+        <hr />
+        {approvedSection}
+        <hr />
+        {deniedSection}
+        <p>
+          <small>{timeZoneNote}</small>
+        </p>
+      </>
+    )
   } else {
     let detailMessage = 'Could not load your requests. Please try again.'
     if (typeof result.data === 'object' && result.data !== null) {

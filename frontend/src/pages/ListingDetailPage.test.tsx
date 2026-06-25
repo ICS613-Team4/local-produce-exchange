@@ -882,3 +882,362 @@ test('drops a late count response after the route changes to another listing', a
   expect(screen.getByText('Pending requests: 5')).toBeTruthy()
   expect(screen.queryByText('Pending requests: 99')).toBeNull()
 })
+
+// --- the non-owner request form and request status (UC-09) ---
+
+// A listing owned by someone other than the logged-in member (member-123), so
+// the request form and status area show.
+function makeOtherOwnedListing() {
+  const listing = makeActiveListing()
+  listing.owner_id = 'other-member'
+  return listing
+}
+
+// Routes the four calls the non-owner detail page can make: the listing GET, the
+// my-claim GET, the create-claim POST, and the owner pending-count GET (unused
+// for a non-owner, answered empty). myClaimResponse and createResponse are
+// functions so a test can shape each.
+function stubRequestFeatureFetch(
+  listing: object,
+  myClaimResponse: () => FakeResponse,
+  createResponse: () => FakeResponse,
+) {
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    const urlText = String(url)
+    if (urlText.includes('/my-claim')) {
+      return myClaimResponse()
+    }
+    if (urlText.includes('/claims')) {
+      return createResponse()
+    }
+    if (urlText.includes('/api/request-queues')) {
+      return makeFakeResponse(true, 200, { groups: [] })
+    }
+    return makeFakeResponse(true, 200, listing)
+  })
+}
+
+// A my-claim body in a given state. status drives what the page shows.
+function makeMyClaim(status: string, fields: object) {
+  const base = {
+    id: 'claim-1',
+    listing_id: 'abc',
+    claimant_id: 'member-123',
+    requested_quantity: 3,
+    approved_quantity: null,
+    status: status,
+    requested_at: '2026-07-01T09:00:00.000Z',
+    approved_at: null,
+    denied_at: null,
+    cancelled_at: null,
+  }
+  return Object.assign(base, fields)
+}
+
+function nullBody(): FakeResponse {
+  // The my-claim endpoint returns JSON null when there is no request.
+  const fakeResponse = {
+    ok: true,
+    status: 200,
+    text: async () => {
+      return 'null'
+    },
+  }
+  return fakeResponse
+}
+
+test('shows the request form to a non-owner with no prior request', async () => {
+  setLoggedIn()
+  stubRequestFeatureFetch(
+    makeOtherOwnedListing(),
+    () => nullBody(),
+    () => makeFakeResponse(true, 201, {}),
+  )
+
+  renderDetailPage()
+
+  expect(await screen.findByText('Backyard Lemons')).toBeTruthy()
+  // The Submit button and the number input both show. Use findByRole so this
+  // waits for the separate /my-claim fetch to resolve; getByRole would race it
+  // and flake on CI, where that fetch settles a tick later than locally.
+  expect(await screen.findByRole('button', { name: 'Submit' })).toBeTruthy()
+  const quantityInput = screen.getByRole('spinbutton')
+  // Native HTML5 validation: whole numbers, at least 1, no more than remaining (4).
+  expect(quantityInput.getAttribute('type')).toBe('number')
+  expect(quantityInput.getAttribute('min')).toBe('1')
+  expect(quantityInput.getAttribute('max')).toBe('4')
+  expect(quantityInput.getAttribute('step')).toBe('1')
+  expect(quantityInput.hasAttribute('required')).toBe(true)
+})
+
+test('does not show the request form to the listing owner', async () => {
+  setLoggedIn()
+  // makeActiveListing is owned by member-123, the logged-in member.
+  stubListingFetch(() => makeFakeResponse(true, 200, makeActiveListing()))
+
+  renderDetailPage()
+
+  expect(await screen.findByText('Backyard Lemons')).toBeTruthy()
+  expect(screen.queryByRole('button', { name: 'Submit' })).toBeNull()
+})
+
+test('shows the pending line instead of the form when a request is already in', async () => {
+  setLoggedIn()
+  stubRequestFeatureFetch(
+    makeOtherOwnedListing(),
+    () => makeFakeResponse(true, 200, makeMyClaim('requested', { requested_quantity: 2 })),
+    () => makeFakeResponse(true, 201, {}),
+  )
+
+  renderDetailPage()
+
+  expect(await screen.findByText(/You requested 2 quantity on:/)).toBeTruthy()
+  // No form while a request is pending.
+  expect(screen.queryByRole('button', { name: 'Submit' })).toBeNull()
+})
+
+test('shows a denied line when the request was denied', async () => {
+  setLoggedIn()
+  stubRequestFeatureFetch(
+    makeOtherOwnedListing(),
+    () => makeFakeResponse(true, 200, makeMyClaim('denied', { denied_at: '2026-07-02T10:00:00.000Z' })),
+    () => makeFakeResponse(true, 201, {}),
+  )
+
+  renderDetailPage()
+
+  expect(await screen.findByText('Your request was denied.')).toBeTruthy()
+  expect(screen.queryByRole('button', { name: 'Submit' })).toBeNull()
+})
+
+test('shows the approved quantity, time, and the Exchange Thread link when approved', async () => {
+  setLoggedIn()
+  stubRequestFeatureFetch(
+    makeOtherOwnedListing(),
+    () =>
+      makeFakeResponse(
+        true,
+        200,
+        makeMyClaim('approved', {
+          approved_quantity: 2,
+          approved_at: '2026-07-02T10:00:00.000Z',
+        }),
+      ),
+    () => makeFakeResponse(true, 201, {}),
+  )
+
+  renderDetailPage()
+
+  expect(await screen.findByText(/Your request was approved for 2 on:/)).toBeTruthy()
+  // The stub link to the (not-built) Exchange Thread feature.
+  const threadLink = screen.getByRole('link', { name: 'Arrange the Exchange' })
+  expect(threadLink.getAttribute('href')).toContain('/exchange-thread')
+})
+
+test('submitting a request, on confirm, replaces the form with the pending line', async () => {
+  setLoggedIn()
+  vi.stubGlobal('confirm', () => {
+    return true
+  })
+  const createResponse = {
+    id: 'claim-1',
+    listing_id: 'abc',
+    claimant_id: 'member-123',
+    requested_quantity: 3,
+    status: 'requested',
+    requested_at: '2026-07-01T09:00:00.000Z',
+  }
+  stubRequestFeatureFetch(
+    makeOtherOwnedListing(),
+    () => nullBody(),
+    () => makeFakeResponse(true, 201, createResponse),
+  )
+
+  renderDetailPage()
+
+  const submitButton = await screen.findByRole('button', { name: 'Submit' })
+  const quantityInput = screen.getByRole('spinbutton')
+  fireEvent.change(quantityInput, { target: { value: '3' } })
+  fireEvent.click(submitButton)
+
+  // The form is replaced by the pending confirmation line.
+  expect(await screen.findByText(/You requested 3 quantity on:/)).toBeTruthy()
+  expect(screen.queryByRole('button', { name: 'Submit' })).toBeNull()
+})
+
+test('cancelling the request confirm does not post and keeps the form', async () => {
+  setLoggedIn()
+  vi.stubGlobal('confirm', () => {
+    return false
+  })
+  let postCount = 0
+  vi.stubGlobal('fetch', async (url: string | URL | Request, options: RequestInit | undefined) => {
+    const urlText = String(url)
+    let method = 'GET'
+    if (options !== undefined && options.method !== undefined) {
+      method = String(options.method)
+    }
+    if (method === 'POST') {
+      postCount = postCount + 1
+      return makeFakeResponse(true, 201, {})
+    }
+    if (urlText.includes('/my-claim')) {
+      return nullBody()
+    }
+    if (urlText.includes('/api/request-queues')) {
+      return makeFakeResponse(true, 200, { groups: [] })
+    }
+    return makeFakeResponse(true, 200, makeOtherOwnedListing())
+  })
+
+  renderDetailPage()
+
+  const submitButton = await screen.findByRole('button', { name: 'Submit' })
+  const quantityInput = screen.getByRole('spinbutton')
+  fireEvent.change(quantityInput, { target: { value: '3' } })
+  fireEvent.click(submitButton)
+  await waitForStateUpdates()
+
+  expect(postCount).toBe(0)
+  expect(screen.getByRole('button', { name: 'Submit' })).toBeTruthy()
+})
+
+test('a rapid double-click submits only one request', async () => {
+  setLoggedIn()
+  vi.stubGlobal('confirm', () => {
+    return true
+  })
+  let postCount = 0
+  const pending = makePendingResponse()
+  vi.stubGlobal('fetch', async (url: string | URL | Request, options: RequestInit | undefined) => {
+    const urlText = String(url)
+    let method = 'GET'
+    if (options !== undefined && options.method !== undefined) {
+      method = String(options.method)
+    }
+    if (method === 'POST') {
+      postCount = postCount + 1
+      return pending.promise
+    }
+    if (urlText.includes('/my-claim')) {
+      return nullBody()
+    }
+    if (urlText.includes('/api/request-queues')) {
+      return makeFakeResponse(true, 200, { groups: [] })
+    }
+    return makeFakeResponse(true, 200, makeOtherOwnedListing())
+  })
+
+  renderDetailPage()
+
+  const submitButton = await screen.findByRole('button', { name: 'Submit' })
+  const quantityInput = screen.getByRole('spinbutton')
+  fireEvent.change(quantityInput, { target: { value: '3' } })
+  // Two clicks in the same tick: the in-flight ref blocks the second.
+  fireEvent.click(submitButton)
+  fireEvent.click(submitButton)
+
+  expect(postCount).toBe(1)
+
+  // Let the request finish so nothing dangles.
+  pending.resolve(
+    makeFakeResponse(true, 201, {
+      id: 'claim-1',
+      listing_id: 'abc',
+      claimant_id: 'member-123',
+      requested_quantity: 3,
+      status: 'requested',
+      requested_at: '2026-07-01T09:00:00.000Z',
+    }),
+  )
+  await waitForStateUpdates()
+})
+
+test('the request confirm warns it is final', async () => {
+  setLoggedIn()
+  let confirmMessage = ''
+  vi.stubGlobal('confirm', (message: string) => {
+    confirmMessage = message
+    return false
+  })
+  stubRequestFeatureFetch(
+    makeOtherOwnedListing(),
+    () => nullBody(),
+    () => makeFakeResponse(true, 201, {}),
+  )
+
+  renderDetailPage()
+
+  const submitButton = await screen.findByRole('button', { name: 'Submit' })
+  const quantityInput = screen.getByRole('spinbutton')
+  fireEvent.change(quantityInput, { target: { value: '3' } })
+  fireEvent.click(submitButton)
+
+  expect(confirmMessage.toLowerCase()).toContain('final')
+  expect(confirmMessage.toLowerCase()).toContain('cannot')
+})
+
+test('a failed request shows the server message and keeps the form', async () => {
+  setLoggedIn()
+  vi.stubGlobal('confirm', () => {
+    return true
+  })
+  stubRequestFeatureFetch(
+    makeOtherOwnedListing(),
+    () => nullBody(),
+    () =>
+      makeFakeResponse(false, 409, { detail: 'You have already made a request on this listing.' }),
+  )
+
+  renderDetailPage()
+
+  const submitButton = await screen.findByRole('button', { name: 'Submit' })
+  const quantityInput = screen.getByRole('spinbutton')
+  fireEvent.change(quantityInput, { target: { value: '3' } })
+  fireEvent.click(submitButton)
+
+  // The server's plain-words message shows, and the form stays for a retry.
+  expect(await screen.findByText('You have already made a request on this listing.')).toBeTruthy()
+  expect(screen.getByRole('button', { name: 'Submit' })).toBeTruthy()
+})
+
+test('does not flash the request form while the claim status is still loading', async () => {
+  setLoggedIn()
+  // The listing GET resolves right away, but the my-claim GET is left pending,
+  // so the page is in the "still loading the status" window.
+  const pendingMyClaim = makePendingResponse()
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    const urlText = String(url)
+    if (urlText.includes('/my-claim')) {
+      return pendingMyClaim.promise
+    }
+    if (urlText.includes('/api/request-queues')) {
+      return makeFakeResponse(true, 200, { groups: [] })
+    }
+    return makeFakeResponse(true, 200, makeOtherOwnedListing())
+  })
+
+  renderDetailPage()
+
+  // The listing has loaded and shows its details...
+  expect(await screen.findByText('Backyard Lemons')).toBeTruthy()
+  // ...but while the claim status is still loading, the form is NOT shown (no
+  // flash) and there is no loading placeholder text either.
+  expect(screen.queryByRole('button', { name: 'Submit' })).toBeNull()
+  expect(screen.queryByText(/Loading your request status/)).toBeNull()
+
+  // The status arrives as an approved claim: the link shows, and the form was
+  // never shown at any point.
+  pendingMyClaim.resolve(
+    makeFakeResponse(
+      true,
+      200,
+      makeMyClaim('approved', {
+        approved_quantity: 2,
+        approved_at: '2026-07-02T10:00:00.000Z',
+      }),
+    ),
+  )
+  expect(await screen.findByRole('link', { name: 'Arrange the Exchange' })).toBeTruthy()
+  expect(screen.queryByRole('button', { name: 'Submit' })).toBeNull()
+})

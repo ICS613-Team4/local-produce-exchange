@@ -1,18 +1,26 @@
 # Pydantic shapes for the claim endpoints.
 #
 # CreateClaimPayload carries the quantity the recipient wants.
-# ClaimResponse is the shape returned after a successful create.
+# ClaimResponse is the shape returned by create, approve, deny, and withdraw.
 # The three request-queue shapes below (US-10) describe the poster's view of the
 # pending requests on their listings: one pending row, one listing's group of
 # rows, and the whole response.
 
 from datetime import datetime
+from typing import Optional
 
 from pydantic import BaseModel, Field
 
 
+# The largest value a 32-bit signed integer can hold. The requested_quantity
+# column is a PostgreSQL Integer, so a request above this would overflow that
+# column. Bounding the field rejects such a value with a clear 422 at validation,
+# before it ever reaches the database.
+POSTGRES_INTEGER_MAX = 2147483647
+
+
 class CreateClaimPayload(BaseModel):
-    quantity: int = Field(gt=0)
+    quantity: int = Field(gt=0, le=POSTGRES_INTEGER_MAX)
 
 
 class ClaimResponse(BaseModel):
@@ -20,8 +28,12 @@ class ClaimResponse(BaseModel):
     listing_id: str
     claimant_id: str
     requested_quantity: int
+    approved_quantity: Optional[int] = None
     status: str
     requested_at: datetime
+    approved_at: Optional[datetime] = None
+    denied_at: Optional[datetime] = None
+    cancelled_at: Optional[datetime] = None
 
 
 # One pending request in a listing's queue (US-10). The poster sees who asked,
@@ -49,3 +61,28 @@ class ListingQueueGroup(BaseModel):
 # request. An empty list means nothing is pending.
 class RequestQueuesResponse(BaseModel):
     groups: list[ListingQueueGroup]
+
+
+# One of the caller's own requests, for the "my requests" page. It carries the
+# listing it was made on, the quantity asked for, and (once decided) the approved
+# quantity and the time it was approved or denied, so the page can show it in the
+# right section with the right timestamp.
+class MyRequestItem(BaseModel):
+    id: str
+    listing_id: str
+    listing_title: str
+    requested_quantity: int
+    approved_quantity: Optional[int] = None
+    status: str
+    requested_at: datetime
+    approved_at: Optional[datetime] = None
+    denied_at: Optional[datetime] = None
+
+
+# The "my requests" response, split into the three sections the page shows. Each
+# list is newest-first with a stable id tiebreaker. An empty list means that
+# section has nothing.
+class MyRequestsResponse(BaseModel):
+    pending: list[MyRequestItem]
+    approved: list[MyRequestItem]
+    denied: list[MyRequestItem]

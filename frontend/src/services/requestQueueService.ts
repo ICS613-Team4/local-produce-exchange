@@ -37,6 +37,27 @@ export type RequestQueuesResponse = {
   groups: ListingQueueGroup[]
 }
 
+// One of the caller's own requests, for the my-requests page.
+export type MyRequestItem = {
+  id: string
+  listing_id: string
+  listing_title: string
+  requested_quantity: number
+  approved_quantity: number | null
+  status: string
+  requested_at: string
+  approved_at: string | null
+  denied_at: string | null
+}
+
+// The my-requests response: the caller's requests split into three sections,
+// each newest-first.
+export type MyRequestsResponse = {
+  pending: MyRequestItem[]
+  approved: MyRequestItem[]
+  denied: MyRequestItem[]
+}
+
 export async function sendGetRequestQueuesRequest(
   memberId: string,
   listingId: string,
@@ -84,6 +105,191 @@ export async function sendGetRequestQueuesRequest(
   } catch (caughtError) {
     // Without this catch, a timeout or network failure would print
     // "Uncaught (in promise)" in the console instead of showing on the page.
+    let errorMessage: string
+    if (caughtError instanceof DOMException && caughtError.name === 'TimeoutError') {
+      errorMessage =
+        'Timeout: no answer from the backend after ' + requestQueueTimeoutMilliseconds + ' ms.'
+    } else {
+      errorMessage = 'Request failed: ' + String(caughtError)
+    }
+
+    return {
+      ok: false,
+      status: 0,
+      data: '',
+      errorMessage: errorMessage,
+    }
+  }
+}
+
+// The body the approve and deny endpoints return (a ClaimResponse). The page
+// reads approved_at or denied_at from this with a plain cast on success.
+export type ClaimDecisionResponse = {
+  id: string
+  listing_id: string
+  claimant_id: string
+  requested_quantity: number
+  approved_quantity: number | null
+  status: string
+  requested_at: string
+  approved_at: string | null
+  denied_at: string | null
+}
+
+export async function sendDecideClaimRequest(
+  memberId: string,
+  claimId: string,
+  decision: string,
+): Promise<RequestQueuesResult> {
+  // Approve or deny one pending request (US-11). decision is "approve" or
+  // "deny", which is also the last path segment. This is a PATCH with no body;
+  // the acting member's id travels in the X-Member-Id header like the other
+  // calls, and the backend checks the caller owns the listing.
+  let url = '/api/claims/' + claimId + '/approve'
+  if (decision === 'deny') {
+    url = '/api/claims/' + claimId + '/deny'
+  }
+
+  try {
+    const response = await fetch(url, {
+      method: 'PATCH',
+      headers: {
+        'X-Member-Id': memberId,
+      },
+      signal: AbortSignal.timeout(requestQueueTimeoutMilliseconds),
+    })
+
+    const responseText = await response.text()
+    let data: unknown = ''
+    if (responseText !== '') {
+      try {
+        data = JSON.parse(responseText)
+      } catch {
+        // If a proxy or server problem returns plain text or HTML, keep the
+        // HTTP status and show the body instead of throwing it away.
+        data = responseText
+      }
+    }
+
+    return {
+      ok: response.ok,
+      status: response.status,
+      data: data,
+      errorMessage: '',
+    }
+  } catch (caughtError) {
+    let errorMessage: string
+    if (caughtError instanceof DOMException && caughtError.name === 'TimeoutError') {
+      errorMessage =
+        'Timeout: no answer from the backend after ' + requestQueueTimeoutMilliseconds + ' ms.'
+    } else {
+      errorMessage = 'Request failed: ' + String(caughtError)
+    }
+
+    return {
+      ok: false,
+      status: 0,
+      data: '',
+      errorMessage: errorMessage,
+    }
+  }
+}
+
+export async function sendCreateClaimRequest(
+  listingId: string,
+  memberId: string,
+  quantity: number,
+): Promise<RequestQueuesResult> {
+  // Submit a request (a claim) for some quantity of a listing. POSTs the quantity
+  // to /api/listings/<id>/claims; the acting member's id travels in the
+  // X-Member-Id header like the other calls. Same result shape as the rest.
+  const url = '/api/listings/' + listingId + '/claims'
+  const bodyObject = { quantity: quantity }
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'X-Member-Id': memberId,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(bodyObject),
+      signal: AbortSignal.timeout(requestQueueTimeoutMilliseconds),
+    })
+
+    const responseText = await response.text()
+    let data: unknown = ''
+    if (responseText !== '') {
+      try {
+        data = JSON.parse(responseText)
+      } catch {
+        // If a proxy or server problem returns plain text or HTML, keep the
+        // HTTP status and show the body instead of throwing it away.
+        data = responseText
+      }
+    }
+
+    return {
+      ok: response.ok,
+      status: response.status,
+      data: data,
+      errorMessage: '',
+    }
+  } catch (caughtError) {
+    let errorMessage: string
+    if (caughtError instanceof DOMException && caughtError.name === 'TimeoutError') {
+      errorMessage =
+        'Timeout: no answer from the backend after ' + requestQueueTimeoutMilliseconds + ' ms.'
+    } else {
+      errorMessage = 'Request failed: ' + String(caughtError)
+    }
+
+    return {
+      ok: false,
+      status: 0,
+      data: '',
+      errorMessage: errorMessage,
+    }
+  }
+}
+
+export async function sendGetMyClaimRequest(
+  listingId: string,
+  memberId: string,
+): Promise<RequestQueuesResult> {
+  // The viewer's own request on one listing, whatever its status, or null when
+  // none. GET /api/listings/<id>/my-claim with the member id in the X-Member-Id
+  // header. Same result shape as the rest; data is the claim object or null.
+  const url = '/api/listings/' + listingId + '/my-claim'
+
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'X-Member-Id': memberId,
+      },
+      signal: AbortSignal.timeout(requestQueueTimeoutMilliseconds),
+    })
+
+    const responseText = await response.text()
+    let data: unknown = ''
+    if (responseText !== '') {
+      try {
+        data = JSON.parse(responseText)
+      } catch {
+        // If a proxy or server problem returns plain text or HTML, keep the
+        // HTTP status and show the body instead of throwing it away.
+        data = responseText
+      }
+    }
+
+    return {
+      ok: response.ok,
+      status: response.status,
+      data: data,
+      errorMessage: '',
+    }
+  } catch (caughtError) {
     let errorMessage: string
     if (caughtError instanceof DOMException && caughtError.name === 'TimeoutError') {
       errorMessage =

@@ -176,9 +176,9 @@ test('wires the /my-requests route inside RequireAuth for a logged-in member', a
   window.localStorage.setItem('memberName', 'Bob Baker')
 
   // RequireAuth validates the stored id, then the page loads its requests. A 200
-  // for both lets the page render; an empty list shows the page's empty message.
+  // for both lets the page render; empty sections show the page's empty messages.
   vi.stubGlobal('fetch', async () => {
-    return makeFakeResponse(true, 200, { groups: [] })
+    return makeFakeResponse(true, 200, { pending: [], approved: [], denied: [] })
   })
 
   render(<App />)

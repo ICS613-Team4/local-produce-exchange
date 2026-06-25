@@ -2,6 +2,9 @@ import { afterEach, expect, test, vi } from 'vitest'
 
 import {
   requestQueueTimeoutMilliseconds,
+  sendCreateClaimRequest,
+  sendDecideClaimRequest,
+  sendGetMyClaimRequest,
   sendGetMyRequestsRequest,
   sendGetRequestQueuesRequest,
 } from './requestQueueService'
@@ -224,4 +227,153 @@ test('my requests returns a request failure message when fetch rejects', async (
   expect(result.ok).toBe(false)
   expect(result.status).toBe(0)
   expect(result.errorMessage).toBe('Request failed: TypeError: Failed to fetch')
+})
+
+// --- sendCreateClaimRequest: submitting a request ---
+
+test('creates a claim with a POST, the quantity body, and the member id header', async () => {
+  const responseBody = {
+    id: 'claim-1',
+    listing_id: 'listing-abc',
+    claimant_id: 'member-123',
+    requested_quantity: 3,
+    status: 'requested',
+    requested_at: '2026-07-01T09:00:00.000Z',
+  }
+  let requestUrl = ''
+  let requestOptions: RequestInit = {}
+  vi.stubGlobal('fetch', async (url: string | URL | Request, options: RequestInit | undefined) => {
+    requestUrl = String(url)
+    if (options !== undefined) {
+      requestOptions = options
+    }
+    return makeFakeResponse(true, 201, JSON.stringify(responseBody))
+  })
+
+  const result = await sendCreateClaimRequest('listing-abc', 'member-123', 3)
+
+  expect(result.ok).toBe(true)
+  expect(result.status).toBe(201)
+  expect(JSON.stringify(result.data)).toBe(JSON.stringify(responseBody))
+  // The POST goes to the listing's claims path.
+  expect(requestUrl).toBe('/api/listings/listing-abc/claims')
+  expect(requestOptions.method).toBe('POST')
+  // The quantity travels in the JSON body.
+  expect(requestOptions.body).toBe(JSON.stringify({ quantity: 3 }))
+  expect(JSON.stringify(requestOptions.headers)).toContain('X-Member-Id')
+  expect(JSON.stringify(requestOptions.headers)).toContain('member-123')
+  expect(JSON.stringify(requestOptions.headers)).toContain('application/json')
+  expect(requestOptions.signal).toBeTruthy()
+})
+
+test('create claim maps a 409 duplicate response into the result object', async () => {
+  const responseBody = { detail: 'You have already made a request on this listing.' }
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(false, 409, JSON.stringify(responseBody))
+  })
+
+  const result = await sendCreateClaimRequest('listing-abc', 'member-123', 3)
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(409)
+  expect(JSON.stringify(result.data)).toBe(JSON.stringify(responseBody))
+})
+
+test('create claim returns a timeout message when the request times out', async () => {
+  vi.stubGlobal('fetch', async () => {
+    throw new DOMException('The operation timed out.', 'TimeoutError')
+  })
+
+  const result = await sendCreateClaimRequest('listing-abc', 'member-123', 3)
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(0)
+  expect(result.errorMessage).toBe(
+    'Timeout: no answer from the backend after ' + requestQueueTimeoutMilliseconds + ' ms.',
+  )
+})
+
+// --- sendDecideClaimRequest: approve / deny ---
+
+test('approve sends a PATCH to the approve path with the member id header', async () => {
+  const responseBody = {
+    id: 'claim-1',
+    listing_id: 'l1',
+    claimant_id: 'm1',
+    requested_quantity: 3,
+    approved_quantity: 3,
+    status: 'approved',
+    requested_at: '2026-07-01T09:00:00.000Z',
+    approved_at: '2026-07-01T12:00:00.000Z',
+  }
+  let requestUrl = ''
+  let requestOptions: RequestInit = {}
+  vi.stubGlobal('fetch', async (url: string | URL | Request, options: RequestInit | undefined) => {
+    requestUrl = String(url)
+    if (options !== undefined) {
+      requestOptions = options
+    }
+    return makeFakeResponse(true, 200, JSON.stringify(responseBody))
+  })
+
+  const result = await sendDecideClaimRequest('member-123', 'claim-1', 'approve')
+
+  expect(result.ok).toBe(true)
+  expect(requestUrl).toBe('/api/claims/claim-1/approve')
+  expect(requestOptions.method).toBe('PATCH')
+  expect(JSON.stringify(requestOptions.headers)).toContain('member-123')
+})
+
+test('deny sends a PATCH to the deny path', async () => {
+  let requestUrl = ''
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    requestUrl = String(url)
+    return makeFakeResponse(true, 200, JSON.stringify({ status: 'denied' }))
+  })
+
+  await sendDecideClaimRequest('member-123', 'claim-1', 'deny')
+
+  expect(requestUrl).toBe('/api/claims/claim-1/deny')
+})
+
+// --- sendGetMyClaimRequest: the viewer's own claim on a listing ---
+
+test('gets my claim at the listing my-claim path with the member id header', async () => {
+  const responseBody = {
+    id: 'claim-1',
+    listing_id: 'listing-abc',
+    claimant_id: 'member-123',
+    requested_quantity: 3,
+    status: 'requested',
+    requested_at: '2026-07-01T09:00:00.000Z',
+  }
+  let requestUrl = ''
+  let requestOptions: RequestInit = {}
+  vi.stubGlobal('fetch', async (url: string | URL | Request, options: RequestInit | undefined) => {
+    requestUrl = String(url)
+    if (options !== undefined) {
+      requestOptions = options
+    }
+    return makeFakeResponse(true, 200, JSON.stringify(responseBody))
+  })
+
+  const result = await sendGetMyClaimRequest('listing-abc', 'member-123')
+
+  expect(result.ok).toBe(true)
+  expect(JSON.stringify(result.data)).toBe(JSON.stringify(responseBody))
+  expect(requestUrl).toBe('/api/listings/listing-abc/my-claim')
+  expect(requestOptions.method).toBe('GET')
+  expect(JSON.stringify(requestOptions.headers)).toContain('member-123')
+})
+
+test('my claim parses a null body as null data when there is no request', async () => {
+  // The endpoint returns JSON null when the viewer has not requested the listing.
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, 'null')
+  })
+
+  const result = await sendGetMyClaimRequest('listing-abc', 'member-123')
+
+  expect(result.ok).toBe(true)
+  expect(result.data).toBe(null)
 })

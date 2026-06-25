@@ -5,10 +5,11 @@
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Annotated
+from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db import get_db_session
@@ -20,6 +21,8 @@ from app.schemas.claim import (
     ClaimResponse,
     CreateClaimPayload,
     ListingQueueGroup,
+    MyRequestItem,
+    MyRequestsResponse,
     QueueClaimItem,
     RequestQueuesResponse,
 )
@@ -109,20 +112,22 @@ def create_claim(
         )
 
     # ------------------------------------------------------------------
-    # Duplicate open-claim check (Scenario 4). The unique partial index
-    # prevents this at the database level, but checking first lets us give
-    # a clear 409 instead of a raw constraint-violation error.
+    # One-request-per-listing check. A member may make only a single request on
+    # a listing, ever. The state of any earlier request does not matter
+    # (requested, approved, denied, or withdrawn): if this member already has any
+    # claim on this listing, a second one is refused with a 409. This is checked
+    # first so the common case gets a clear message; the database race backstop
+    # below covers two requests that slip past this check at the same time.
     # ------------------------------------------------------------------
     try:
         existing = session.scalars(
             select(Claim).where(
                 Claim.listing_id == listing_uuid,
                 Claim.claimant_id == claimant_id,
-                Claim.status == "requested",
             )
         ).first()
     except Exception as error:
-        logger.error("Checking for duplicate claim failed: %s", error)
+        logger.error("Checking for an existing claim failed: %s", error)
         raise HTTPException(
             status_code=503,
             detail=(
@@ -134,7 +139,7 @@ def create_claim(
     if existing is not None:
         raise HTTPException(
             status_code=409,
-            detail="You already have an open request on this listing.",
+            detail="You have already made a request on this listing.",
         )
 
     # ------------------------------------------------------------------
@@ -155,6 +160,19 @@ def create_claim(
         session.flush()
         new_claim_id = new_claim.id
         session.commit()
+    except IntegrityError as error:
+        # Two requests from the same member for the same listing raced past the
+        # check above (a rapid double-click, or two tabs) and both tried to
+        # insert. Every claim is inserted as "requested", so the unique index on
+        # (listing_id, claimant_id) where status = 'requested' lets only one in
+        # and rejects this one. No duplicate row was created; report the same
+        # clean 409 as the duplicate case above instead of a generic 503.
+        session.rollback()
+        logger.info("Duplicate claim insert blocked by the unique index: %s", error)
+        raise HTTPException(
+            status_code=409,
+            detail="You have already made a request on this listing.",
+        )
     except Exception as error:
         session.rollback()
         logger.error("Creating a claim failed: %s", error)
@@ -172,6 +190,73 @@ def create_claim(
         requested_quantity=payload.quantity,
         status="requested",
         requested_at=requested_at,
+    )
+
+
+@router.get("/listings/{listing_id}/my-claim")
+def get_my_claim_for_listing(
+    listing_id: str,
+    current_member: Member = Depends(get_current_member),
+    session: Session = Depends(get_db_session),
+) -> Optional[ClaimResponse]:
+    # The viewer's own request on one listing, whatever its status (requested,
+    # approved, denied, or withdrawn). The listing detail page uses this so a
+    # requester sees their current status across reloads. Returns null (no body
+    # object) when the viewer has not requested this listing.
+
+    # ------------------------------------------------------------------
+    # Active-member gate, the same rule as the other claim endpoints.
+    # ------------------------------------------------------------------
+    if current_member.status != "active":
+        if current_member.status == "suspended":
+            raise HTTPException(
+                status_code=403,
+                detail="Your account is suspended, so you cannot view requests.",
+            )
+        raise HTTPException(
+            status_code=403,
+            detail="Your account is not active, so you cannot view requests.",
+        )
+
+    # A listing id that is not a real UUID cannot match any listing, so the viewer
+    # has no claim on it. Return null rather than an error.
+    try:
+        listing_uuid = uuid.UUID(listing_id)
+    except (ValueError, AttributeError, TypeError):
+        return None
+
+    # Load the viewer's claim on this listing. A member may make only one request
+    # per listing ever, so there is at most one row; first() returns it or None.
+    try:
+        claim = session.scalars(
+            select(Claim)
+            .where(Claim.listing_id == listing_uuid)
+            .where(Claim.claimant_id == current_member.id)
+        ).first()
+    except Exception as error:
+        logger.error("Loading the viewer's claim failed: %s", error)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Could not read your request right now. "
+                "Make sure the database is running and migrated."
+            ),
+        )
+
+    if claim is None:
+        return None
+
+    return ClaimResponse(
+        id=str(claim.id),
+        listing_id=str(claim.listing_id),
+        claimant_id=str(claim.claimant_id),
+        requested_quantity=claim.requested_quantity,
+        approved_quantity=claim.approved_quantity,
+        status=claim.status,
+        requested_at=claim.requested_at,
+        approved_at=claim.approved_at,
+        denied_at=claim.denied_at,
+        cancelled_at=claim.cancelled_at,
     )
 
 
@@ -214,7 +299,9 @@ def get_request_queues(
             owned_listings = session.scalars(
                 select(Listing)
                 .where(Listing.owner_id == member_id)
-                .order_by(Listing.created_at.desc())
+                # The id is a tiebreaker so listings that share a created_at sort
+                # in a stable, repeatable order, not an arbitrary one.
+                .order_by(Listing.created_at.desc(), Listing.id.desc())
             ).all()
         except Exception as error:
             logger.error("Loading the caller's listings failed: %s", error)
@@ -276,7 +363,9 @@ def get_request_queues(
                 select(Claim)
                 .where(Claim.listing_id == listing_row.id)
                 .where(Claim.status == "requested")
-                .order_by(Claim.requested_at.asc())
+                # Oldest first (FIFO), with the id as a tiebreaker so two claims
+                # that share a requested_at always come out in the same order.
+                .order_by(Claim.requested_at.asc(), Claim.id.asc())
             ).all()
         except Exception as error:
             logger.error("Loading pending claims failed: %s", error)
@@ -329,16 +418,52 @@ def get_request_queues(
     return RequestQueuesResponse(groups=groups)
 
 
+def build_my_request_items(claims):
+    # Turn a list of the caller's claim rows into MyRequestItem rows for the
+    # my-requests page. Reads each claim's listing through the relationship for
+    # the title. A claim whose listing is missing is skipped. A database error
+    # while reading the listing becomes a 503, like the other reads.
+    items = []
+    for claim_row in claims:
+        try:
+            listing_row = claim_row.listing
+        except Exception as error:
+            logger.error("Loading a requested listing failed: %s", error)
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Could not read your requests right now. "
+                    "Make sure the database is running and migrated."
+                ),
+            )
+        if listing_row is None:
+            continue
+        items.append(
+            MyRequestItem(
+                id=str(claim_row.id),
+                listing_id=str(listing_row.id),
+                listing_title=listing_row.title,
+                requested_quantity=claim_row.requested_quantity,
+                approved_quantity=claim_row.approved_quantity,
+                status=claim_row.status,
+                requested_at=claim_row.requested_at,
+                approved_at=claim_row.approved_at,
+                denied_at=claim_row.denied_at,
+            )
+        )
+    return items
+
+
 @router.get("/my-requests")
 def get_my_requests(
     current_member: Member = Depends(get_current_member),
     session: Session = Depends(get_db_session),
-) -> RequestQueuesResponse:
-    # The flip side of get_request_queues: the pending requests the caller has
-    # made on OTHER members' listings (the outgoing view). Grouped by the listing
-    # requested on, newest listing first, each group holding the caller's own
-    # pending request. Reuses the same response shape and the same frontend
-    # rendering as the incoming queue, so the format matches.
+) -> MyRequestsResponse:
+    # The caller's own requests, split into three sections for the my-requests
+    # page: pending (still waiting), approved, and denied. Each section is newest
+    # first, by the time the request entered that state, with the claim id as a
+    # tiebreaker so the order is stable and repeatable. A member has at most one
+    # request per listing, so each request stands on its own.
 
     # Active-member gate, same rule and messages as get_request_queues.
     if current_member.status != "active":
@@ -353,18 +478,28 @@ def get_my_requests(
         )
 
     member_id = current_member.id
-    member_name = current_member.name
 
-    # Load the caller's pending claims, ordered by the listing's created_at so the
-    # newest listing comes first, matching the incoming queue's group order. The
-    # join is only for that ordering; the listing fields are read below.
+    # Load each section in its own query. Pending sorts by when it was requested,
+    # approved by when it was approved, denied by when it was denied; all newest
+    # first, all with the claim id as the tiebreaker.
     try:
-        my_claims = session.scalars(
+        pending_claims = session.scalars(
             select(Claim)
-            .join(Listing, Claim.listing_id == Listing.id)
             .where(Claim.claimant_id == member_id)
             .where(Claim.status == "requested")
-            .order_by(Listing.created_at.desc())
+            .order_by(Claim.requested_at.desc(), Claim.id.desc())
+        ).all()
+        approved_claims = session.scalars(
+            select(Claim)
+            .where(Claim.claimant_id == member_id)
+            .where(Claim.status == "approved")
+            .order_by(Claim.approved_at.desc(), Claim.id.desc())
+        ).all()
+        denied_claims = session.scalars(
+            select(Claim)
+            .where(Claim.claimant_id == member_id)
+            .where(Claim.status == "denied")
+            .order_by(Claim.denied_at.desc(), Claim.id.desc())
         ).all()
     except Exception as error:
         logger.error("Loading the caller's requests failed: %s", error)
@@ -376,42 +511,415 @@ def get_my_requests(
             ),
         )
 
-    # Build one group per claim. A member has at most one open request per listing
-    # (the unique partial index), so each listing appears once. Read the listing
-    # through the relationship for its title, status, and remaining quantity.
-    groups = []
-    for claim_row in my_claims:
-        try:
-            listing_row = claim_row.listing
-        except Exception as error:
-            logger.error("Loading a requested listing failed: %s", error)
+    pending_items = build_my_request_items(pending_claims)
+    approved_items = build_my_request_items(approved_claims)
+    denied_items = build_my_request_items(denied_claims)
+
+    return MyRequestsResponse(
+        pending=pending_items,
+        approved=approved_items,
+        denied=denied_items,
+    )
+
+
+@router.patch("/claims/{claim_id}/approve")
+def approve_claim(
+    claim_id: str,
+    current_member: Member = Depends(get_current_member),
+    session: Session = Depends(get_db_session),
+) -> ClaimResponse:
+    # ------------------------------------------------------------------
+    # Permission gate. Only an active member may act on a claim.
+    # ------------------------------------------------------------------
+    if current_member.status != "active":
+        if current_member.status == "suspended":
             raise HTTPException(
-                status_code=503,
-                detail=(
-                    "Could not read your requests right now. "
-                    "Make sure the database is running and migrated."
-                ),
+                status_code=403,
+                detail="Your account is suspended, so you cannot approve a request.",
             )
-        if listing_row is None:
-            continue
-        pending_items = []
-        pending_items.append(
-            QueueClaimItem(
-                id=str(claim_row.id),
-                claimant_id=str(member_id),
-                claimant_name=member_name,
-                requested_quantity=claim_row.requested_quantity,
-                requested_at=claim_row.requested_at,
-            )
-        )
-        groups.append(
-            ListingQueueGroup(
-                listing_id=str(listing_row.id),
-                listing_title=listing_row.title,
-                listing_status=listing_row.status,
-                remaining_quantity=listing_row.remaining_quantity,
-                pending=pending_items,
-            )
+        raise HTTPException(
+            status_code=403,
+            detail="Your account is not active, so you cannot approve a request.",
         )
 
-    return RequestQueuesResponse(groups=groups)
+    # ------------------------------------------------------------------
+    # Parse the claim id.
+    # ------------------------------------------------------------------
+    try:
+        claim_uuid = uuid.UUID(claim_id)
+    except (ValueError, AttributeError, TypeError):
+        raise HTTPException(status_code=404, detail="Request not found.")
+
+    # ------------------------------------------------------------------
+    # Load the claim and lock its row (SELECT ... FOR UPDATE) so two approvals
+    # of the SAME request cannot run at once. The lock is held until this
+    # request commits, so a second approval of this claim (a double-click, a
+    # second tab, or a scripted click) waits here, then reads the now-approved
+    # status below and is rejected. This is the database, not the app, enforcing
+    # one decision per claim, so no amount of fast clicking can process it twice.
+    # ------------------------------------------------------------------
+    try:
+        claim = session.scalars(
+            select(Claim).where(Claim.id == claim_uuid).with_for_update()
+        ).first()
+    except Exception as error:
+        logger.error("Loading claim for approval failed: %s", error)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Could not process the request right now. "
+                "Make sure the database is running and migrated."
+            ),
+        )
+
+    if claim is None:
+        raise HTTPException(status_code=404, detail="Request not found.")
+
+    # ------------------------------------------------------------------
+    # Workflow rule (Scenario 4). The claim must be in REQUESTED status. This is
+    # read under the claim row lock above, so a concurrent approval that already
+    # moved it to "approved" is seen here and stops this one.
+    # ------------------------------------------------------------------
+    if claim.status != "requested":
+        raise HTTPException(
+            status_code=409,
+            detail="This request is not pending, so it cannot be approved.",
+        )
+
+    # ------------------------------------------------------------------
+    # Load the listing and lock its row too (SELECT ... FOR UPDATE). The
+    # remaining quantity is read, compared, and lowered below; locking the row
+    # serializes that read-modify-write across requests, so two approvals of
+    # DIFFERENT claims on the same listing cannot both read the same remaining
+    # quantity and each subtract from it. Without this lock, two approvals could
+    # together allocate more than the listing actually has. The lock makes the
+    # second approval wait, then read the already-lowered remaining quantity.
+    # Claims are always locked before listings (here and in deny), so the lock
+    # order is consistent and cannot deadlock.
+    # ------------------------------------------------------------------
+    try:
+        listing = session.scalars(
+            select(Listing).where(Listing.id == claim.listing_id).with_for_update()
+        ).first()
+    except Exception as error:
+        logger.error("Loading listing for claim approval failed: %s", error)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Could not process the request right now. "
+                "Make sure the database is running and migrated."
+            ),
+        )
+
+    if listing is None:
+        raise HTTPException(status_code=404, detail="Request not found.")
+
+    # ------------------------------------------------------------------
+    # Permission rule (Scenario 5). Only the listing owner may approve.
+    # ------------------------------------------------------------------
+    if listing.owner_id != current_member.id:
+        raise HTTPException(
+            status_code=403,
+            detail="Only the listing owner can approve or deny requests.",
+        )
+
+    # ------------------------------------------------------------------
+    # Nothing left to give. The listing has no remaining quantity, so there
+    # is nothing to allocate. approved_quantity must be greater than 0, so a
+    # zero allocation is not allowed; reject with a 409.
+    # ------------------------------------------------------------------
+    if listing.remaining_quantity <= 0:
+        raise HTTPException(
+            status_code=409,
+            detail="Cannot approve: this listing has no remaining quantity.",
+        )
+
+    # ------------------------------------------------------------------
+    # Apply the approval. Partial fill: allocate as much as the request asks
+    # for, but never more than what the listing has left. So a request for 5
+    # against a remaining quantity of 2 records an approved_quantity of 2.
+    # The original requested_quantity is left unchanged, so the record shows
+    # both numbers. The listing's remaining quantity drops by the allocated
+    # amount, which can bring it to exactly 0 but never below.
+    # ------------------------------------------------------------------
+    if claim.requested_quantity < listing.remaining_quantity:
+        allocated_quantity = claim.requested_quantity
+    else:
+        allocated_quantity = listing.remaining_quantity
+
+    now = datetime.now(timezone.utc)
+
+    claim.status = "approved"
+    claim.approved_quantity = allocated_quantity
+    claim.approved_at = now
+    listing.remaining_quantity -= allocated_quantity
+
+    # Cache values before commit expires loaded attributes.
+    claim_id_out = claim.id
+    listing_id_out = claim.listing_id
+    claimant_id_out = claim.claimant_id
+    requested_quantity_out = claim.requested_quantity
+    approved_quantity_out = claim.approved_quantity
+    requested_at_out = claim.requested_at
+
+    try:
+        session.commit()
+    except Exception as error:
+        session.rollback()
+        logger.error("Approving a claim failed: %s", error)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Could not approve the request right now. "
+                "Make sure the database is running and migrated."
+            ),
+        )
+
+    return ClaimResponse(
+        id=str(claim_id_out),
+        listing_id=str(listing_id_out),
+        claimant_id=str(claimant_id_out),
+        requested_quantity=requested_quantity_out,
+        approved_quantity=approved_quantity_out,
+        status="approved",
+        requested_at=requested_at_out,
+        approved_at=now,
+    )
+
+
+@router.patch("/claims/{claim_id}/deny")
+def deny_claim(
+    claim_id: str,
+    current_member: Member = Depends(get_current_member),
+    session: Session = Depends(get_db_session),
+) -> ClaimResponse:
+    # ------------------------------------------------------------------
+    # Permission gate. Only an active member may act on a claim.
+    # ------------------------------------------------------------------
+    if current_member.status != "active":
+        if current_member.status == "suspended":
+            raise HTTPException(
+                status_code=403,
+                detail="Your account is suspended, so you cannot deny a request.",
+            )
+        raise HTTPException(
+            status_code=403,
+            detail="Your account is not active, so you cannot deny a request.",
+        )
+
+    # ------------------------------------------------------------------
+    # Parse the claim id.
+    # ------------------------------------------------------------------
+    try:
+        claim_uuid = uuid.UUID(claim_id)
+    except (ValueError, AttributeError, TypeError):
+        raise HTTPException(status_code=404, detail="Request not found.")
+
+    # ------------------------------------------------------------------
+    # Load the claim and lock its row (SELECT ... FOR UPDATE) so the same claim
+    # cannot be denied twice, or denied and approved, at the same time. The lock
+    # is held until commit, so a racing decision on this claim waits here and
+    # then reads the updated status below and is rejected. Denial does not change
+    # any quantity, so the listing is read below without a lock, only to check
+    # ownership.
+    # ------------------------------------------------------------------
+    try:
+        claim = session.scalars(
+            select(Claim).where(Claim.id == claim_uuid).with_for_update()
+        ).first()
+    except Exception as error:
+        logger.error("Loading claim for denial failed: %s", error)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Could not process the request right now. "
+                "Make sure the database is running and migrated."
+            ),
+        )
+
+    if claim is None:
+        raise HTTPException(status_code=404, detail="Request not found.")
+
+    # ------------------------------------------------------------------
+    # Workflow rule (Scenario 4). The claim must be in REQUESTED status. Read
+    # under the claim row lock above, so a concurrent decision is seen here.
+    # ------------------------------------------------------------------
+    if claim.status != "requested":
+        raise HTTPException(
+            status_code=409,
+            detail="This request is not pending, so it cannot be denied.",
+        )
+
+    # ------------------------------------------------------------------
+    # Load the listing so we can check ownership.
+    # ------------------------------------------------------------------
+    try:
+        listing = session.scalars(
+            select(Listing).where(Listing.id == claim.listing_id)
+        ).first()
+    except Exception as error:
+        logger.error("Loading listing for claim denial failed: %s", error)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Could not process the request right now. "
+                "Make sure the database is running and migrated."
+            ),
+        )
+
+    if listing is None:
+        raise HTTPException(status_code=404, detail="Request not found.")
+
+    # ------------------------------------------------------------------
+    # Permission rule (Scenario 5). Only the listing owner may deny.
+    # ------------------------------------------------------------------
+    if listing.owner_id != current_member.id:
+        raise HTTPException(
+            status_code=403,
+            detail="Only the listing owner can approve or deny requests.",
+        )
+
+    # ------------------------------------------------------------------
+    # Apply the denial. No quantity changes on denial.
+    # ------------------------------------------------------------------
+    now = datetime.now(timezone.utc)
+
+    claim.status = "denied"
+    claim.denied_at = now
+
+    # Cache values before commit expires loaded attributes.
+    claim_id_out = claim.id
+    listing_id_out = claim.listing_id
+    claimant_id_out = claim.claimant_id
+    requested_quantity_out = claim.requested_quantity
+    requested_at_out = claim.requested_at
+
+    try:
+        session.commit()
+    except Exception as error:
+        session.rollback()
+        logger.error("Denying a claim failed: %s", error)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Could not deny the request right now. "
+                "Make sure the database is running and migrated."
+            ),
+        )
+
+    return ClaimResponse(
+        id=str(claim_id_out),
+        listing_id=str(listing_id_out),
+        claimant_id=str(claimant_id_out),
+        requested_quantity=requested_quantity_out,
+        status="denied",
+        requested_at=requested_at_out,
+        denied_at=now,
+    )
+
+
+@router.patch("/claims/{claim_id}/withdraw")
+def withdraw_claim(
+    claim_id: str,
+    current_member: Member = Depends(get_current_member),
+    session: Session = Depends(get_db_session),
+) -> ClaimResponse:
+    # ------------------------------------------------------------------
+    # Permission gate. Only an active member may withdraw a claim.
+    # ------------------------------------------------------------------
+    if current_member.status != "active":
+        if current_member.status == "suspended":
+            raise HTTPException(
+                status_code=403,
+                detail="Your account is suspended, so you cannot withdraw a request.",
+            )
+        raise HTTPException(
+            status_code=403,
+            detail="Your account is not active, so you cannot withdraw a request.",
+        )
+
+    # ------------------------------------------------------------------
+    # Parse the claim id.
+    # ------------------------------------------------------------------
+    try:
+        claim_uuid = uuid.UUID(claim_id)
+    except (ValueError, AttributeError, TypeError):
+        raise HTTPException(status_code=404, detail="Request not found.")
+
+    # ------------------------------------------------------------------
+    # Load the claim.
+    # ------------------------------------------------------------------
+    try:
+        claim = session.scalars(
+            select(Claim).where(Claim.id == claim_uuid)
+        ).first()
+    except Exception as error:
+        logger.error("Loading claim for withdrawal failed: %s", error)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Could not process the request right now. "
+                "Make sure the database is running and migrated."
+            ),
+        )
+
+    if claim is None:
+        raise HTTPException(status_code=404, detail="Request not found.")
+
+    # ------------------------------------------------------------------
+    # Permission rule (Scenario 3). Only the claimant may withdraw.
+    # ------------------------------------------------------------------
+    if claim.claimant_id != current_member.id:
+        raise HTTPException(
+            status_code=403,
+            detail="You can only withdraw your own request.",
+        )
+
+    # ------------------------------------------------------------------
+    # Workflow rule (Scenario 2). Only a REQUESTED claim can be withdrawn.
+    # ------------------------------------------------------------------
+    if claim.status != "requested":
+        raise HTTPException(
+            status_code=409,
+            detail="This request is not pending, so it cannot be withdrawn.",
+        )
+
+    # ------------------------------------------------------------------
+    # Apply the withdrawal. No quantity changes.
+    # ------------------------------------------------------------------
+    now = datetime.now(timezone.utc)
+
+    claim.status = "cancelled"
+    claim.cancelled_at = now
+
+    # Cache values before commit expires loaded attributes.
+    claim_id_out = claim.id
+    listing_id_out = claim.listing_id
+    claimant_id_out = claim.claimant_id
+    requested_quantity_out = claim.requested_quantity
+    requested_at_out = claim.requested_at
+
+    try:
+        session.commit()
+    except Exception as error:
+        session.rollback()
+        logger.error("Withdrawing a claim failed: %s", error)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Could not withdraw the request right now. "
+                "Make sure the database is running and migrated."
+            ),
+        )
+
+    return ClaimResponse(
+        id=str(claim_id_out),
+        listing_id=str(listing_id_out),
+        claimant_id=str(claimant_id_out),
+        requested_quantity=requested_quantity_out,
+        status="cancelled",
+        requested_at=requested_at_out,
+        cancelled_at=now,
+    )
+
+

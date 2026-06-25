@@ -14,7 +14,7 @@ from app.models.claim import Claim
 from app.models.listing import Listing
 from app.models.member import Member
 from app.routers.claim import create_claim
-from app.schemas.claim import CreateClaimPayload
+from app.schemas.claim import POSTGRES_INTEGER_MAX, CreateClaimPayload
 
 
 # --- helpers ----------------------------------------------------------------
@@ -57,6 +57,21 @@ def insert_listing(session, owner, remaining_quantity=10, status="active"):
 
 def make_payload(quantity=3):
     return CreateClaimPayload(quantity=quantity)
+
+
+def insert_claim(session, listing_id, claimant, quantity=2, status="requested", approved_quantity=None):
+    """Insert a claim in a given state, used to set up an existing request."""
+    claim = Claim(
+        listing_id=listing_id,
+        claimant_id=claimant.id,
+        requested_quantity=quantity,
+        approved_quantity=approved_quantity,
+        status=status,
+        requested_at=datetime.now(timezone.utc),
+    )
+    session.add(claim)
+    session.commit()
+    return claim.id
 
 
 def count_claims(session):
@@ -310,3 +325,87 @@ def test_create_claim_route_is_wired_with_201_status():
             if "/claims" in route.path and "POST" in route.methods:
                 found_status = route.status_code
     assert found_status == 201
+
+
+# --- one request per listing, whatever the earlier state ---------------------
+# A member may make only a single request on a listing, ever. The earlier
+# request's state does not matter: approved, denied, or withdrawn all block a
+# second request, so no duplicate ever enters the queue.
+
+
+def test_create_claim_rejects_second_request_after_approved(db_session):
+    """An approved earlier request blocks a new request from the same member."""
+    poster = insert_member(db_session, email="poster@example.com", name="Poster")
+    listing_id = insert_listing(db_session, poster, remaining_quantity=10)
+    claimant = insert_member(db_session, email="claimant@example.com")
+    insert_claim(db_session, listing_id, claimant, quantity=2, status="approved", approved_quantity=2)
+
+    with pytest.raises(HTTPException) as raised:
+        create_claim(str(listing_id), make_payload(3), claimant, db_session)
+
+    assert raised.value.status_code == 409
+    assert "already" in raised.value.detail.lower()
+    # Still just the one claim; no duplicate was added.
+    assert count_claims(db_session) == 1
+
+
+def test_create_claim_rejects_second_request_after_denied(db_session):
+    """A denied earlier request blocks a new request from the same member."""
+    poster = insert_member(db_session, email="poster@example.com", name="Poster")
+    listing_id = insert_listing(db_session, poster, remaining_quantity=10)
+    claimant = insert_member(db_session, email="claimant@example.com")
+    insert_claim(db_session, listing_id, claimant, quantity=2, status="denied")
+
+    with pytest.raises(HTTPException) as raised:
+        create_claim(str(listing_id), make_payload(3), claimant, db_session)
+
+    assert raised.value.status_code == 409
+    assert count_claims(db_session) == 1
+
+
+def test_create_claim_rejects_second_request_after_withdrawn(db_session):
+    """A withdrawn (cancelled) earlier request still blocks a new request."""
+    poster = insert_member(db_session, email="poster@example.com", name="Poster")
+    listing_id = insert_listing(db_session, poster, remaining_quantity=10)
+    claimant = insert_member(db_session, email="claimant@example.com")
+    insert_claim(db_session, listing_id, claimant, quantity=2, status="cancelled")
+
+    with pytest.raises(HTTPException) as raised:
+        create_claim(str(listing_id), make_payload(3), claimant, db_session)
+
+    assert raised.value.status_code == 409
+    assert count_claims(db_session) == 1
+
+
+def test_create_claim_allows_different_members_on_same_listing(db_session):
+    """The one-request rule is per member: another member can still request."""
+    poster = insert_member(db_session, email="poster@example.com", name="Poster")
+    listing_id = insert_listing(db_session, poster, remaining_quantity=10)
+    claimant_a = insert_member(db_session, email="a@example.com", name="A")
+    claimant_b = insert_member(db_session, email="b@example.com", name="B")
+
+    insert_claim(db_session, listing_id, claimant_a, quantity=2, status="denied")
+
+    # B has no prior claim, so B's request goes through.
+    response = create_claim(str(listing_id), make_payload(3), claimant_b, db_session)
+
+    assert response.status == "requested"
+    assert count_claims(db_session) == 2
+
+
+# --- integer overflow guard --------------------------------------------------
+# requested_quantity is a 32-bit Postgres Integer. The schema caps the value at
+# that column's max so an oversized request is refused at validation, before it
+# can overflow the column.
+
+
+def test_schema_accepts_max_integer_quantity():
+    """The largest 32-bit integer is allowed by the schema."""
+    payload = make_payload(quantity=POSTGRES_INTEGER_MAX)
+    assert payload.quantity == POSTGRES_INTEGER_MAX
+
+
+def test_schema_rejects_quantity_above_integer_max():
+    """One above the 32-bit max is rejected by validation."""
+    with pytest.raises(ValidationError):
+        make_payload(quantity=POSTGRES_INTEGER_MAX + 1)

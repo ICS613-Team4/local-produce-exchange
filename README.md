@@ -221,7 +221,8 @@ backend/
     dependencies.py    Shared FastAPI dependencies used by route handlers.
     security.py        Password and invite-token hashing helpers.
     seed.py            Demo data seeder. Run migrations before seeding.
-    routers/           HTTP endpoint groups. Add a file here for new API routes.
+    routers/           HTTP endpoint groups. Add a file here for new API
+                       routes.
     schemas/           Pydantic request and response shapes used by routes
                        and tests.
     models/            SQLAlchemy table models.
@@ -276,7 +277,8 @@ migrations or application code.
 .github/
   workflows/
     unit-tests.yml        Reusable lint, build, and test checks.
-    deploy.yml            Production deploy workflow for main and manual runs.
+    deploy.yml            Production deploy workflow for main and manual
+                          runs.
 docker-compose.yml        Service definitions used by local dev and the VPS.
 scripts/
   deploy-remote.sh        VPS-side deploy script. Installs, migrates, seeds,
@@ -399,33 +401,47 @@ need a running backend.
 ```text
 frontend/
   src/
-    App.test.tsx                Vitest route-registration tests for the React app.
+    App.test.tsx                Vitest route-registration tests for the
+                                React app.
     components/
-      Layout.test.tsx           Vitest component tests for the shared layout and
-                                auth-aware nav.
+      Layout.test.tsx           Vitest component tests for the shared
+                                layout and auth-aware nav.
+      RequireAuth.test.tsx      Vitest component tests for the member-only
+                                route guard.
     pages/
       AboutPage.test.tsx        Vitest component tests for the about page.
+      BrowsePage.test.tsx       Vitest component tests for browsing listings.
       CreateListingPage.test.tsx
                                 Vitest component tests for listing creation.
-      DashboardPage.test.tsx    Vitest component tests for the member dashboard.
+      DashboardPage.test.tsx    Vitest component tests for the member
+                                dashboard.
       EditListingPage.test.tsx  Vitest component tests for listing editing.
       HomePage.test.tsx         Vitest component tests for the home page.
       InvitePage.test.tsx       Vitest component tests for invite links.
       ListingDetailPage.test.tsx
                                 Vitest component tests for listing details.
       LoginPage.test.tsx        Vitest component tests for login and logout.
+      MyRequestsPage.test.tsx   Vitest component tests for outgoing requests.
       NotFoundPage.test.tsx     Vitest component tests for unknown routes.
-      ProfilePage.test.tsx      Vitest component tests for the member profile.
+      ProfilePage.test.tsx      Vitest component tests for the member
+                                profile.
       RegisterPage.test.tsx     Vitest component tests for registration.
-      TestPage.test.tsx         Vitest component tests for the sample endpoint page.
+      RequestQueuesPage.test.tsx
+                                Vitest component tests for request queues.
+      TestPage.test.tsx         Vitest component tests for the sample
+                                endpoint page.
     services/
       authService.test.ts       Vitest unit tests for auth API helpers.
       inviteService.test.ts     Vitest unit tests for invite API helpers.
       listingService.test.ts    Vitest unit tests for listing API helpers.
+      requestQueueService.test.ts
+                                Vitest unit tests for request-queue API
+                                helpers.
       sampleEndpointService.test.ts
                                 Vitest unit tests for the sample API helper.
     utils/
-      formatApiResult.test.ts   Vitest unit tests for response text formatting.
+      formatApiResult.test.ts   Vitest unit tests for response text
+                                formatting.
       formatTimestamp.test.ts   Vitest unit tests for timestamp formatting.
 ```
 
@@ -439,14 +455,28 @@ backend/
   tests/
     test_auth_login.py         pytest unit tests for login behavior.
     test_auth_register.py      pytest unit tests for registration behavior.
+    test_claim.py              pytest unit tests for submitting a request.
+    test_claim_decision.py     pytest unit tests for approve and deny
+                               behavior.
+    test_claim_decision_concurrency.py
+                               pytest tests for concurrent-approval safety.
+    test_claim_withdraw.py     pytest unit tests for withdrawing a request.
     test_invite.py             pytest unit tests for invite behavior.
     test_listing.py            pytest unit tests for create-listing behavior.
+    test_listing_browse.py     pytest unit tests for browse and search
+                               behavior.
     test_listing_detail.py     pytest unit tests for listing-detail behavior.
     test_listing_edit.py       pytest unit tests for listing-edit behavior.
-    test_listing_deactivate.py pytest unit tests for deactivate-listing behavior.
+    test_listing_deactivate.py pytest unit tests for deactivate-listing
+                               behavior.
     test_members.py            pytest unit tests for member behavior.
+    test_my_claim.py           pytest unit tests for a viewer's own claim.
+    test_my_requests.py        pytest unit tests for the outgoing-requests
+                               view.
+    test_request_queues.py     pytest unit tests for incoming-request queues.
     test_sample_endpoint.py    pytest unit tests for the sample endpoint.
-    test_security.py           pytest unit tests for password and invite-token helpers.
+    test_security.py           pytest unit tests for password and
+                               invite-token helpers.
 ```
 
 ### Database Tests
@@ -463,7 +493,8 @@ only checks URL strings and touches no database.
 ```text
 backend/
   tests/
-    test_db.py                pytest unit tests for database URL construction.
+    test_db.py                pytest unit tests for database URL
+                              construction.
     test_seed.py              pytest unit tests for the seed script.
 ```
 
