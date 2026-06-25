@@ -27,6 +27,11 @@ export type ListingDetail = {
   pickup_end: string
   status: string
   created_at: string
+  // Who deactivated the listing, or null. Set only for an admin takedown; an
+  // owner deactivation leaves it null. The my-listings page reads this to show
+  // an "administrator deactivated this" note. Optional so the existing pages
+  // that read this type (which never send it) keep type-checking.
+  deactivated_by?: string | null
 }
 
 // The shape of the listing fields the page builds and sends. The two pickup
@@ -253,6 +258,60 @@ export async function sendBrowseListingsRequest(
   // path the other listing calls use. This is a GET, so there is no body.
   try {
     const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'X-Member-Id': memberId,
+      },
+      // Cancel the request if the backend takes too long to answer.
+      signal: AbortSignal.timeout(listingTimeoutMilliseconds),
+    })
+
+    const responseText = await response.text()
+    let data: unknown = ''
+    if (responseText !== '') {
+      try {
+        data = JSON.parse(responseText)
+      } catch {
+        // If a proxy or server problem returns plain text or HTML, keep the
+        // HTTP status and show the body instead of throwing it away.
+        data = responseText
+      }
+    }
+
+    return {
+      ok: response.ok,
+      status: response.status,
+      data: data,
+      errorMessage: '',
+    }
+  } catch (caughtError) {
+    // Without this catch, a timeout or network failure would print
+    // "Uncaught (in promise)" in the console instead of showing on the page.
+    let errorMessage: string
+    if (caughtError instanceof DOMException && caughtError.name === 'TimeoutError') {
+      errorMessage =
+        'Timeout: no answer from the backend after ' + listingTimeoutMilliseconds + ' ms.'
+    } else {
+      errorMessage = 'Request failed: ' + String(caughtError)
+    }
+
+    return {
+      ok: false,
+      status: 0,
+      data: '',
+      errorMessage: errorMessage,
+    }
+  }
+}
+
+export async function sendGetMyListingsRequest(memberId: string): Promise<ListingResult> {
+  // The caller's own listings, active and deactivated (US-24). GET
+  // /api/my-listings with the member id in the X-Member-Id header, the same
+  // identity path the other listing calls use. This is a GET, so there is no
+  // request body. The body shape copies sendBrowseListingsRequest, minus the
+  // query-string building, since this endpoint takes no filters.
+  try {
+    const response = await fetch('/api/my-listings', {
       method: 'GET',
       headers: {
         'X-Member-Id': memberId,

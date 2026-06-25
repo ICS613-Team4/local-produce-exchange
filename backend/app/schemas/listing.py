@@ -60,3 +60,9 @@ class ListingResponse(BaseModel):
     pickup_end: datetime
     status: str
     created_at: datetime
+    # Who deactivated the listing, as a string id, or None. It is set only when an
+    # admin deactivated it (US-27); an owner deactivation leaves it None. The
+    # my-listings page reads this to tell an admin takedown apart from an owner
+    # one. The default keeps every existing construction site (create, browse,
+    # get-details, edit) working without passing this field.
+    deactivated_by: str | None = None

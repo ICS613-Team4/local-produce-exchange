@@ -14,13 +14,19 @@ export type RequestQueuesResult = {
 }
 
 // One pending request in a listing's queue. The backend owns this shape, so the
-// page reads a successful body with a plain cast to these types.
+// page reads a successful body with a plain cast to these types. can_decide and
+// can_deny are the backend-computed display rules (US-24): can_decide is true when
+// approve should be offered, can_deny when deny should be offered. They differ
+// because deny needs no remaining quantity, so a fully allocated listing can still
+// have a deny button on a pending request.
 export type QueueClaimItem = {
   id: string
   claimant_id: string
   claimant_name: string
   requested_quantity: number
   requested_at: string
+  can_decide: boolean
+  can_deny: boolean
 }
 
 // One listing's queue: the listing's own details plus its pending rows.
@@ -35,6 +41,41 @@ export type ListingQueueGroup = {
 // The whole response body: one group per listing that has pending requests.
 export type RequestQueuesResponse = {
   groups: ListingQueueGroup[]
+}
+
+// One request in the poster's full per-listing history (US-24). Unlike a pending
+// QueueClaimItem, this carries the request's status and its decision timestamps,
+// because the all-requests view shows every status. can_decide and can_deny are
+// the same display rules: can_decide is true when approve should be offered,
+// can_deny when deny should be offered.
+export type AllRequestItem = {
+  id: string
+  claimant_id: string
+  claimant_name: string
+  requested_quantity: number
+  approved_quantity: number | null
+  status: string
+  requested_at: string
+  approved_at: string | null
+  denied_at: string | null
+  can_decide: boolean
+  can_deny: boolean
+}
+
+// One active listing's full request history: its title and remaining quantity,
+// plus every request on it (any status), oldest first. The requests list is
+// empty when the listing has no requests yet.
+export type ListingAllRequestsGroup = {
+  listing_id: string
+  listing_title: string
+  remaining_quantity: number
+  requests: AllRequestItem[]
+}
+
+// The all-requests response: one group per active listing the caller owns,
+// including listings with no requests. An empty list means no active listings.
+export type AllRequestsResponse = {
+  groups: ListingAllRequestsGroup[]
 }
 
 // One of the caller's own requests, for the my-requests page.
@@ -268,6 +309,126 @@ export async function sendGetMyClaimRequest(
       headers: {
         'X-Member-Id': memberId,
       },
+      signal: AbortSignal.timeout(requestQueueTimeoutMilliseconds),
+    })
+
+    const responseText = await response.text()
+    let data: unknown = ''
+    if (responseText !== '') {
+      try {
+        data = JSON.parse(responseText)
+      } catch {
+        // If a proxy or server problem returns plain text or HTML, keep the
+        // HTTP status and show the body instead of throwing it away.
+        data = responseText
+      }
+    }
+
+    return {
+      ok: response.ok,
+      status: response.status,
+      data: data,
+      errorMessage: '',
+    }
+  } catch (caughtError) {
+    let errorMessage: string
+    if (caughtError instanceof DOMException && caughtError.name === 'TimeoutError') {
+      errorMessage =
+        'Timeout: no answer from the backend after ' + requestQueueTimeoutMilliseconds + ' ms.'
+    } else {
+      errorMessage = 'Request failed: ' + String(caughtError)
+    }
+
+    return {
+      ok: false,
+      status: 0,
+      data: '',
+      errorMessage: errorMessage,
+    }
+  }
+}
+
+export async function sendWithdrawClaimRequest(
+  memberId: string,
+  claimId: string,
+): Promise<RequestQueuesResult> {
+  // Withdraw one of the caller's own pending requests (US-12). This is a PATCH
+  // with no body to /api/claims/<id>/withdraw; the acting member's id travels in
+  // the X-Member-Id header. The backend sets the claim to "cancelled" and checks
+  // the caller is the claimant. Same shape as sendDecideClaimRequest, only the
+  // URL differs.
+  const url = '/api/claims/' + claimId + '/withdraw'
+
+  try {
+    const response = await fetch(url, {
+      method: 'PATCH',
+      headers: {
+        'X-Member-Id': memberId,
+      },
+      signal: AbortSignal.timeout(requestQueueTimeoutMilliseconds),
+    })
+
+    const responseText = await response.text()
+    let data: unknown = ''
+    if (responseText !== '') {
+      try {
+        data = JSON.parse(responseText)
+      } catch {
+        // If a proxy or server problem returns plain text or HTML, keep the
+        // HTTP status and show the body instead of throwing it away.
+        data = responseText
+      }
+    }
+
+    return {
+      ok: response.ok,
+      status: response.status,
+      data: data,
+      errorMessage: '',
+    }
+  } catch (caughtError) {
+    let errorMessage: string
+    if (caughtError instanceof DOMException && caughtError.name === 'TimeoutError') {
+      errorMessage =
+        'Timeout: no answer from the backend after ' + requestQueueTimeoutMilliseconds + ' ms.'
+    } else {
+      errorMessage = 'Request failed: ' + String(caughtError)
+    }
+
+    return {
+      ok: false,
+      status: 0,
+      data: '',
+      errorMessage: errorMessage,
+    }
+  }
+}
+
+export async function sendGetAllRequestsRequest(
+  memberId: string,
+  listingId: string,
+): Promise<RequestQueuesResult> {
+  // The poster's full per-listing request history (US-24): every request on the
+  // caller's active listings, all statuses. With no listing id, ask for all of
+  // the caller's active listings; with one, append it as ?listing=<id> so the
+  // backend returns just that listing's group after the ownership check. The
+  // acting member's id travels in the X-Member-Id header. This is a GET, so
+  // there is no request body. Same shape as sendGetRequestQueuesRequest, only
+  // the path differs.
+  let url = '/api/request-queues/all'
+  if (listingId !== '') {
+    const params = new URLSearchParams()
+    params.append('listing', listingId)
+    url = '/api/request-queues/all?' + params.toString()
+  }
+
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'X-Member-Id': memberId,
+      },
+      // Cancel the request if the backend takes too long to answer.
       signal: AbortSignal.timeout(requestQueueTimeoutMilliseconds),
     })
 
