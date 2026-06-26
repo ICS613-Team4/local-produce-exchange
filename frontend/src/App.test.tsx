@@ -196,3 +196,30 @@ test('guards the /my-requests route, showing the log-in message when logged out'
   const loginLink = screen.getByRole('link', { name: 'log in' })
   expect(loginLink.getAttribute('href')).toBe('/login')
 })
+
+test('wires the /my-listings route inside RequireAuth for a logged-in member', async () => {
+  window.history.pushState({}, '', '/my-listings')
+  window.localStorage.setItem('memberId', 'member-123')
+  window.localStorage.setItem('memberName', 'Bob Baker')
+
+  // RequireAuth validates the stored id, then the page loads its listings. A 200
+  // for both lets the page render; an empty list shows the page's empty message.
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, [])
+  })
+
+  render(<App />)
+
+  // The my-listings page heading renders, which only happens if App registered
+  // the route inside RequireAuth and let a logged-in member through.
+  expect(await screen.findByRole('heading', { name: 'Browse My Listings' })).toBeTruthy()
+})
+
+test('guards the /my-listings route, showing the log-in message when logged out', () => {
+  window.history.pushState({}, '', '/my-listings')
+  render(<App />)
+
+  expect(screen.queryByRole('heading', { name: 'Browse My Listings' })).toBeNull()
+  const loginLink = screen.getByRole('link', { name: 'log in' })
+  expect(loginLink.getAttribute('href')).toBe('/login')
+})

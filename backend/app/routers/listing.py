@@ -268,6 +268,106 @@ def browse_listings(
     return results
 
 
+@router.get("/my-listings")
+def get_my_listings(
+    current_member: Member = Depends(get_current_member),
+    session: Session = Depends(get_db_session),
+) -> list[ListingResponse]:
+    # The caller's own listings, active and deactivated, newest first (US-24).
+    # This mirrors browse_listings but drops the active-only filter and the search
+    # filters, scopes to the caller's own rows, and adds deactivated_by so the
+    # page can tell an admin takedown apart from an owner one.
+    #
+    # The path is /my-listings, not /listings/mine, so it never collides with the
+    # GET /listings/{listing_id} dynamic route. This matches the /my-requests
+    # convention in claim.py.
+
+    # Permission gate. Same active-member rule and exact messages as
+    # browse_listings: the insecure X-Member-Id header means a forged suspended id
+    # could otherwise read listings, so a non-active acting member is denied.
+    if current_member.status != "active":
+        if current_member.status == "suspended":
+            raise HTTPException(
+                status_code=403,
+                detail="Your account is suspended, so you cannot view listings.",
+            )
+        raise HTTPException(
+            status_code=403,
+            detail="Your account is not active, so you cannot view listings.",
+        )
+
+    # Every listing the caller owns, any status, newest first. The id is a
+    # tiebreaker so rows that share a created_at sort in a stable, repeatable
+    # order, the same rule browse_listings uses.
+    statement = (
+        select(Listing)
+        .where(Listing.owner_id == current_member.id)
+        .order_by(Listing.created_at.desc(), Listing.id.desc())
+    )
+
+    # Wrap the read so a down or unmigrated database returns 503 instead of an
+    # unhandled error, matching the other listing routes.
+    try:
+        rows = session.scalars(statement).all()
+    except Exception as error:
+        logger.error("Loading your listings failed: %s", error)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Could not read your listings right now. "
+                "Make sure the database is running and migrated: "
+                "npm run db:up, then npm run db:migrate, then npm run db:seed."
+            ),
+        )
+
+    # Turn each row into a response item, reusing browse_listings' guards. Skip a
+    # row whose pickup window is missing, unbounded, or equal-bound, and coerce a
+    # null description or category to an empty string. The one field this loop
+    # adds beyond the browse loop is deactivated_by, set to the admin id as a
+    # string when present so the page can show "Administratively deactivated".
+    # Real owner rows always have a valid pickup window because create enforces
+    # it, so the defensive skip will not drop a member's own listing in practice.
+    results = []
+    for row in rows:
+        pickup_window = row.pickup_window
+        if pickup_window is None:
+            continue
+        pickup_start = pickup_window.lower
+        pickup_end = pickup_window.upper
+        if pickup_start is None or pickup_end is None:
+            continue
+        if pickup_end <= pickup_start:
+            continue
+        description = row.description
+        if description is None:
+            description = ""
+        category_value = row.category
+        if category_value is None:
+            category_value = ""
+        deactivated_by_value = None
+        if row.deactivated_by is not None:
+            deactivated_by_value = str(row.deactivated_by)
+        results.append(
+            ListingResponse(
+                id=str(row.id),
+                owner_id=str(row.owner_id),
+                title=row.title,
+                description=description,
+                category=category_value,
+                total_quantity=row.total_quantity,
+                remaining_quantity=row.remaining_quantity,
+                dietary_tags=row.dietary_tags,
+                allergen_tags=row.allergen_tags,
+                pickup_start=pickup_start,
+                pickup_end=pickup_end,
+                status=row.status,
+                created_at=row.created_at,
+                deactivated_by=deactivated_by_value,
+            )
+        )
+    return results
+
+
 @router.get("/listings/{listing_id}")
 def get_listing(
     listing_id: str,

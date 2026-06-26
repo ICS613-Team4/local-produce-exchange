@@ -4,9 +4,11 @@ import {
   requestQueueTimeoutMilliseconds,
   sendCreateClaimRequest,
   sendDecideClaimRequest,
+  sendGetAllRequestsRequest,
   sendGetMyClaimRequest,
   sendGetMyRequestsRequest,
   sendGetRequestQueuesRequest,
+  sendWithdrawClaimRequest,
 } from './requestQueueService'
 
 type FakeResponse = {
@@ -376,4 +378,143 @@ test('my claim parses a null body as null data when there is no request', async 
 
   expect(result.ok).toBe(true)
   expect(result.data).toBe(null)
+})
+
+// --- US-24: sendWithdrawClaimRequest withdraws a pending request ---
+
+test('withdraw sends a PATCH to the withdraw path with the member id header and no body', async () => {
+  const responseBody = {
+    id: 'claim-1',
+    listing_id: 'l1',
+    claimant_id: 'member-123',
+    requested_quantity: 3,
+    status: 'cancelled',
+    requested_at: '2026-07-01T09:00:00.000Z',
+    cancelled_at: '2026-07-02T10:00:00.000Z',
+  }
+  let requestUrl = ''
+  let requestOptions: RequestInit = {}
+  vi.stubGlobal('fetch', async (url: string | URL | Request, options: RequestInit | undefined) => {
+    requestUrl = String(url)
+    if (options !== undefined) {
+      requestOptions = options
+    }
+    return makeFakeResponse(true, 200, JSON.stringify(responseBody))
+  })
+
+  const result = await sendWithdrawClaimRequest('member-123', 'claim-1')
+
+  expect(result.ok).toBe(true)
+  expect(result.status).toBe(200)
+  expect(JSON.stringify(result.data)).toBe(JSON.stringify(responseBody))
+  expect(requestUrl).toBe('/api/claims/claim-1/withdraw')
+  expect(requestOptions.method).toBe('PATCH')
+  expect(JSON.stringify(requestOptions.headers)).toContain('X-Member-Id')
+  expect(JSON.stringify(requestOptions.headers)).toContain('member-123')
+  expect(requestOptions.signal).toBeTruthy()
+  // The withdraw call sends no request body.
+  expect(requestOptions.body).toBeUndefined()
+})
+
+test('withdraw maps an HTTP error response into the result object', async () => {
+  const responseBody = { detail: 'This request is not pending, so it cannot be withdrawn.' }
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(false, 409, JSON.stringify(responseBody))
+  })
+
+  const result = await sendWithdrawClaimRequest('member-123', 'claim-1')
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(409)
+  expect(JSON.stringify(result.data)).toBe(JSON.stringify(responseBody))
+})
+
+test('withdraw returns a timeout message when the request times out', async () => {
+  vi.stubGlobal('fetch', async () => {
+    throw new DOMException('The operation timed out.', 'TimeoutError')
+  })
+
+  const result = await sendWithdrawClaimRequest('member-123', 'claim-1')
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(0)
+  expect(result.errorMessage).toBe(
+    'Timeout: no answer from the backend after ' + requestQueueTimeoutMilliseconds + ' ms.',
+  )
+})
+
+// --- US-24: sendGetAllRequestsRequest lists every request per active listing ---
+
+test('gets all requests at /api/request-queues/all with the member id header', async () => {
+  const responseBody = {
+    groups: [
+      {
+        listing_id: 'l1',
+        listing_title: 'Lemons',
+        remaining_quantity: 4,
+        requests: [],
+      },
+    ],
+  }
+  let requestUrl = ''
+  let requestOptions: RequestInit = {}
+  vi.stubGlobal('fetch', async (url: string | URL | Request, options: RequestInit | undefined) => {
+    requestUrl = String(url)
+    if (options !== undefined) {
+      requestOptions = options
+    }
+    return makeFakeResponse(true, 200, JSON.stringify(responseBody))
+  })
+
+  const result = await sendGetAllRequestsRequest('member-123', '')
+
+  expect(result.ok).toBe(true)
+  expect(result.status).toBe(200)
+  expect(JSON.stringify(result.data)).toBe(JSON.stringify(responseBody))
+  expect(result.errorMessage).toBe('')
+  // With no listing id, the URL carries no query string.
+  expect(requestUrl).toBe('/api/request-queues/all')
+  expect(requestOptions.method).toBe('GET')
+  expect(JSON.stringify(requestOptions.headers)).toContain('X-Member-Id')
+  expect(JSON.stringify(requestOptions.headers)).toContain('member-123')
+  expect(requestOptions.signal).toBeTruthy()
+})
+
+test('all requests appends the listing id as a query param when given one', async () => {
+  let requestUrl = ''
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    requestUrl = String(url)
+    return makeFakeResponse(true, 200, JSON.stringify({ groups: [] }))
+  })
+
+  await sendGetAllRequestsRequest('member-123', 'listing-abc')
+
+  expect(requestUrl).toBe('/api/request-queues/all?listing=listing-abc')
+})
+
+test('all requests maps an HTTP error response into the result object', async () => {
+  const responseBody = { detail: 'You can only view requests for your own listings.' }
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(false, 403, JSON.stringify(responseBody))
+  })
+
+  const result = await sendGetAllRequestsRequest('member-123', 'listing-abc')
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(403)
+  expect(JSON.stringify(result.data)).toBe(JSON.stringify(responseBody))
+})
+
+test('all requests returns a timeout message when the request times out', async () => {
+  vi.stubGlobal('fetch', async () => {
+    throw new DOMException('The operation timed out.', 'TimeoutError')
+  })
+
+  const result = await sendGetAllRequestsRequest('member-123', '')
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(0)
+  expect(result.errorMessage).toBe(
+    'Timeout: no answer from the backend after ' + requestQueueTimeoutMilliseconds + ' ms.',
+  )
 })

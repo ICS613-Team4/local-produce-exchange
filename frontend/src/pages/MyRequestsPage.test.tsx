@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { afterEach, expect, test, vi } from 'vitest'
 
@@ -266,6 +266,58 @@ test('shows the transport error message when the request fails', async () => {
 
   const alert = await screen.findByRole('alert')
   expect(alert.textContent).toContain('Timeout')
+})
+
+test('a Pending request shows a Withdraw Request button', async () => {
+  setLoggedIn()
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, makeMyRequestsBody())
+  })
+
+  renderMyRequestsPage()
+
+  await screen.findByRole('heading', { level: 2, name: 'Pending' })
+  // The pending row has the button; the approved and denied rows do not.
+  const withdrawButtons = screen.getAllByRole('button', { name: 'Withdraw Request' })
+  expect(withdrawButtons.length).toBe(1)
+  const pendingRow = screen.getByText(/Apples: You requested 3 on/).closest('li')
+  expect(pendingRow?.querySelector('button')).toBeTruthy()
+})
+
+test('clicking Withdraw calls the withdraw endpoint and reloads', async () => {
+  setLoggedIn()
+  vi.stubGlobal('confirm', () => {
+    return true
+  })
+  let myRequestsCalls = 0
+  let withdrawUrl = ''
+  vi.stubGlobal('fetch', async (url: string | URL | Request, options: RequestInit | undefined) => {
+    const urlText = String(url)
+    let method = 'GET'
+    if (options !== undefined && options.method !== undefined) {
+      method = String(options.method)
+    }
+    if (urlText.includes('/withdraw') || method === 'DELETE') {
+      withdrawUrl = urlText
+      return makeFakeResponse(true, 200, { id: 'p1', status: 'cancelled' })
+    }
+    myRequestsCalls = myRequestsCalls + 1
+    if (myRequestsCalls === 1) {
+      return makeFakeResponse(true, 200, makeMyRequestsBody())
+    }
+    return makeFakeResponse(true, 200, makeEmptyBody())
+  })
+
+  renderMyRequestsPage()
+
+  const withdrawButton = await screen.findByRole('button', { name: 'Withdraw Request' })
+  fireEvent.click(withdrawButton)
+
+  await waitFor(() => {
+    expect(screen.getByText('You have no pending requests.')).toBeTruthy()
+  })
+  expect(withdrawUrl).toContain('/withdraw')
+  expect(myRequestsCalls).toBe(2)
 })
 
 test('renders the not-logged-in message and does not fetch when logged out', async () => {

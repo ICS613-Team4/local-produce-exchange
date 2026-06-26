@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
 
-import { sendGetMyRequestsRequest } from '../services/requestQueueService'
+import {
+  sendGetMyRequestsRequest,
+  sendWithdrawClaimRequest,
+} from '../services/requestQueueService'
 import type {
   MyRequestItem,
   MyRequestsResponse,
@@ -31,7 +34,20 @@ function MyRequestsPage() {
   // the loading state.
   const [result, setResult] = useState<RequestQueuesResult | null>(null)
 
-  // Load the caller's outgoing requests when the page has a logged-in member.
+  // Bumped after a successful withdraw to re-run the load effect, so the
+  // withdrawn row drops out of the Pending section without a full page reload.
+  const [reloadCounter, setReloadCounter] = useState(0)
+
+  // The claim id whose withdraw is in flight, so only that row's button is
+  // greyed while it runs.
+  const [withdrawingClaimId, setWithdrawingClaimId] = useState('')
+
+  // Same-tick double-click guard, holding the claim id in flight, like the
+  // Dashboard's withdraw handler.
+  const withdrawInFlightRef = useRef('')
+
+  // Load the caller's outgoing requests when the page has a logged-in member,
+  // and again whenever reloadCounter changes (after a successful withdraw).
   useEffect(() => {
     latestRequestNumber.current = latestRequestNumber.current + 1
     if (memberId === '') {
@@ -56,7 +72,54 @@ function MyRequestsPage() {
       setResult(loadedResult)
     }
     loadMyRequests()
-  }, [memberId])
+  }, [memberId, reloadCounter])
+
+  // Withdraw one of the caller's own pending requests. Same shape and wording as
+  // the Dashboard's handler: a same-tick double-click guard, a confirm, the
+  // call, then the result handling. On success, bump reloadCounter so the list
+  // reloads and the withdrawn row drops out of Pending.
+  async function handleWithdraw(claimId: string) {
+    if (withdrawInFlightRef.current === claimId) {
+      return
+    }
+    withdrawInFlightRef.current = claimId
+
+    const confirmed = window.confirm('Withdraw this request? It will leave the queue.')
+    if (confirmed === false) {
+      if (withdrawInFlightRef.current === claimId) {
+        withdrawInFlightRef.current = ''
+      }
+      return
+    }
+
+    setWithdrawingClaimId(claimId)
+
+    const withdrawResult = await sendWithdrawClaimRequest(memberId, claimId)
+
+    if (withdrawInFlightRef.current === claimId) {
+      withdrawInFlightRef.current = ''
+    }
+    setWithdrawingClaimId('')
+
+    if (withdrawResult.errorMessage !== '') {
+      window.alert(withdrawResult.errorMessage)
+      return
+    }
+
+    if (withdrawResult.ok === false) {
+      let detailMessage = 'Could not withdraw the request. Please try again.'
+      if (typeof withdrawResult.data === 'object' && withdrawResult.data !== null) {
+        const dataObject = withdrawResult.data as { detail?: unknown }
+        if (typeof dataObject.detail === 'string') {
+          detailMessage = dataObject.detail
+        }
+      }
+      window.alert(detailMessage)
+      return
+    }
+
+    setReloadCounter((currentValue) => currentValue + 1)
+  }
 
   // Build the row text for one request. Each section shows the listing title, the
   // quantity that matters for that state, and the time it entered that state.
@@ -94,11 +157,20 @@ function MyRequestsPage() {
         </li>
       )
     }
-    // Pending.
+    // Pending. A pending request can be withdrawn, so show the Withdraw button
+    // the same way the Dashboard does.
     const requestedAtText = formatTimestamp(item.requested_at)
+    const isThisRowPending = withdrawingClaimId === item.id
     return (
       <li key={item.id}>
-        {item.listing_title}: You requested {item.requested_quantity} on {requestedAtText}
+        {item.listing_title}: You requested {item.requested_quantity} on {requestedAtText}{' '}
+        <button
+          type="button"
+          disabled={isThisRowPending}
+          onClick={() => handleWithdraw(item.id)}
+        >
+          Withdraw Request
+        </button>
       </li>
     )
   }

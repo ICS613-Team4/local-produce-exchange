@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router'
 import { afterEach, expect, test, vi } from 'vitest'
 
 import RequestQueuesPage from './RequestQueuesPage'
+import type { AllRequestsResponse } from '../services/requestQueueService'
 
 type FakeResponse = {
   ok: boolean
@@ -30,7 +31,6 @@ function renderRequestsPage(path: string) {
   )
 }
 
-// Builds a fake fetch result. body is JSON-encoded into the text() the service reads.
 function makeFakeResponse(ok: boolean, status: number, body: object): FakeResponse {
   const bodyText = JSON.stringify(body)
   const fakeResponse = {
@@ -43,30 +43,41 @@ function makeFakeResponse(ok: boolean, status: number, body: object): FakeRespon
   return fakeResponse
 }
 
-// A response body with one listing group holding two pending rows, the older
-// (Bob) first and the newer (Carol) second.
-function makeQueuesBody() {
+// A response body with one listing group holding two requests: Bob's pending
+// (actionable) request and Carol's already-approved (read-only) request.
+function makeAllRequestsBody(): AllRequestsResponse {
   const body = {
     groups: [
       {
         listing_id: 'lemons',
         listing_title: 'Backyard Meyer Lemons',
-        listing_status: 'active',
         remaining_quantity: 24,
-        pending: [
+        requests: [
           {
             id: 'c1',
             claimant_id: 'bob',
             claimant_name: 'Bob Baker',
             requested_quantity: 3,
+            approved_quantity: null,
+            status: 'requested',
             requested_at: '2026-07-01T09:00:00.000Z',
+            approved_at: null,
+            denied_at: null,
+            can_decide: true,
+            can_deny: true,
           },
           {
             id: 'c2',
             claimant_id: 'carol',
             claimant_name: 'Carol Chen',
             requested_quantity: 2,
+            approved_quantity: 2,
+            status: 'approved',
             requested_at: '2026-07-01T10:00:00.000Z',
+            approved_at: '2026-07-02T10:00:00.000Z',
+            denied_at: null,
+            can_decide: false,
+            can_deny: false,
           },
         ],
       },
@@ -75,23 +86,28 @@ function makeQueuesBody() {
   return body
 }
 
-// A response body with a single group whose listing id and title are supplied,
-// used for the filter-change stale-response test.
+// A single-group body whose listing id and title are supplied, used for the
+// filter-change stale-response test.
 function makeOneGroupBody(listingId: string, title: string) {
   const body = {
     groups: [
       {
         listing_id: listingId,
         listing_title: title,
-        listing_status: 'active',
         remaining_quantity: 5,
-        pending: [
+        requests: [
           {
-            id: listingId + '-claim',
+            id: listingId + '-c',
             claimant_id: 'someone',
             claimant_name: 'Someone',
             requested_quantity: 1,
+            approved_quantity: null,
+            status: 'requested',
             requested_at: '2026-07-01T09:00:00.000Z',
+            approved_at: null,
+            denied_at: null,
+            can_decide: false,
+            can_deny: false,
           },
         ],
       },
@@ -141,10 +157,10 @@ function RequestsPageWithFilterButton() {
   )
 }
 
-test('renders the grouped queue with names, quantities, and remaining quantity', async () => {
+test('renders the group with every request status in the backend order', async () => {
   setLoggedIn()
   vi.stubGlobal('fetch', async () => {
-    return makeFakeResponse(true, 200, makeQueuesBody())
+    return makeFakeResponse(true, 200, makeAllRequestsBody())
   })
 
   renderRequestsPage('/requests')
@@ -153,48 +169,163 @@ test('renders the grouped queue with names, quantities, and remaining quantity',
   expect(screen.getByText('Your Remaining Quantity: 24')).toBeTruthy()
   expect(screen.getByText(/Bob Baker requested 3/)).toBeTruthy()
   expect(screen.getByText(/Carol Chen requested 2/)).toBeTruthy()
-  // The local time-zone note shows under the queue.
-  expect(screen.getByText(/All times are shown in your local time zone/)).toBeTruthy()
+  // Bob's pending status and Carol's approved outcome both show.
+  expect(screen.getByText('Status: requested')).toBeTruthy()
+  expect(screen.getByText(/Approved: 2 on/)).toBeTruthy()
+
+  // Bob's row comes before Carol's, the order the backend returned.
+  const bobRow = screen.getByText(/Bob Baker requested 3/)
+  const carolRow = screen.getByText(/Carol Chen requested 2/)
+  const relativePosition = bobRow.compareDocumentPosition(carolRow)
+  expect(relativePosition & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
 })
 
-test('shows the pending rows oldest-first', async () => {
+test('an actionable request shows Approve/Deny and a click reloads with the new status', async () => {
   setLoggedIn()
-  vi.stubGlobal('fetch', async () => {
-    return makeFakeResponse(true, 200, makeQueuesBody())
+  vi.stubGlobal('confirm', () => {
+    return true
+  })
+  let getCalls = 0
+  let decideUrl = ''
+  vi.stubGlobal('fetch', async (url: string | URL | Request, options: RequestInit | undefined) => {
+    const urlText = String(url)
+    let method = 'GET'
+    if (options !== undefined && options.method !== undefined) {
+      method = String(options.method)
+    }
+    if (method === 'PATCH') {
+      decideUrl = urlText
+      return makeFakeResponse(true, 200, {
+        id: 'c1',
+        status: 'approved',
+        approved_quantity: 3,
+        approved_at: '2026-07-02T10:00:00.000Z',
+      })
+    }
+    getCalls = getCalls + 1
+    if (getCalls === 1) {
+      return makeFakeResponse(true, 200, makeAllRequestsBody())
+    }
+    // After the reload, Bob's request is approved and no longer actionable.
+    const reloaded = makeAllRequestsBody()
+    reloaded.groups[0].requests[0].status = 'approved'
+    reloaded.groups[0].requests[0].approved_quantity = 3
+    reloaded.groups[0].requests[0].approved_at = '2026-07-02T10:00:00.000Z'
+    reloaded.groups[0].requests[0].can_decide = false
+    reloaded.groups[0].requests[0].can_deny = false
+    return makeFakeResponse(true, 200, reloaded)
   })
 
   renderRequestsPage('/requests')
 
-  expect(await screen.findByText(/Bob Baker requested 3/)).toBeTruthy()
-  // Each request row now also holds an Approve/Deny sub-list, so keep only the
-  // list items that are request rows (their text reads "... requested ...").
-  const allItems = screen.getAllByRole('listitem')
-  const rows = []
-  for (let index = 0; index < allItems.length; index = index + 1) {
-    const item = allItems[index]
-    if (item.textContent !== null && item.textContent.includes('requested')) {
-      rows.push(item)
-    }
-  }
-  // Bob's older request renders before Carol's newer one.
-  expect(rows[0].textContent).toContain('Bob Baker')
-  expect(rows[1].textContent).toContain('Carol Chen')
+  const approveButton = await screen.findByRole('button', { name: 'Approve this request' })
+  fireEvent.click(approveButton)
+
+  // After the reload there are no actionable rows, so the button is gone.
+  await waitFor(() => {
+    expect(screen.queryByRole('button', { name: 'Approve this request' })).toBeNull()
+  })
+  expect(decideUrl).toContain('/api/claims/c1/approve')
+  expect(getCalls).toBe(2)
 })
 
-test('marks a deactivated listing group with a suffix', async () => {
+test('denying an actionable request sends a PATCH to the deny path', async () => {
   setLoggedIn()
-  const body = makeQueuesBody()
-  body.groups[0].listing_status = 'deactivated'
+  vi.stubGlobal('confirm', () => {
+    return true
+  })
+  let decideUrl = ''
+  vi.stubGlobal('fetch', async (url: string | URL | Request, options: RequestInit | undefined) => {
+    const urlText = String(url)
+    let method = 'GET'
+    if (options !== undefined && options.method !== undefined) {
+      method = String(options.method)
+    }
+    if (method === 'PATCH') {
+      decideUrl = urlText
+      return makeFakeResponse(true, 200, {
+        id: 'c1',
+        status: 'denied',
+        denied_at: '2026-07-02T10:00:00.000Z',
+      })
+    }
+    return makeFakeResponse(true, 200, makeAllRequestsBody())
+  })
+
+  renderRequestsPage('/requests')
+
+  const denyButton = await screen.findByRole('button', { name: 'Deny this request' })
+  fireEvent.click(denyButton)
+  await waitForStateUpdates()
+
+  expect(decideUrl).toContain('/api/claims/c1/deny')
+})
+
+test('a non-actionable request shows its status read-only with no buttons', async () => {
+  setLoggedIn()
+  const body = makeAllRequestsBody()
+  // Make Bob's request non-actionable too, so the whole group is read-only.
+  body.groups[0].requests[0].can_decide = false
+  body.groups[0].requests[0].can_deny = false
   vi.stubGlobal('fetch', async () => {
     return makeFakeResponse(true, 200, body)
   })
 
   renderRequestsPage('/requests')
 
-  expect(await screen.findByText('Backyard Meyer Lemons (deactivated)')).toBeTruthy()
+  expect(await screen.findByText(/Carol Chen requested 2/)).toBeTruthy()
+  expect(screen.getByText(/Approved: 2 on/)).toBeTruthy()
+  expect(screen.queryByRole('button', { name: 'Approve this request' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Deny this request' })).toBeNull()
 })
 
-test('shows the global empty message when nothing is pending', async () => {
+test('an exhausted listing still shows Deny (not Approve) on a pending request', async () => {
+  // The bug fix: with no remaining quantity the backend sends can_decide false
+  // and can_deny true, so only the Deny button shows on the still-pending request.
+  setLoggedIn()
+  const body = makeAllRequestsBody()
+  body.groups[0].requests[0].can_decide = false
+  body.groups[0].requests[0].can_deny = true
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, body)
+  })
+
+  renderRequestsPage('/requests')
+
+  expect(await screen.findByText(/Bob Baker requested 3/)).toBeTruthy()
+  expect(screen.queryByRole('button', { name: 'Approve this request' })).toBeNull()
+  expect(screen.getByRole('button', { name: 'Deny this request' })).toBeTruthy()
+})
+
+test('cancelling the confirm does not send a decision', async () => {
+  setLoggedIn()
+  vi.stubGlobal('confirm', () => {
+    return false
+  })
+  let patchCount = 0
+  vi.stubGlobal('fetch', async (_url: string | URL | Request, options: RequestInit | undefined) => {
+    let method = 'GET'
+    if (options !== undefined && options.method !== undefined) {
+      method = String(options.method)
+    }
+    if (method === 'PATCH') {
+      patchCount = patchCount + 1
+      return makeFakeResponse(true, 200, {})
+    }
+    return makeFakeResponse(true, 200, makeAllRequestsBody())
+  })
+
+  renderRequestsPage('/requests')
+
+  const approveButton = await screen.findByRole('button', { name: 'Approve this request' })
+  fireEvent.click(approveButton)
+  await waitForStateUpdates()
+
+  expect(patchCount).toBe(0)
+  expect(screen.getByRole('button', { name: 'Approve this request' })).toBeTruthy()
+})
+
+test('shows the global empty state when there are no active listings', async () => {
   setLoggedIn()
   vi.stubGlobal('fetch', async () => {
     return makeFakeResponse(true, 200, { groups: [] })
@@ -202,28 +333,56 @@ test('shows the global empty message when nothing is pending', async () => {
 
   renderRequestsPage('/requests')
 
-  expect(
-    await screen.findByText('You have no pending requests on any of your listings.'),
-  ).toBeTruthy()
+  expect(await screen.findByText('You have no active listings.')).toBeTruthy()
 })
 
-test('the filtered view shows only the matching listing group', async () => {
+test('shows the per-listing empty note when a listing has no requests', async () => {
+  setLoggedIn()
+  const body = {
+    groups: [
+      {
+        listing_id: 'lemons',
+        listing_title: 'Lemons',
+        remaining_quantity: 5,
+        requests: [],
+      },
+    ],
+  }
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, body)
+  })
+
+  renderRequestsPage('/requests')
+
+  expect(await screen.findByText('Lemons')).toBeTruthy()
+  expect(screen.getByText('No requests on this listing yet.')).toBeTruthy()
+})
+
+test('the filtered view requests the all-requests endpoint with the listing filter', async () => {
   setLoggedIn()
   let requestUrl = ''
   vi.stubGlobal('fetch', async (url: string | URL | Request) => {
     requestUrl = String(url)
-    return makeFakeResponse(true, 200, makeQueuesBody())
+    const body = {
+      groups: [
+        {
+          listing_id: 'lemons',
+          listing_title: 'Lemons',
+          remaining_quantity: 5,
+          requests: [],
+        },
+      ],
+    }
+    return makeFakeResponse(true, 200, body)
   })
 
   renderRequestsPage('/requests?listing=lemons')
 
-  expect(await screen.findByText('Backyard Meyer Lemons')).toBeTruthy()
-  expect(screen.getByText(/Bob Baker requested 3/)).toBeTruthy()
-  // The page passed the filter to the backend so it can check ownership.
-  expect(requestUrl).toBe('/api/request-queues?listing=lemons')
+  expect(await screen.findByText('Lemons')).toBeTruthy()
+  expect(requestUrl).toBe('/api/request-queues/all?listing=lemons')
 })
 
-test('the filtered view shows the per-listing empty message when none pending', async () => {
+test('the filtered view shows the no-group empty message when the listing is not returned', async () => {
   setLoggedIn()
   vi.stubGlobal('fetch', async () => {
     return makeFakeResponse(true, 200, { groups: [] })
@@ -231,7 +390,7 @@ test('the filtered view shows the per-listing empty message when none pending', 
 
   renderRequestsPage('/requests?listing=lemons')
 
-  expect(await screen.findByText('No pending requests on this listing yet.')).toBeTruthy()
+  expect(await screen.findByText('No active listing found for this filter.')).toBeTruthy()
 })
 
 test('shows the 403 detail for a foreign listing and renders no rows', async () => {
@@ -246,7 +405,6 @@ test('shows the 403 detail for a foreign listing and renders no rows', async () 
 
   const alert = await screen.findByRole('alert')
   expect(alert.textContent).toBe('You can only view requests for your own listings.')
-  // No queue rows leak.
   expect(screen.queryByRole('listitem')).toBeNull()
 })
 
@@ -364,176 +522,7 @@ test('drops a late response after the listing filter changes', async () => {
   expect(screen.queryByText('First Listing')).toBeNull()
 })
 
-// --- US-11: approve / deny from the queue ---
-
-// Routes the GET queue load and the PATCH approve/deny call to their own
-// responses, so a test can shape both. The decision response is the ClaimResponse
-// the page reads back after a successful approve or deny.
-function stubQueueAndDecision(decisionResponse: () => FakeResponse) {
-  vi.stubGlobal('fetch', async (_url: string | URL | Request, options: RequestInit | undefined) => {
-    let method = 'GET'
-    if (options !== undefined && options.method !== undefined) {
-      method = String(options.method)
-    }
-    if (method === 'PATCH') {
-      return decisionResponse()
-    }
-    return makeFakeResponse(true, 200, makeQueuesBody())
-  })
-}
-
-test('shows Approve and Deny buttons for every pending request', async () => {
-  setLoggedIn()
-  vi.stubGlobal('fetch', async () => {
-    return makeFakeResponse(true, 200, makeQueuesBody())
-  })
-
-  renderRequestsPage('/requests')
-
-  // Two pending rows (Bob and Carol), so two of each button.
-  const approveButtons = await screen.findAllByRole('button', { name: 'Approve this request' })
-  const denyButtons = screen.getAllByRole('button', { name: 'Deny this request' })
-  expect(approveButtons.length).toBe(2)
-  expect(denyButtons.length).toBe(2)
-})
-
-test('approving swaps the buttons for a confirmation and lowers the remaining quantity', async () => {
-  setLoggedIn()
-  vi.stubGlobal('confirm', () => {
-    return true
-  })
-  const approveResponse = {
-    id: 'c1',
-    listing_id: 'lemons',
-    claimant_id: 'bob',
-    requested_quantity: 3,
-    approved_quantity: 3,
-    status: 'approved',
-    requested_at: '2026-07-01T09:00:00.000Z',
-    approved_at: '2026-07-02T10:00:00.000Z',
-  }
-  stubQueueAndDecision(() => makeFakeResponse(true, 200, approveResponse))
-
-  renderRequestsPage('/requests')
-
-  const approveButtons = await screen.findAllByRole('button', { name: 'Approve this request' })
-  // Remaining quantity starts at 24.
-  expect(screen.getByText('Your Remaining Quantity: 24')).toBeTruthy()
-
-  // Approve Bob's request (the first, oldest row).
-  fireEvent.click(approveButtons[0])
-
-  // Bob's buttons are replaced by the approved line naming the quantity.
-  expect(await screen.findByText(/You approved: 3 on:/)).toBeTruthy()
-  // The remaining quantity dropped by the approved amount, 24 - 3 = 21.
-  expect(screen.getByText('Your Remaining Quantity: 21')).toBeTruthy()
-})
-
-test('shows the partial approved quantity when less was allocated than requested', async () => {
-  setLoggedIn()
-  vi.stubGlobal('confirm', () => {
-    return true
-  })
-  // Bob asked for 3 but only 2 were allocated.
-  const approveResponse = {
-    id: 'c1',
-    listing_id: 'lemons',
-    claimant_id: 'bob',
-    requested_quantity: 3,
-    approved_quantity: 2,
-    status: 'approved',
-    requested_at: '2026-07-01T09:00:00.000Z',
-    approved_at: '2026-07-02T10:00:00.000Z',
-  }
-  stubQueueAndDecision(() => makeFakeResponse(true, 200, approveResponse))
-
-  renderRequestsPage('/requests')
-
-  const approveButtons = await screen.findAllByRole('button', { name: 'Approve this request' })
-  fireEvent.click(approveButtons[0])
-
-  expect(await screen.findByText(/You approved: 2 on:/)).toBeTruthy()
-  // Remaining dropped by the allocated 2, 24 - 2 = 22.
-  expect(screen.getByText('Your Remaining Quantity: 22')).toBeTruthy()
-})
-
-test('denying swaps the buttons for a denied line and leaves the quantity alone', async () => {
-  setLoggedIn()
-  vi.stubGlobal('confirm', () => {
-    return true
-  })
-  const denyResponse = {
-    id: 'c1',
-    listing_id: 'lemons',
-    claimant_id: 'bob',
-    requested_quantity: 3,
-    status: 'denied',
-    requested_at: '2026-07-01T09:00:00.000Z',
-    denied_at: '2026-07-02T10:00:00.000Z',
-  }
-  stubQueueAndDecision(() => makeFakeResponse(true, 200, denyResponse))
-
-  renderRequestsPage('/requests')
-
-  const denyButtons = await screen.findAllByRole('button', { name: 'Deny this request' })
-  fireEvent.click(denyButtons[0])
-
-  expect(await screen.findByText(/You denied this request on:/)).toBeTruthy()
-  // Denying allocates nothing, so the remaining quantity is unchanged.
-  expect(screen.getByText('Your Remaining Quantity: 24')).toBeTruthy()
-})
-
-test('cancelling the confirm does not send a decision', async () => {
-  setLoggedIn()
-  vi.stubGlobal('confirm', () => {
-    return false
-  })
-  let patchCount = 0
-  vi.stubGlobal('fetch', async (_url: string | URL | Request, options: RequestInit | undefined) => {
-    let method = 'GET'
-    if (options !== undefined && options.method !== undefined) {
-      method = String(options.method)
-    }
-    if (method === 'PATCH') {
-      patchCount = patchCount + 1
-      return makeFakeResponse(true, 200, {})
-    }
-    return makeFakeResponse(true, 200, makeQueuesBody())
-  })
-
-  renderRequestsPage('/requests')
-
-  const approveButtons = await screen.findAllByRole('button', { name: 'Approve this request' })
-  fireEvent.click(approveButtons[0])
-  await waitForStateUpdates()
-
-  // No PATCH went out, and the buttons are still there.
-  expect(patchCount).toBe(0)
-  expect(screen.getAllByRole('button', { name: 'Approve this request' }).length).toBe(2)
-})
-
-test('the approve confirm warns it is final and names the quantity', async () => {
-  setLoggedIn()
-  let confirmMessage = ''
-  vi.stubGlobal('confirm', (message: string) => {
-    confirmMessage = message
-    return false
-  })
-  vi.stubGlobal('fetch', async () => {
-    return makeFakeResponse(true, 200, makeQueuesBody())
-  })
-
-  renderRequestsPage('/requests')
-
-  const approveButtons = await screen.findAllByRole('button', { name: 'Approve this request' })
-  fireEvent.click(approveButtons[0])
-
-  expect(confirmMessage.toLowerCase()).toContain('final')
-  // Bob asked for 3, and 24 remain, so 3 will be allocated.
-  expect(confirmMessage).toContain('3')
-})
-
-test('a decision failure shows the server message and keeps the buttons', async () => {
+test('a failed decision shows the server message and keeps the buttons', async () => {
   setLoggedIn()
   vi.stubGlobal('confirm', () => {
     return true
@@ -542,17 +531,72 @@ test('a decision failure shows the server message and keeps the buttons', async 
   vi.stubGlobal('alert', (message: string) => {
     alertMessage = message
   })
-  stubQueueAndDecision(() =>
-    makeFakeResponse(false, 409, { detail: 'This request is not pending, so it cannot be approved.' }),
-  )
+  vi.stubGlobal('fetch', async (_url: string | URL | Request, options: RequestInit | undefined) => {
+    let method = 'GET'
+    if (options !== undefined && options.method !== undefined) {
+      method = String(options.method)
+    }
+    if (method === 'PATCH') {
+      return makeFakeResponse(false, 409, {
+        detail: 'This request is not pending, so it cannot be approved.',
+      })
+    }
+    return makeFakeResponse(true, 200, makeAllRequestsBody())
+  })
 
   renderRequestsPage('/requests')
 
-  const approveButtons = await screen.findAllByRole('button', { name: 'Approve this request' })
-  fireEvent.click(approveButtons[0])
+  const approveButton = await screen.findByRole('button', { name: 'Approve this request' })
+  fireEvent.click(approveButton)
   await waitForStateUpdates()
 
-  // The server's plain-words detail is shown, and the buttons stay for a retry.
   expect(alertMessage).toContain('not pending')
-  expect(screen.getAllByRole('button', { name: 'Approve this request' }).length).toBe(2)
+  // The buttons stay so the owner can retry.
+  expect(screen.getByRole('button', { name: 'Approve this request' })).toBeTruthy()
+})
+
+test('a transport failure on a decision shows the transport message via an alert', async () => {
+  setLoggedIn()
+  vi.stubGlobal('confirm', () => {
+    return true
+  })
+  let alertMessage = ''
+  vi.stubGlobal('alert', (message: string) => {
+    alertMessage = message
+  })
+  vi.stubGlobal('fetch', async (_url: string | URL | Request, options: RequestInit | undefined) => {
+    let method = 'GET'
+    if (options !== undefined && options.method !== undefined) {
+      method = String(options.method)
+    }
+    if (method === 'PATCH') {
+      throw new DOMException('The operation timed out.', 'TimeoutError')
+    }
+    return makeFakeResponse(true, 200, makeAllRequestsBody())
+  })
+
+  renderRequestsPage('/requests')
+
+  const approveButton = await screen.findByRole('button', { name: 'Approve this request' })
+  fireEvent.click(approveButton)
+  await waitForStateUpdates()
+
+  expect(alertMessage).toContain('Timeout')
+})
+
+test('shows a denied status outcome for a denied request', async () => {
+  setLoggedIn()
+  const body = makeAllRequestsBody()
+  // Turn Carol's row into a denied request, which is read-only.
+  body.groups[0].requests[1].status = 'denied'
+  body.groups[0].requests[1].approved_quantity = null
+  body.groups[0].requests[1].approved_at = null
+  body.groups[0].requests[1].denied_at = '2026-07-02T10:00:00.000Z'
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, body)
+  })
+
+  renderRequestsPage('/requests')
+
+  expect(await screen.findByText(/Denied on/)).toBeTruthy()
 })

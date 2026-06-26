@@ -10,6 +10,7 @@ import InvitePage from './pages/InvitePage.tsx'
 import ListingDetailPage from './pages/ListingDetailPage.tsx'
 import LoginPage from './pages/LoginPage.tsx'
 import NotFoundPage from './pages/NotFoundPage.tsx'
+import MyListingsPage from './pages/MyListingsPage.tsx'
 import MyRequestsPage from './pages/MyRequestsPage.tsx'
 import ProfilePage from './pages/ProfilePage.tsx'
 import RegisterPage from './pages/RegisterPage.tsx'
@@ -37,6 +38,7 @@ function App() {
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/requests" element={<RequestQueuesPage />} />
             <Route path="/my-requests" element={<MyRequestsPage />} />
+            <Route path="/my-listings" element={<MyListingsPage />} />
             <Route path="/listings/create" element={<CreateListingPage />} />
             <Route path="/listings/:id/edit" element={<EditListingPage />} />
           </Route>

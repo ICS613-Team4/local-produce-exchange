@@ -38,12 +38,20 @@ class ClaimResponse(BaseModel):
 
 # One pending request in a listing's queue (US-10). The poster sees who asked,
 # how much they asked for, and when, so the rows can be shown oldest first.
+# can_decide and can_deny are the backend-computed display rules (US-24). They are
+# split because denying needs no remaining quantity while approving does, so an
+# owner can still deny a pending request on a listing that is fully allocated.
+# can_decide is true only when the request can still be approved right now;
+# can_deny is true only when it can still be denied. The decide endpoints still run
+# their own checks after a click; these only decide whether to show the buttons.
 class QueueClaimItem(BaseModel):
     id: str
     claimant_id: str
     claimant_name: str
     requested_quantity: int
     requested_at: datetime
+    can_decide: bool
+    can_deny: bool
 
 
 # One listing's queue: the listing's own details plus its pending rows. The
@@ -86,3 +94,39 @@ class MyRequestsResponse(BaseModel):
     pending: list[MyRequestItem]
     approved: list[MyRequestItem]
     denied: list[MyRequestItem]
+
+
+# One request in the poster's full per-listing history (US-24). Unlike
+# QueueClaimItem, this carries the request's status and its decision timestamps,
+# because this view shows every status, not just pending. can_decide and can_deny
+# are the same display rules as on QueueClaimItem: can_decide is true only when
+# approve should be offered, can_deny only when deny should be offered.
+class AllRequestItem(BaseModel):
+    id: str
+    claimant_id: str
+    claimant_name: str
+    requested_quantity: int
+    approved_quantity: Optional[int] = None
+    status: str
+    requested_at: datetime
+    approved_at: Optional[datetime] = None
+    denied_at: Optional[datetime] = None
+    can_decide: bool
+    can_deny: bool
+
+
+# One active listing's full request history: the listing's title and remaining
+# quantity, plus every request on it (any status), oldest first. The requests
+# list is empty when the listing has no requests yet.
+class ListingAllRequestsGroup(BaseModel):
+    listing_id: str
+    listing_title: str
+    remaining_quantity: int
+    requests: list[AllRequestItem]
+
+
+# The whole all-requests response (US-24): one group per active listing the
+# caller owns, including listings with no requests. An empty list means the
+# caller has no active listings.
+class AllRequestsResponse(BaseModel):
+    groups: list[ListingAllRequestsGroup]

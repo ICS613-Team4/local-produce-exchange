@@ -18,8 +18,11 @@ from app.models.claim import Claim
 from app.models.listing import Listing
 from app.models.member import Member
 from app.schemas.claim import (
+    AllRequestItem,
+    AllRequestsResponse,
     ClaimResponse,
     CreateClaimPayload,
+    ListingAllRequestsGroup,
     ListingQueueGroup,
     MyRequestItem,
     MyRequestsResponse,
@@ -30,6 +33,70 @@ from app.schemas.claim import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def claim_can_decide(claim, listing, claimant, now):
+    # The display rule for the approve/deny buttons (US-24). Returns True only
+    # when this request can still be decided right now, so the dashboard and the
+    # requests page know whether to offer the buttons. The decide endpoints still
+    # run their own server-side checks after a click; this is a stricter,
+    # display-only gate that hides the buttons when acting would just be refused.
+    #
+    # All five conditions must hold:
+    #   1. the request is still pending (only a "requested" claim can be decided),
+    #   2. the claimant's account is active (a suspended claimant cannot receive),
+    #   3. the listing is active (a deactivated listing takes no decisions),
+    #   4. the pickup window has not ended (now is before the window's end),
+    #   5. some quantity is still left to give.
+    if claim.status != "requested":
+        return False
+    if claimant.status != "active":
+        return False
+    if listing.status != "active":
+        return False
+    pickup_end = None
+    if listing.pickup_window is not None:
+        pickup_end = listing.pickup_window.upper
+    # A missing or unbounded end means the window cannot be confirmed valid, so
+    # do not offer the buttons. A real listing always has a bounded window
+    # because create enforces it, so this guard only trips on a malformed row.
+    if pickup_end is None:
+        return False
+    if now >= pickup_end:
+        return False
+    if listing.remaining_quantity <= 0:
+        return False
+    return True
+
+
+def claim_can_deny(claim, listing, claimant, now):
+    # The display rule for the deny button (US-11 Scenario 2, US-24). Deny is a
+    # separate gate from approve because denying gives nothing away: it needs no
+    # remaining quantity. So the owner can still deny a pending request even after
+    # the listing is fully allocated (remaining is 0). Without this split, a
+    # pending request on an exhausted-but-active listing would have no deny button
+    # and would be stuck, even though the deny endpoint would accept it.
+    #
+    # The conditions are the same as claim_can_decide EXCEPT the remaining-quantity
+    # check, which deny does not need:
+    #   1. the request is still pending (only a "requested" claim can be denied),
+    #   2. the claimant's account is active (a suspended claimant is frozen),
+    #   3. the listing is active (a deactivated listing takes no decisions),
+    #   4. the pickup window has not ended.
+    if claim.status != "requested":
+        return False
+    if claimant.status != "active":
+        return False
+    if listing.status != "active":
+        return False
+    pickup_end = None
+    if listing.pickup_window is not None:
+        pickup_end = listing.pickup_window.upper
+    if pickup_end is None:
+        return False
+    if now >= pickup_end:
+        return False
+    return True
 
 
 @router.post("/listings/{listing_id}/claims", status_code=201)
@@ -290,6 +357,10 @@ def get_request_queues(
 
     member_id = current_member.id
 
+    # One "now" for the whole response, used by the can_decide display rule below
+    # so every row is judged against the same instant.
+    now = datetime.now(timezone.utc)
+
     # Decide which listings to process. With no listing query value, use all of
     # the caller's listings, ordered by title. With a listing value, use just
     # that one listing after the ownership check below.
@@ -359,8 +430,9 @@ def get_request_queues(
     groups = []
     for listing_row in listings_to_process:
         try:
-            pending_claims = session.scalars(
-                select(Claim)
+            pending_claim_rows = session.execute(
+                select(Claim, Member)
+                .join(Member, Claim.claimant_id == Member.id)
                 .where(Claim.listing_id == listing_row.id)
                 .where(Claim.status == "requested")
                 # Oldest first (FIFO), with the id as a tiebreaker so two claims
@@ -377,24 +449,16 @@ def get_request_queues(
                 ),
             )
 
-        if len(pending_claims) == 0:
+        if len(pending_claim_rows) == 0:
             continue
 
         pending_items = []
-        for claim_row in pending_claims:
-            # Read the claimant's name through the relationship. Wrap it so a
-            # database error during this read returns 503 like the others.
-            try:
-                claimant_name = claim_row.claimant.name
-            except Exception as error:
-                logger.error("Loading a claimant name failed: %s", error)
-                raise HTTPException(
-                    status_code=503,
-                    detail=(
-                        "Could not read your requests right now. "
-                        "Make sure the database is running and migrated."
-                    ),
-                )
+        for claim_result in pending_claim_rows:
+            claim_row = claim_result[0]
+            claimant = claim_result[1]
+            claimant_name = claimant.name
+            can_decide = claim_can_decide(claim_row, listing_row, claimant, now)
+            can_deny = claim_can_deny(claim_row, listing_row, claimant, now)
             pending_items.append(
                 QueueClaimItem(
                     id=str(claim_row.id),
@@ -402,6 +466,8 @@ def get_request_queues(
                     claimant_name=claimant_name,
                     requested_quantity=claim_row.requested_quantity,
                     requested_at=claim_row.requested_at,
+                    can_decide=can_decide,
+                    can_deny=can_deny,
                 )
             )
 
@@ -416,6 +482,161 @@ def get_request_queues(
         )
 
     return RequestQueuesResponse(groups=groups)
+
+
+@router.get("/request-queues/all")
+def get_all_requests(
+    listing: Annotated[str | None, Query()] = None,
+    current_member: Member = Depends(get_current_member),
+    session: Session = Depends(get_db_session),
+) -> AllRequestsResponse:
+    # The poster's full request history across their ACTIVE listings (US-24),
+    # grouped by listing, every status. This is separate from get_request_queues
+    # (pending-only) so the dashboard's live queue is unchanged. Two differences
+    # from the pending endpoint: it keeps every claim status, not just
+    # "requested", and it includes an active listing even when it has no
+    # requests (as an empty group), so the page can show a listing-level note.
+    # Deactivated listings are excluded entirely.
+
+    # Active-member gate, same rule and messages as get_request_queues.
+    if current_member.status != "active":
+        if current_member.status == "suspended":
+            raise HTTPException(
+                status_code=403,
+                detail="Your account is suspended, so you cannot view requests.",
+            )
+        raise HTTPException(
+            status_code=403,
+            detail="Your account is not active, so you cannot view requests.",
+        )
+
+    member_id = current_member.id
+
+    # One "now" for the whole response, used by the can_decide display rule.
+    now = datetime.now(timezone.utc)
+
+    # Decide which listings to process. With no listing query value, use all of
+    # the caller's active listings, newest first. With a listing value, use just
+    # that one listing after the ownership and active checks below.
+    listings_to_process = []
+    if listing is None:
+        try:
+            owned_listings = session.scalars(
+                select(Listing)
+                .where(Listing.owner_id == member_id)
+                .where(Listing.status == "active")
+                .order_by(Listing.created_at.desc(), Listing.id.desc())
+            ).all()
+        except Exception as error:
+            logger.error("Loading the caller's active listings failed: %s", error)
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Could not read your requests right now. "
+                    "Make sure the database is running and migrated: "
+                    "npm run db:up, then npm run db:migrate, then npm run db:seed."
+                ),
+            )
+        for owned_listing in owned_listings:
+            listings_to_process.append(owned_listing)
+    else:
+        # A filtered request. A value that is not a real UUID cannot match any
+        # listing, so return no groups rather than an error.
+        try:
+            listing_uuid = uuid.UUID(listing)
+        except (ValueError, AttributeError, TypeError):
+            return AllRequestsResponse(groups=[])
+
+        try:
+            one_listing = session.scalars(
+                select(Listing).where(Listing.id == listing_uuid)
+            ).first()
+        except Exception as error:
+            logger.error("Loading the filtered listing failed: %s", error)
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Could not read your requests right now. "
+                    "Make sure the database is running and migrated."
+                ),
+            )
+
+        # No such listing reads as no groups, the same as a malformed id.
+        if one_listing is None:
+            return AllRequestsResponse(groups=[])
+
+        # A listing the caller does not own is denied, before any claim is read,
+        # the same as get_request_queues.
+        if one_listing.owner_id != member_id:
+            raise HTTPException(
+                status_code=403,
+                detail="You can only view requests for your own listings.",
+            )
+
+        # An owned listing that is not active reads as no groups: this endpoint
+        # shows only active listings.
+        if one_listing.status != "active":
+            return AllRequestsResponse(groups=[])
+
+        listings_to_process.append(one_listing)
+
+    # For each active listing, load ALL its claims oldest-first and build a group.
+    # Unlike the pending endpoint, a listing with no claims is kept as an empty
+    # group so the page can show its listing-level empty note.
+    groups = []
+    for listing_row in listings_to_process:
+        try:
+            all_claim_rows = session.execute(
+                select(Claim, Member)
+                .join(Member, Claim.claimant_id == Member.id)
+                .where(Claim.listing_id == listing_row.id)
+                # Oldest first, with the id as a tiebreaker so two claims that
+                # share a requested_at always come out in the same order.
+                .order_by(Claim.requested_at.asc(), Claim.id.asc())
+            ).all()
+        except Exception as error:
+            logger.error("Loading claims failed: %s", error)
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Could not read your requests right now. "
+                    "Make sure the database is running and migrated."
+                ),
+            )
+
+        request_items = []
+        for claim_result in all_claim_rows:
+            claim_row = claim_result[0]
+            claimant = claim_result[1]
+            claimant_name = claimant.name
+            can_decide = claim_can_decide(claim_row, listing_row, claimant, now)
+            can_deny = claim_can_deny(claim_row, listing_row, claimant, now)
+            request_items.append(
+                AllRequestItem(
+                    id=str(claim_row.id),
+                    claimant_id=str(claim_row.claimant_id),
+                    claimant_name=claimant_name,
+                    requested_quantity=claim_row.requested_quantity,
+                    approved_quantity=claim_row.approved_quantity,
+                    status=claim_row.status,
+                    requested_at=claim_row.requested_at,
+                    approved_at=claim_row.approved_at,
+                    denied_at=claim_row.denied_at,
+                    can_decide=can_decide,
+                    can_deny=can_deny,
+                )
+            )
+
+        groups.append(
+            ListingAllRequestsGroup(
+                listing_id=str(listing_row.id),
+                listing_title=listing_row.title,
+                remaining_quantity=listing_row.remaining_quantity,
+                requests=request_items,
+            )
+        )
+
+    return AllRequestsResponse(groups=groups)
 
 
 def build_my_request_items(claims):
@@ -921,5 +1142,4 @@ def withdraw_claim(
         requested_at=requested_at_out,
         cancelled_at=now,
     )
-
 

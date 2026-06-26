@@ -14,7 +14,17 @@ from app.main import app
 from app.models.claim import Claim
 from app.models.listing import Listing
 from app.models.member import Member
-from app.routers.claim import get_request_queues
+from app.routers.claim import get_all_requests, get_request_queues
+
+
+# Far-future and far-past pickup windows. The can_decide rule compares the
+# listing's pickup-window end against the real clock, so these make the window
+# check deterministic no matter when the suite runs: a window ending in 2999 has
+# not ended, and one ending in 2000 has.
+FUTURE_START = datetime(2999, 1, 1, 9, 0, tzinfo=timezone.utc)
+FUTURE_END = datetime(2999, 1, 1, 11, 0, tzinfo=timezone.utc)
+PAST_START = datetime(2000, 1, 1, 9, 0, tzinfo=timezone.utc)
+PAST_END = datetime(2000, 1, 1, 11, 0, tzinfo=timezone.utc)
 
 
 # These helpers follow the project convention that each test file owns its setup
@@ -41,9 +51,15 @@ def insert_listing(
     total_quantity=5,
     remaining_quantity=5,
     created_at=None,
+    pickup_start=None,
+    pickup_end=None,
 ):
-    start = datetime(2026, 7, 1, 9, 0, tzinfo=timezone.utc)
-    end = datetime(2026, 7, 1, 11, 0, tzinfo=timezone.utc)
+    # The pickup window defaults to a fixed July 2026 range. A can_decide test
+    # that needs a window known to be open or closed passes its own bounds.
+    if pickup_start is None:
+        pickup_start = datetime(2026, 7, 1, 9, 0, tzinfo=timezone.utc)
+    if pickup_end is None:
+        pickup_end = datetime(2026, 7, 1, 11, 0, tzinfo=timezone.utc)
     listing = Listing(
         owner_id=owner.id,
         title=title,
@@ -53,7 +69,7 @@ def insert_listing(
         allergen_tags=[],
         total_quantity=total_quantity,
         remaining_quantity=remaining_quantity,
-        pickup_window=Range(start, end, bounds="[)"),
+        pickup_window=Range(pickup_start, pickup_end, bounds="[)"),
         status=status,
     )
     # The model fills created_at with the server default now() when it is not
@@ -426,6 +442,9 @@ class ClaimantNameFailsSession:
             return ScalarsListStub(self.listings)
         return ScalarsListStub(self.claims)
 
+    def execute(self, *args, **kwargs):
+        raise OperationalError("statement", {}, Exception("claimant load failed"))
+
     def close(self, *args, **kwargs):
         pass
 
@@ -524,3 +543,517 @@ def test_queue_group_order_is_deterministic_when_created_at_ties(db_session):
     for group in response.groups:
         group_listing_ids.append(group.listing_id)
     assert group_listing_ids == expected_listing_ids
+
+
+# --- can_decide on the pending queue (US-24) ---------------------------------
+
+
+def test_request_queues_can_decide_true_for_normal_pending(db_session):
+    # A pending request on an active listing with quantity left and an open
+    # pickup window can be decided, so can_decide is True.
+    owner = insert_member(db_session, email="owner@example.com")
+    cara = insert_member(db_session, email="cara@example.com", name="Cara")
+    listing = insert_listing(
+        db_session, owner, remaining_quantity=5, pickup_start=FUTURE_START, pickup_end=FUTURE_END
+    )
+    insert_claim(db_session, listing, cara, status="requested")
+
+    response = get_request_queues(None, owner, db_session)
+
+    assert response.groups[0].pending[0].can_decide is True
+    assert response.groups[0].pending[0].can_deny is True
+
+
+def test_request_queues_can_decide_false_on_deactivated_listing(db_session):
+    # A pending request on a deactivated listing is still returned (so the poster
+    # sees it), but it cannot be decided, so can_decide is False.
+    owner = insert_member(db_session, email="owner@example.com")
+    cara = insert_member(db_session, email="cara@example.com", name="Cara")
+    listing = insert_listing(
+        db_session,
+        owner,
+        status="deactivated",
+        pickup_start=FUTURE_START,
+        pickup_end=FUTURE_END,
+    )
+    insert_claim(db_session, listing, cara, status="requested")
+
+    response = get_request_queues(None, owner, db_session)
+
+    assert len(response.groups) == 1
+    assert response.groups[0].pending[0].can_decide is False
+    # A deactivated listing takes no decisions at all, so deny is hidden too.
+    assert response.groups[0].pending[0].can_deny is False
+
+
+def test_request_queues_can_decide_false_when_claimant_suspended(db_session):
+    owner = insert_member(db_session, email="owner@example.com")
+    cara = insert_member(db_session, status="suspended", email="cara@example.com", name="Cara")
+    listing = insert_listing(
+        db_session, owner, remaining_quantity=5, pickup_start=FUTURE_START, pickup_end=FUTURE_END
+    )
+    insert_claim(db_session, listing, cara, status="requested")
+
+    response = get_request_queues(None, owner, db_session)
+
+    assert response.groups[0].pending[0].can_decide is False
+    assert response.groups[0].pending[0].can_deny is False
+
+
+def test_request_queues_can_decide_false_when_pickup_window_passed(db_session):
+    owner = insert_member(db_session, email="owner@example.com")
+    cara = insert_member(db_session, email="cara@example.com", name="Cara")
+    listing = insert_listing(
+        db_session, owner, remaining_quantity=5, pickup_start=PAST_START, pickup_end=PAST_END
+    )
+    insert_claim(db_session, listing, cara, status="requested")
+
+    response = get_request_queues(None, owner, db_session)
+
+    assert response.groups[0].pending[0].can_decide is False
+    assert response.groups[0].pending[0].can_deny is False
+
+
+def test_request_queues_can_deny_true_when_no_remaining_quantity(db_session):
+    # The bug fix: a pending request on an active listing with no remaining
+    # quantity cannot be approved (nothing to give), so can_decide is False, but
+    # it CAN still be denied, so can_deny is True. Without this, the owner would
+    # have no way to clear the request once the listing was fully allocated.
+    owner = insert_member(db_session, email="owner@example.com")
+    cara = insert_member(db_session, email="cara@example.com", name="Cara")
+    listing = insert_listing(
+        db_session, owner, remaining_quantity=0, pickup_start=FUTURE_START, pickup_end=FUTURE_END
+    )
+    insert_claim(db_session, listing, cara, status="requested")
+
+    response = get_request_queues(None, owner, db_session)
+
+    assert response.groups[0].pending[0].can_decide is False
+    assert response.groups[0].pending[0].can_deny is True
+
+
+def test_request_queues_can_decide_false_when_pickup_window_has_no_end(db_session):
+    # A listing whose pickup window has no upper bound cannot have its window
+    # confirmed open, so the can_decide guard returns False. This exercises the
+    # defensive branch for a malformed (unbounded) window.
+    owner = insert_member(db_session, email="owner@example.com")
+    cara = insert_member(db_session, email="cara@example.com", name="Cara")
+    listing = insert_listing(db_session, owner, remaining_quantity=5)
+    # Replace the window with an unbounded-upper range (a start, but no end).
+    listing.pickup_window = Range(FUTURE_START, None, bounds="[)")
+    db_session.commit()
+    insert_claim(db_session, listing, cara, status="requested")
+
+    response = get_request_queues(None, owner, db_session)
+
+    assert response.groups[0].pending[0].can_decide is False
+
+
+# --- all-requests endpoint (US-24): full per-listing history -----------------
+
+
+def test_all_requests_happy_path_active_listings_grouped(db_session):
+    # The caller's active listings come back grouped, newest-listing first, with
+    # the requests inside each listing oldest-first.
+    owner = insert_member(db_session, email="owner@example.com")
+    cara = insert_member(db_session, email="cara@example.com", name="Cara")
+    older_time = datetime(2026, 6, 1, 9, 0, tzinfo=timezone.utc)
+    newer_time = datetime(2026, 6, 2, 9, 0, tzinfo=timezone.utc)
+    apples = insert_listing(db_session, owner, title="Apples", created_at=older_time)
+    zucchini = insert_listing(db_session, owner, title="Zucchini", created_at=newer_time)
+    insert_claim(db_session, apples, cara)
+    insert_claim(db_session, zucchini, cara)
+
+    response = get_all_requests(None, owner, db_session)
+
+    assert len(response.groups) == 2
+    assert response.groups[0].listing_title == "Zucchini"
+    assert response.groups[1].listing_title == "Apples"
+
+
+@pytest.mark.parametrize(
+    "claim_status",
+    ["requested", "approved", "denied", "cancelled", "picked_up", "completed"],
+)
+def test_all_requests_includes_every_status(db_session, claim_status):
+    # Unlike the pending queue, this view shows a claim of any status.
+    owner = insert_member(db_session, email="owner@example.com")
+    cara = insert_member(db_session, email="cara@example.com", name="Cara")
+    listing = insert_listing(db_session, owner, title="Lemons")
+    insert_claim(db_session, listing, cara, status=claim_status)
+
+    response = get_all_requests(None, owner, db_session)
+
+    assert len(response.groups) == 1
+    assert len(response.groups[0].requests) == 1
+    assert response.groups[0].requests[0].status == claim_status
+
+
+def test_all_requests_excludes_deactivated_listing(db_session):
+    # A deactivated listing is dropped entirely, even if it has requests.
+    owner = insert_member(db_session, email="owner@example.com")
+    cara = insert_member(db_session, email="cara@example.com", name="Cara")
+    active = insert_listing(db_session, owner, title="Active", status="active")
+    deactivated = insert_listing(db_session, owner, title="Down", status="deactivated")
+    insert_claim(db_session, active, cara)
+    insert_claim(db_session, deactivated, cara)
+
+    response = get_all_requests(None, owner, db_session)
+
+    assert len(response.groups) == 1
+    assert response.groups[0].listing_title == "Active"
+
+
+def test_all_requests_excludes_other_members(db_session):
+    owner = insert_member(db_session, email="owner@example.com")
+    other = insert_member(db_session, email="other@example.com", name="Other")
+    cara = insert_member(db_session, email="cara@example.com", name="Cara")
+    mine = insert_listing(db_session, owner, title="Mine")
+    theirs = insert_listing(db_session, other, title="Theirs")
+    insert_claim(db_session, mine, cara)
+    insert_claim(db_session, theirs, cara)
+
+    response = get_all_requests(None, owner, db_session)
+
+    assert len(response.groups) == 1
+    assert response.groups[0].listing_title == "Mine"
+
+
+def test_all_requests_includes_active_listing_with_no_requests(db_session):
+    # An active listing with zero requests is kept as an empty group, so the
+    # page can show its listing-level empty note.
+    owner = insert_member(db_session, email="owner@example.com")
+    insert_listing(db_session, owner, title="Empty", status="active")
+
+    response = get_all_requests(None, owner, db_session)
+
+    assert len(response.groups) == 1
+    assert response.groups[0].listing_title == "Empty"
+    assert response.groups[0].requests == []
+
+
+def test_all_requests_orders_requests_oldest_first(db_session):
+    owner = insert_member(db_session, email="owner@example.com")
+    ann = insert_member(db_session, email="ann@example.com", name="Ann")
+    ben = insert_member(db_session, email="ben@example.com", name="Ben")
+    listing = insert_listing(db_session, owner, title="Lemons")
+    older_time = datetime(2026, 7, 1, 9, 0, tzinfo=timezone.utc)
+    newer_time = datetime(2026, 7, 1, 10, 0, tzinfo=timezone.utc)
+    # Insert the newer one first, so a pass proves the route orders by date.
+    insert_claim(db_session, listing, ben, requested_at=newer_time)
+    insert_claim(db_session, listing, ann, requested_at=older_time)
+
+    response = get_all_requests(None, owner, db_session)
+
+    requests = response.groups[0].requests
+    assert requests[0].claimant_name == "Ann"
+    assert requests[1].claimant_name == "Ben"
+
+
+def test_all_requests_listing_order_tiebreak_by_id_desc(db_session):
+    owner = insert_member(db_session, email="owner@example.com")
+    tied_time = datetime(2026, 6, 1, 0, 0, tzinfo=timezone.utc)
+    listing_one = insert_listing(db_session, owner, title="One", created_at=tied_time)
+    listing_two = insert_listing(db_session, owner, title="Two", created_at=tied_time)
+
+    listing_ids_desc = sorted([listing_one.id, listing_two.id], reverse=True)
+    expected_listing_ids = []
+    for listing_id in listing_ids_desc:
+        expected_listing_ids.append(str(listing_id))
+
+    response = get_all_requests(None, owner, db_session)
+
+    group_listing_ids = []
+    for group in response.groups:
+        group_listing_ids.append(group.listing_id)
+    assert group_listing_ids == expected_listing_ids
+
+
+def test_all_requests_request_order_tiebreak_by_id_asc(db_session):
+    owner = insert_member(db_session, email="owner@example.com")
+    listing = insert_listing(db_session, owner)
+    ann = insert_member(db_session, email="ann@example.com", name="Ann")
+    bob = insert_member(db_session, email="bob@example.com", name="Bob")
+    tied_time = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+    claim_ann = insert_claim(db_session, listing, ann, requested_at=tied_time)
+    claim_bob = insert_claim(db_session, listing, bob, requested_at=tied_time)
+
+    ids_sorted = sorted([claim_ann.id, claim_bob.id])
+    expected_ids = []
+    for claim_id in ids_sorted:
+        expected_ids.append(str(claim_id))
+
+    response = get_all_requests(None, owner, db_session)
+
+    request_ids = []
+    for item in response.groups[0].requests:
+        request_ids.append(item.id)
+    assert request_ids == expected_ids
+
+
+# --- all-requests can_decide -------------------------------------------------
+
+
+def test_all_requests_can_decide_true_for_normal_pending(db_session):
+    owner = insert_member(db_session, email="owner@example.com")
+    cara = insert_member(db_session, email="cara@example.com", name="Cara")
+    listing = insert_listing(
+        db_session, owner, remaining_quantity=5, pickup_start=FUTURE_START, pickup_end=FUTURE_END
+    )
+    insert_claim(db_session, listing, cara, status="requested")
+
+    response = get_all_requests(None, owner, db_session)
+
+    assert response.groups[0].requests[0].can_decide is True
+
+
+def test_all_requests_can_decide_false_when_not_pending(db_session):
+    owner = insert_member(db_session, email="owner@example.com")
+    cara = insert_member(db_session, email="cara@example.com", name="Cara")
+    listing = insert_listing(
+        db_session, owner, remaining_quantity=5, pickup_start=FUTURE_START, pickup_end=FUTURE_END
+    )
+    insert_claim(db_session, listing, cara, status="denied")
+
+    response = get_all_requests(None, owner, db_session)
+
+    assert response.groups[0].requests[0].can_decide is False
+
+
+def test_all_requests_can_decide_false_when_claimant_suspended(db_session):
+    owner = insert_member(db_session, email="owner@example.com")
+    cara = insert_member(db_session, status="suspended", email="cara@example.com", name="Cara")
+    listing = insert_listing(
+        db_session, owner, remaining_quantity=5, pickup_start=FUTURE_START, pickup_end=FUTURE_END
+    )
+    insert_claim(db_session, listing, cara, status="requested")
+
+    response = get_all_requests(None, owner, db_session)
+
+    assert response.groups[0].requests[0].can_decide is False
+
+
+def test_all_requests_can_decide_false_when_pickup_window_passed(db_session):
+    owner = insert_member(db_session, email="owner@example.com")
+    cara = insert_member(db_session, email="cara@example.com", name="Cara")
+    listing = insert_listing(
+        db_session, owner, remaining_quantity=5, pickup_start=PAST_START, pickup_end=PAST_END
+    )
+    insert_claim(db_session, listing, cara, status="requested")
+
+    response = get_all_requests(None, owner, db_session)
+
+    assert response.groups[0].requests[0].can_decide is False
+
+
+def test_all_requests_can_decide_false_when_no_remaining_quantity(db_session):
+    owner = insert_member(db_session, email="owner@example.com")
+    cara = insert_member(db_session, email="cara@example.com", name="Cara")
+    listing = insert_listing(
+        db_session, owner, remaining_quantity=0, pickup_start=FUTURE_START, pickup_end=FUTURE_END
+    )
+    insert_claim(db_session, listing, cara, status="requested")
+
+    response = get_all_requests(None, owner, db_session)
+
+    assert response.groups[0].requests[0].can_decide is False
+    # Same fix as the pending queue: deny stays available with no remaining stock.
+    assert response.groups[0].requests[0].can_deny is True
+
+
+def test_all_requests_can_deny_false_when_not_pending(db_session):
+    # A decided (denied) request can be neither approved nor denied again.
+    owner = insert_member(db_session, email="owner@example.com")
+    cara = insert_member(db_session, email="cara@example.com", name="Cara")
+    listing = insert_listing(
+        db_session, owner, remaining_quantity=5, pickup_start=FUTURE_START, pickup_end=FUTURE_END
+    )
+    insert_claim(db_session, listing, cara, status="denied")
+
+    response = get_all_requests(None, owner, db_session)
+
+    assert response.groups[0].requests[0].can_decide is False
+    assert response.groups[0].requests[0].can_deny is False
+
+
+# --- all-requests filtered single-listing query ------------------------------
+
+
+def test_all_requests_filtered_owned_active_returns_one_group(db_session):
+    owner = insert_member(db_session, email="owner@example.com")
+    cara = insert_member(db_session, email="cara@example.com", name="Cara")
+    lemons = insert_listing(db_session, owner, title="Lemons")
+    eggs = insert_listing(db_session, owner, title="Eggs")
+    insert_claim(db_session, lemons, cara)
+    insert_claim(db_session, eggs, cara)
+
+    response = get_all_requests(str(lemons.id), owner, db_session)
+
+    assert len(response.groups) == 1
+    assert response.groups[0].listing_title == "Lemons"
+
+
+def test_all_requests_filtered_owned_active_no_requests_returns_empty_group(db_session):
+    owner = insert_member(db_session, email="owner@example.com")
+    listing = insert_listing(db_session, owner, title="Lemons")
+
+    response = get_all_requests(str(listing.id), owner, db_session)
+
+    assert len(response.groups) == 1
+    assert response.groups[0].requests == []
+
+
+def test_all_requests_filtered_malformed_id_returns_no_groups(db_session):
+    owner = insert_member(db_session, email="owner@example.com")
+
+    response = get_all_requests("not-a-uuid", owner, db_session)
+
+    assert response.groups == []
+
+
+def test_all_requests_filtered_unknown_id_returns_no_groups(db_session):
+    owner = insert_member(db_session, email="owner@example.com")
+
+    response = get_all_requests(str(uuid.uuid4()), owner, db_session)
+
+    assert response.groups == []
+
+
+def test_all_requests_filtered_owned_deactivated_returns_no_groups(db_session):
+    # An owned listing that is not active shows nothing here, even though the
+    # caller owns it: this endpoint only shows active listings.
+    owner = insert_member(db_session, email="owner@example.com")
+    deactivated = insert_listing(db_session, owner, title="Down", status="deactivated")
+
+    response = get_all_requests(str(deactivated.id), owner, db_session)
+
+    assert response.groups == []
+
+
+def test_all_requests_filtered_foreign_listing_returns_403(db_session):
+    owner = insert_member(db_session, email="owner@example.com")
+    other_owner = insert_member(db_session, email="other@example.com", name="Other")
+    their_listing = insert_listing(db_session, other_owner, title="Theirs")
+
+    with pytest.raises(HTTPException) as raised_error:
+        get_all_requests(str(their_listing.id), owner, db_session)
+
+    assert raised_error.value.status_code == 403
+    assert raised_error.value.detail == "You can only view requests for your own listings."
+
+
+# --- all-requests caller status gate -----------------------------------------
+
+
+def test_all_requests_denies_suspended_caller(db_session):
+    caller = insert_member(db_session, status="suspended", email="suspended@example.com")
+
+    with pytest.raises(HTTPException) as raised_error:
+        get_all_requests(None, caller, db_session)
+
+    assert raised_error.value.status_code == 403
+    assert "suspended" in raised_error.value.detail.lower()
+
+
+def test_all_requests_denies_inactive_caller(db_session):
+    caller = insert_member(db_session, status="inactive", email="inactive@example.com")
+
+    with pytest.raises(HTTPException) as raised_error:
+        get_all_requests(None, caller, db_session)
+
+    assert raised_error.value.status_code == 403
+    assert "not active" in raised_error.value.detail.lower()
+
+
+# --- all-requests database failures ------------------------------------------
+
+
+def test_all_requests_returns_503_on_listing_load_error(broken_session):
+    member = Member(
+        id=uuid.uuid4(),
+        name="Poster",
+        email="poster@example.com",
+        password_hash="not-a-real-hash",
+        status="active",
+    )
+
+    with pytest.raises(HTTPException) as raised_error:
+        get_all_requests(None, member, broken_session)
+
+    assert raised_error.value.status_code == 503
+
+
+def test_all_requests_returns_503_on_filtered_listing_load_error(broken_session):
+    member = Member(
+        id=uuid.uuid4(),
+        name="Poster",
+        email="poster@example.com",
+        password_hash="not-a-real-hash",
+        status="active",
+    )
+
+    with pytest.raises(HTTPException) as raised_error:
+        get_all_requests(str(uuid.uuid4()), member, broken_session)
+
+    assert raised_error.value.status_code == 503
+
+
+def test_all_requests_returns_503_on_claim_query_error():
+    member = Member(
+        id=uuid.uuid4(),
+        name="Poster",
+        email="poster@example.com",
+        password_hash="not-a-real-hash",
+        status="active",
+    )
+    listing = Listing(
+        id=uuid.uuid4(),
+        owner_id=member.id,
+        title="Lemons",
+        status="active",
+        remaining_quantity=5,
+    )
+    session = ClaimQueryFailsSession([listing])
+
+    with pytest.raises(HTTPException) as raised_error:
+        get_all_requests(None, member, session)
+
+    assert raised_error.value.status_code == 503
+
+
+def test_all_requests_returns_503_on_claimant_name_error():
+    member = Member(
+        id=uuid.uuid4(),
+        name="Poster",
+        email="poster@example.com",
+        password_hash="not-a-real-hash",
+        status="active",
+    )
+    listing = Listing(
+        id=uuid.uuid4(),
+        owner_id=member.id,
+        title="Lemons",
+        status="active",
+        remaining_quantity=5,
+    )
+    failing_claim = ClaimantReadFails()
+    session = ClaimantNameFailsSession([listing], [failing_claim])
+
+    with pytest.raises(HTTPException) as raised_error:
+        get_all_requests(None, member, session)
+
+    assert raised_error.value.status_code == 503
+
+
+# --- all-requests route wiring -----------------------------------------------
+
+
+def test_all_requests_route_is_wired_with_get_method():
+    from fastapi.routing import APIRoute
+
+    found_route = None
+    for route in app.routes:
+        if isinstance(route, APIRoute):
+            if route.path == "/api/request-queues/all" and "GET" in route.methods:
+                found_route = route
+    assert found_route is not None
