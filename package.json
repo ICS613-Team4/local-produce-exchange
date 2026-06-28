@@ -25,6 +25,9 @@
     "test": "npm run test:frontend && npm run test:backend",
     "tests": "npm test",
     "test:frontend": "npm --prefix frontend run test",
-    "test:backend": "uv run --locked --all-groups --directory backend pytest"
+    "test:backend": "uv run --locked --all-groups --directory backend pytest",
+    "test:coverage:frontend": "npm --prefix frontend run test:coverage",
+    "test:coverage:backend": "uv run --locked --all-groups --directory backend pytest --cov=app --cov-report=term-missing --cov-report=xml:coverage.xml --cov-report=html:coverage",
+    "test:coverage": "npm run test:coverage:frontend && npm run test:coverage:backend"
   }
 }
