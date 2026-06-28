@@ -392,6 +392,21 @@ another table still points to.
 
 ## Tests
 
+### Coverage Reports
+
+Run this from the repo root to create both coverage reports:
+
+```sh
+npm run test:coverage
+```
+
+The frontend HTML report is at `frontend/coverage/index.html`. The backend HTML
+report is at `backend/coverage/index.html`, and the backend XML report is at
+`backend/coverage.xml`.
+
+In GitHub Actions, open a Checks run and download the `coverage-reports`
+artifact. It contains the same local report folders and the backend XML file.
+
 ### Frontend Tests
 
 The frontend uses Vitest. The component tests render React pages with React
