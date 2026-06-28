@@ -11,12 +11,36 @@ import uuid
 import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
+from sqlalchemy.exc import OperationalError
 
 from app.dependencies import get_current_member
 from app.main import app
 from app.models.member import Member, MemberProfile
-from app.routers.members import get_member_profile, update_member_profile
+from app.routers.members import get_member_endpoint, get_member_profile, update_member_endpoint, update_member_profile
 from app.schemas.member import MemberProfileUpdate
+
+
+class _CommitFailSession:
+    # Delegates reads to a real session but raises on commit, so tests can
+    # reach the commit-failure branch in update_member_profile without also
+    # breaking the preceding scalars() call that loads the member.
+    def __init__(self, real_session):
+        self._s = real_session
+
+    def scalars(self, *args, **kwargs):
+        return self._s.scalars(*args, **kwargs)
+
+    def commit(self, *args, **kwargs):
+        raise OperationalError("stmt", {}, Exception("disk full"))
+
+    def rollback(self, *args, **kwargs):
+        pass
+
+    def add(self, *args, **kwargs):
+        pass
+
+    def close(self, *args, **kwargs):
+        pass
 
 
 def insert_member(session, name="Alice", email="alice@example.com", status="active"):
@@ -207,3 +231,88 @@ def test_patch_member_route_is_wired_into_the_app():
             if "/api/members/" in route.path and "PATCH" in route.methods:
                 found = True
     assert found
+
+
+# --- update_member_profile: member not found after auth check (line 78) ---
+
+
+def test_update_member_profile_member_not_in_db_returns_404(db_session):
+    # The acting member's id matches the target id (auth passes), but no row
+    # exists in the database for that id, so the function raises 404.
+    ghost = Member(
+        id=uuid.uuid4(),
+        name="Ghost",
+        email="ghost@example.com",
+        password_hash="not-a-real-hash",
+        status="active",
+    )
+    payload = MemberProfileUpdate(display_name="New Name")
+
+    with pytest.raises(HTTPException) as raised_error:
+        update_member_profile(ghost, ghost.id, payload, db_session)
+
+    assert raised_error.value.status_code == 404
+    assert "member not found" in raised_error.value.detail.lower()
+
+
+# --- update_member_profile: member exists but has no profile row (line 81) ---
+
+
+def test_update_member_without_profile_returns_404(db_session):
+    member = Member(
+        name="NoProfile",
+        email="noprofile@example.com",
+        password_hash="not-a-real-hash",
+        status="active",
+    )
+    db_session.add(member)
+    db_session.commit()
+    payload = MemberProfileUpdate(display_name="New Name")
+
+    with pytest.raises(HTTPException) as raised_error:
+        update_member_profile(member, member.id, payload, db_session)
+
+    assert raised_error.value.status_code == 404
+    assert "profile not found" in raised_error.value.detail.lower()
+
+
+# --- update_member_profile: commit failure returns 503 (lines 97-100) ---
+
+
+def test_update_commit_failure_returns_503(db_session):
+    member = insert_member(db_session)
+    session = _CommitFailSession(db_session)
+    payload = MemberProfileUpdate(display_name="New Name")
+
+    with pytest.raises(HTTPException) as raised_error:
+        update_member_profile(member, member.id, payload, session)
+
+    assert raised_error.value.status_code == 503
+    assert "save profile" in raised_error.value.detail.lower()
+
+
+# --- route passthroughs (lines 111 and 121) ---
+
+
+def test_get_member_endpoint_delegates_to_core(db_session):
+    member = insert_member(db_session)
+
+    result = get_member_endpoint(member_id=member.id, current_member=member, session=db_session)
+
+    assert result.id == str(member.id)
+    assert result.name == "Alice"
+
+
+def test_update_member_endpoint_delegates_to_core(db_session):
+    member = insert_member(db_session)
+    payload = MemberProfileUpdate(display_name="Updated")
+
+    result = update_member_endpoint(
+        member_id=member.id,
+        payload=payload,
+        current_member=member,
+        session=db_session,
+    )
+
+    assert result.profile is not None
+    assert result.profile.display_name == "Updated"
