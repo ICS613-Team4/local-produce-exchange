@@ -130,7 +130,7 @@ test('sends message on form submit and reloads thread', async () => {
     sent_at: '2026-06-28T10:05:00Z',
   }
   let callCount = 0
-  vi.stubGlobal('fetch', async (url: string, options: RequestInit | undefined) => {
+  vi.stubGlobal('fetch', async (_url: string, options: RequestInit | undefined) => {
     callCount = callCount + 1
     if (options?.method === 'POST') {
       return makeFakeResponse(true, 201, newMessage)
