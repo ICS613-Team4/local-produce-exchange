@@ -15,7 +15,6 @@ from sqlalchemy.dialects.postgresql import Range
 from app.models.claim import Claim
 from app.models.listing import Listing
 from app.models.member import Member
-from app.models.thread import Message, MessageThread
 from app.routers.thread import (
     get_thread_endpoint,
     get_thread_for_claim,
