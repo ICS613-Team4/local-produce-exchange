@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { useSearchParams } from 'react-router'
+import { Link, useSearchParams } from 'react-router'
 
 import {
   sendDecideClaimRequest,
@@ -165,6 +165,11 @@ function RequestQueuesPage() {
   function buildRequestRow(item: AllRequestItem) {
     const requestedAtText = formatTimestamp(item.requested_at)
     const statusOutcome = buildStatusOutcome(item)
+    let threadLink = null
+    if (item.status === 'approved') {
+      const exchangeThreadTarget = '/exchange-thread?claim=' + item.id
+      threadLink = <Link to={exchangeThreadTarget}>Arrange the Exchange</Link>
+    }
 
     // Approve and Deny are shown independently. Approve needs remaining stock
     // (can_decide); Deny does not (can_deny), so an exhausted-but-active listing
@@ -214,6 +219,7 @@ function RequestQueuesPage() {
         <ul>
           <li>{statusOutcome}</li>
         </ul>
+        {threadLink}
         {actionList}
       </li>
     )

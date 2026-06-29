@@ -180,6 +180,22 @@ test('renders the group with every request status in the backend order', async (
   expect(relativePosition & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
 })
 
+test('shows the exchange thread link only on approved requests', async () => {
+  setLoggedIn()
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, makeAllRequestsBody())
+  })
+
+  renderRequestsPage('/requests')
+
+  const threadLinks = await screen.findAllByRole('link', { name: 'Arrange the Exchange' })
+  expect(threadLinks.length).toBe(1)
+  expect(threadLinks[0].getAttribute('href')).toContain('/exchange-thread?claim=c2')
+
+  const pendingRow = screen.getByText(/Bob Baker requested 3/).closest('li')
+  expect(pendingRow?.querySelector('a')).toBeNull()
+})
+
 test('an actionable request shows Approve/Deny and a click reloads with the new status', async () => {
   setLoggedIn()
   vi.stubGlobal('confirm', () => {
