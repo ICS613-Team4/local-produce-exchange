@@ -2,6 +2,7 @@ import { afterEach, expect, test, vi } from 'vitest'
 
 import {
   requestQueueTimeoutMilliseconds,
+  sendConfirmPickupRequest,
   sendCreateClaimRequest,
   sendDecideClaimRequest,
   sendGetAllRequestsRequest,
@@ -414,6 +415,54 @@ test('withdraw sends a PATCH to the withdraw path with the member id header and 
   expect(requestOptions.signal).toBeTruthy()
   // The withdraw call sends no request body.
   expect(requestOptions.body).toBeUndefined()
+})
+
+test('confirm pickup sends a PATCH to the pickup path with the member id header and no body', async () => {
+  const responseBody = {
+    id: 'claim-1',
+    listing_id: 'l1',
+    claimant_id: 'member-123',
+    requested_quantity: 3,
+    approved_quantity: 3,
+    status: 'picked_up',
+    requested_at: '2026-07-01T09:00:00.000Z',
+    approved_at: '2026-07-01T12:00:00.000Z',
+    picked_up_at: '2026-07-01T13:00:00.000Z',
+  }
+  let requestUrl = ''
+  let requestOptions: RequestInit = {}
+  vi.stubGlobal('fetch', async (url: string | URL | Request, options: RequestInit | undefined) => {
+    requestUrl = String(url)
+    if (options !== undefined) {
+      requestOptions = options
+    }
+    return makeFakeResponse(true, 200, JSON.stringify(responseBody))
+  })
+
+  const result = await sendConfirmPickupRequest('member-123', 'claim-1')
+
+  expect(result.ok).toBe(true)
+  expect(result.status).toBe(200)
+  expect(JSON.stringify(result.data)).toBe(JSON.stringify(responseBody))
+  expect(requestUrl).toBe('/api/claims/claim-1/pickup')
+  expect(requestOptions.method).toBe('PATCH')
+  expect(JSON.stringify(requestOptions.headers)).toContain('X-Member-Id')
+  expect(JSON.stringify(requestOptions.headers)).toContain('member-123')
+  expect(requestOptions.signal).toBeTruthy()
+  expect(requestOptions.body).toBeUndefined()
+})
+
+test('confirm pickup maps an HTTP error response into the result object', async () => {
+  const responseBody = { detail: 'Only an approved request can be marked as picked up.' }
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(false, 409, JSON.stringify(responseBody))
+  })
+
+  const result = await sendConfirmPickupRequest('member-123', 'claim-1')
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(409)
+  expect(JSON.stringify(result.data)).toBe(JSON.stringify(responseBody))
 })
 
 test('withdraw maps an HTTP error response into the result object', async () => {

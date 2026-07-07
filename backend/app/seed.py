@@ -310,16 +310,18 @@ def seed_claims(session):
 
     # Claims point at listings and members, so look those up first. If any are
     # missing, skip rather than insert a claim with a broken reference.
+    alice = find_member_by_email(session, "alice@example.com")
     bob = find_member_by_email(session, "bob@example.com")
     carol = find_member_by_email(session, "carol@example.com")
     dave = find_member_by_email(session, "dave@example.com")
-    if bob is None or carol is None or dave is None:
+    if alice is None or bob is None or carol is None or dave is None:
         print("Seed members are missing, so claims were skipped.")
         return
 
     lemons = find_listing_by_owner_and_title(session, dave, "Backyard Meyer Lemons")
     kabocha = find_listing_by_owner_and_title(session, bob, "Kabocha Squash")
-    if lemons is None or kabocha is None:
+    thai_basil = find_listing_by_owner_and_title(session, carol, "Thai Basil")
+    if lemons is None or kabocha is None or thai_basil is None:
         print("Demo listings are missing, so claims were skipped.")
         return
 
@@ -329,6 +331,8 @@ def seed_claims(session):
     bob_lemons_time = now - timedelta(minutes=10)
     carol_lemons_time = now - timedelta(minutes=9)
     dave_kabocha_time = now - timedelta(minutes=8)
+    alice_basil_time = now - timedelta(minutes=2)
+    alice_lemons_time = now - timedelta(minutes=1)
 
     # The claimant always differs from the listing owner (the self-request guard
     # in the create-claim route). Pending requests do not lower remaining_quantity;
@@ -354,11 +358,32 @@ def seed_claims(session):
         status="requested",
         requested_at=dave_kabocha_time,
     )
+    # Alice's approved claims for demo pickup confirmation
+    alice_on_basil = Claim(
+        listing_id=thai_basil.id,
+        claimant_id=alice.id,
+        requested_quantity=3,
+        status="approved",
+        requested_at=alice_basil_time,
+        approved_quantity=3,
+        approved_at=now,
+    )
+    alice_on_lemons = Claim(
+        listing_id=lemons.id,
+        claimant_id=alice.id,
+        requested_quantity=1,
+        status="approved",
+        requested_at=alice_lemons_time,
+        approved_quantity=1,
+        approved_at=now,
+    )
 
     session.add(bob_on_lemons)
     session.add(carol_on_lemons)
     session.add(dave_on_kabocha)
-    print("Inserted 3 pending demo claims.")
+    session.add(alice_on_basil)
+    session.add(alice_on_lemons)
+    print("Inserted 5 demo claims (3 pending, 2 approved).")
 
 
 def seed_database():

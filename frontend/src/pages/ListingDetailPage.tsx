@@ -4,6 +4,7 @@ import { Link, useParams } from 'react-router'
 import { sendDeactivateListingRequest, sendGetListingRequest } from '../services/listingService'
 import type { ListingDetail, ListingResult } from '../services/listingService'
 import {
+  sendConfirmPickupRequest,
   sendCreateClaimRequest,
   sendGetMyClaimRequest,
   sendGetRequestQueuesRequest,
@@ -72,6 +73,12 @@ function ListingDetailPage() {
   const [requestQuantity, setRequestQuantity] = useState('')
   const [isRequesting, setIsRequesting] = useState(false)
   const [requestMessage, setRequestMessage] = useState('')
+  const [isConfirmingPickup, setIsConfirmingPickup] = useState(false)
+  const [pickupMessage, setPickupMessage] = useState('')
+
+  // Blocks a second confirm-pickup click fired in the same tick, similar to the
+  // submit guard below.
+  const isConfirmingPickupRef = useRef(false)
 
   // Blocks a second submit fired in the same tick (a rapid double-click) before
   // the in-flight state has updated. A ref changes immediately, unlike state, so
@@ -293,6 +300,63 @@ function ListingDetailPage() {
       }
     }
     setRequestMessage(failureMessage)
+  }
+
+  async function handleConfirmPickup() {
+    if (myClaim === null) {
+      return
+    }
+
+    if (isConfirmingPickupRef.current === true) {
+      return
+    }
+    isConfirmingPickupRef.current = true
+
+    const confirmed = window.confirm('Confirm that you picked up this item? This cannot be undone.')
+    if (confirmed === false) {
+      isConfirmingPickupRef.current = false
+      return
+    }
+
+    setIsConfirmingPickup(true)
+    setPickupMessage('')
+
+    const requestNumberAtClick = latestRequestNumber.current
+    const claimResult = await sendConfirmPickupRequest(memberId, myClaim.id)
+
+    isConfirmingPickupRef.current = false
+    if (requestNumberAtClick !== latestRequestNumber.current) {
+      return
+    }
+
+    setIsConfirmingPickup(false)
+
+    if (claimResult.status === 401) {
+      window.localStorage.removeItem('memberId')
+      window.localStorage.removeItem('memberName')
+      window.localStorage.removeItem('memberEmail')
+      setMemberId('')
+      setMemberName('')
+      window.dispatchEvent(new Event(authStateChangedEventName))
+      return
+    }
+
+    if (claimResult.ok === true) {
+      setMyClaim(claimResult.data as ClaimDecisionResponse)
+      setPickupMessage('')
+      return
+    }
+
+    let failureMessage = 'Could not confirm pickup. Please try again.'
+    if (claimResult.errorMessage !== '') {
+      failureMessage = claimResult.errorMessage
+    } else if (typeof claimResult.data === 'object' && claimResult.data !== null) {
+      const dataObject = claimResult.data as { detail?: unknown }
+      if (typeof dataObject.detail === 'string') {
+        failureMessage = dataObject.detail
+      }
+    }
+    setPickupMessage(failureMessage)
   }
 
   // Load the listing when the page has a logged-in member. The request number
@@ -590,8 +654,7 @@ function ListingDetailPage() {
         requestArea = <p>Your request was denied.</p>
       } else if (myClaim.status === 'approved') {
         // Approved. Show the approved quantity and when, plus the Exchange Thread
-        // link. Read approved_quantity and approved_at safely (both are set on an
-        // approval, but the type allows null).
+        // link and a confirm pickup action.
         let approvedQuantity = 0
         if (myClaim.approved_quantity !== null) {
           approvedQuantity = myClaim.approved_quantity
@@ -609,6 +672,27 @@ function ListingDetailPage() {
             <p>
               Your request was approved for {approvedQuantity} on: {approvedAtText}.
             </p>
+            <p>
+              <Link to={exchangeThreadTarget}>Arrange the Exchange</Link>
+            </p>
+            <p>
+              <button type="button" disabled={isConfirmingPickup} onClick={handleConfirmPickup}>
+                Confirm pickup
+              </button>
+            </p>
+            {pickupMessage !== '' ? <p role="alert">{pickupMessage}</p> : null}
+          </>
+        )
+      } else if (myClaim.status === 'picked_up') {
+        let pickedUpAtValue = ''
+        if (myClaim.picked_up_at !== null) {
+          pickedUpAtValue = myClaim.picked_up_at
+        }
+        const pickedUpAtText = formatTimestamp(pickedUpAtValue)
+        const exchangeThreadTarget = '/exchange-thread?claim=' + myClaim.id
+        requestArea = (
+          <>
+            <p>Your pickup was confirmed on: {pickedUpAtText}.</p>
             <p>
               <Link to={exchangeThreadTarget}>Arrange the Exchange</Link>
             </p>

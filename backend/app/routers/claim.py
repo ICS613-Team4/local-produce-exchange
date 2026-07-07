@@ -621,6 +621,7 @@ def get_all_requests(
                     status=claim_row.status,
                     requested_at=claim_row.requested_at,
                     approved_at=claim_row.approved_at,
+                    picked_up_at=claim_row.picked_up_at,
                     denied_at=claim_row.denied_at,
                     can_decide=can_decide,
                     can_deny=can_deny,
@@ -669,6 +670,7 @@ def build_my_request_items(claims):
                 status=claim_row.status,
                 requested_at=claim_row.requested_at,
                 approved_at=claim_row.approved_at,
+                picked_up_at=claim_row.picked_up_at,
                 denied_at=claim_row.denied_at,
             )
         )
@@ -713,7 +715,7 @@ def get_my_requests(
         approved_claims = session.scalars(
             select(Claim)
             .where(Claim.claimant_id == member_id)
-            .where(Claim.status == "approved")
+            .where(Claim.status.in_(["approved", "picked_up"]))
             .order_by(Claim.approved_at.desc(), Claim.id.desc())
         ).all()
         denied_claims = session.scalars(
@@ -905,6 +907,115 @@ def approve_claim(
         status="approved",
         requested_at=requested_at_out,
         approved_at=now,
+    )
+
+
+@router.patch("/claims/{claim_id}/pickup")
+def confirm_pickup(
+    claim_id: str,
+    current_member: Member = Depends(get_current_member),
+    session: Session = Depends(get_db_session),
+) -> ClaimResponse:
+    # ------------------------------------------------------------------
+    # Permission gate. Only an active member may confirm pickup.
+    # ------------------------------------------------------------------
+    if current_member.status != "active":
+        if current_member.status == "suspended":
+            raise HTTPException(
+                status_code=403,
+                detail="Your account is suspended, so you cannot confirm pickup.",
+            )
+        raise HTTPException(
+            status_code=403,
+            detail="Your account is not active, so you cannot confirm pickup.",
+        )
+
+    # ------------------------------------------------------------------
+    # Parse the claim id.
+    # ------------------------------------------------------------------
+    try:
+        claim_uuid = uuid.UUID(claim_id)
+    except (ValueError, AttributeError, TypeError):
+        raise HTTPException(status_code=404, detail="Request not found.")
+
+    # ------------------------------------------------------------------
+    # Load the claim and lock its row so the pickup confirmation cannot run
+    # twice on the same request.
+    # ------------------------------------------------------------------
+    try:
+        claim = session.scalars(
+            select(Claim).where(Claim.id == claim_uuid).with_for_update()
+        ).first()
+    except Exception as error:
+        logger.error("Loading claim for pickup confirmation failed: %s", error)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Could not process the request right now. "
+                "Make sure the database is running and migrated."
+            ),
+        )
+
+    if claim is None:
+        raise HTTPException(status_code=404, detail="Request not found.")
+
+    # ------------------------------------------------------------------
+    # Permission rule. Only the claimant may confirm pickup.
+    # ------------------------------------------------------------------
+    if claim.claimant_id != current_member.id:
+        raise HTTPException(
+            status_code=403,
+            detail="Only the requestor can confirm pickup for this request.",
+        )
+
+    # ------------------------------------------------------------------
+    # Workflow rule. Only an approved claim can be marked as picked up.
+    # ------------------------------------------------------------------
+    if claim.status != "approved":
+        raise HTTPException(
+            status_code=409,
+            detail="Only an approved request can be marked as picked up.",
+        )
+
+    # ------------------------------------------------------------------
+    # Apply the pickup confirmation.
+    # ------------------------------------------------------------------
+    now = datetime.now(timezone.utc)
+    claim.status = "picked_up"
+    claim.picked_up_at = now
+
+    # Cache values before commit expires loaded attributes.
+    claim_id_out = claim.id
+    listing_id_out = claim.listing_id
+    claimant_id_out = claim.claimant_id
+    requested_quantity_out = claim.requested_quantity
+    approved_quantity_out = claim.approved_quantity
+    requested_at_out = claim.requested_at
+    approved_at_out = claim.approved_at
+
+    try:
+        session.commit()
+    except Exception as error:
+        session.rollback()
+        logger.error("Confirming pickup failed: %s", error)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Could not confirm pickup right now. "
+                "Make sure the database is running and migrated."
+            ),
+        )
+
+    return ClaimResponse(
+        id=str(claim_id_out),
+        listing_id=str(listing_id_out),
+        claimant_id=str(claimant_id_out),
+        requested_quantity=requested_quantity_out,
+        approved_quantity=approved_quantity_out,
+        status="picked_up",
+        requested_at=requested_at_out,
+        approved_at=approved_at_out,
+        picked_up_at=now,
     )
 
 

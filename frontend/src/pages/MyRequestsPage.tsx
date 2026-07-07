@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
 
 import {
+  sendConfirmPickupRequest,
   sendGetMyRequestsRequest,
   sendWithdrawClaimRequest,
 } from '../services/requestQueueService'
@@ -45,6 +46,12 @@ function MyRequestsPage() {
   // Same-tick double-click guard, holding the claim id in flight, like the
   // Dashboard's withdraw handler.
   const withdrawInFlightRef = useRef('')
+
+  // The claim id whose confirm-pickup is in flight, so only that approved row's
+  // button is greyed while it runs. Its own same-tick double-click guard mirrors
+  // the withdraw one above.
+  const [confirmingPickupClaimId, setConfirmingPickupClaimId] = useState('')
+  const pickupInFlightRef = useRef('')
 
   // Load the caller's outgoing requests when the page has a logged-in member,
   // and again whenever reloadCounter changes (after a successful withdraw).
@@ -121,6 +128,54 @@ function MyRequestsPage() {
     setReloadCounter((currentValue) => currentValue + 1)
   }
 
+  // Confirm pickup on one of the caller's approved requests. Same shape as the
+  // withdraw handler above: a same-tick double-click guard, a confirm, the call,
+  // then the result handling. On success, bump reloadCounter so the row reloads
+  // and moves from "approved" to its picked-up line. The backend is the final
+  // gate: it checks the caller is the claimant and the request is still approved.
+  async function handleConfirmPickup(claimId: string) {
+    if (pickupInFlightRef.current === claimId) {
+      return
+    }
+    pickupInFlightRef.current = claimId
+
+    const confirmed = window.confirm('Confirm that you picked up this item? This cannot be undone.')
+    if (confirmed === false) {
+      if (pickupInFlightRef.current === claimId) {
+        pickupInFlightRef.current = ''
+      }
+      return
+    }
+
+    setConfirmingPickupClaimId(claimId)
+
+    const pickupResult = await sendConfirmPickupRequest(memberId, claimId)
+
+    if (pickupInFlightRef.current === claimId) {
+      pickupInFlightRef.current = ''
+    }
+    setConfirmingPickupClaimId('')
+
+    if (pickupResult.errorMessage !== '') {
+      window.alert(pickupResult.errorMessage)
+      return
+    }
+
+    if (pickupResult.ok === false) {
+      let detailMessage = 'Could not confirm pickup. Please try again.'
+      if (typeof pickupResult.data === 'object' && pickupResult.data !== null) {
+        const dataObject = pickupResult.data as { detail?: unknown }
+        if (typeof dataObject.detail === 'string') {
+          detailMessage = dataObject.detail
+        }
+      }
+      window.alert(detailMessage)
+      return
+    }
+
+    setReloadCounter((currentValue) => currentValue + 1)
+  }
+
   // Build the row text for one request. Each section shows the listing title, the
   // quantity that matters for that state, and the time it entered that state.
   function buildRequestRow(item: MyRequestItem) {
@@ -136,12 +191,34 @@ function MyRequestsPage() {
         approvedAtText = formatTimestamp(item.approved_at)
       }
       // Stub link to the (not-built) Exchange Thread feature, the same one the
-      // listing detail page shows on an approved request.
+      // listing detail page shows on an approved request. Next to it, the recipient
+      // can confirm they picked the item up; only that row's button greys while its
+      // request is in flight.
       const exchangeThreadTarget = '/exchange-thread?claim=' + item.id
+      const isThisRowConfirming = confirmingPickupClaimId === item.id
       return (
         <li key={item.id}>
           {item.listing_title}: You were approved for: {approvedQuantity} on {approvedAtText}{' '}
-          <Link to={exchangeThreadTarget}>Arrange the Exchange</Link>
+          <Link to={exchangeThreadTarget}>Arrange the Exchange</Link>{' '}
+          <button
+            type="button"
+            disabled={isThisRowConfirming}
+            onClick={() => handleConfirmPickup(item.id)}
+          >
+            Confirm the Pickup
+          </button>
+        </li>
+      )
+    }
+    if (item.status === 'picked_up') {
+      let approvedQuantity = item.approved_quantity ?? item.requested_quantity
+      let pickedUpAtText = ''
+      if (item.picked_up_at !== null) {
+        pickedUpAtText = formatTimestamp(item.picked_up_at)
+      }
+      return (
+        <li key={item.id}>
+          {item.listing_title}: You confirmed pickup for {approvedQuantity} on {pickedUpAtText}
         </li>
       )
     }

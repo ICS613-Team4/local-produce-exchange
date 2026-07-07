@@ -13,7 +13,7 @@ from sqlalchemy.dialects.postgresql import Range
 from app.models.claim import Claim
 from app.models.listing import Listing
 from app.models.member import Member
-from app.routers.claim import create_claim
+from app.routers.claim import confirm_pickup, create_claim
 from app.schemas.claim import POSTGRES_INTEGER_MAX, CreateClaimPayload
 
 
@@ -59,7 +59,15 @@ def make_payload(quantity=3):
     return CreateClaimPayload(quantity=quantity)
 
 
-def insert_claim(session, listing_id, claimant, quantity=2, status="requested", approved_quantity=None):
+def insert_claim(
+    session,
+    listing_id,
+    claimant,
+    quantity=2,
+    status="requested",
+    approved_quantity=None,
+    approved_at=None,
+):
     """Insert a claim in a given state, used to set up an existing request."""
     claim = Claim(
         listing_id=listing_id,
@@ -68,6 +76,7 @@ def insert_claim(session, listing_id, claimant, quantity=2, status="requested", 
         approved_quantity=approved_quantity,
         status=status,
         requested_at=datetime.now(timezone.utc),
+        approved_at=approved_at,
     )
     session.add(claim)
     session.commit()
@@ -167,6 +176,77 @@ def test_create_claim_accepts_quantity_equal_to_remaining(db_session):
 
     assert response.requested_quantity == 5
     assert response.status == "requested"
+
+
+def test_confirm_pickup_happy_path(db_session):
+    """A claimant can confirm pickup on an approved request."""
+    poster = insert_member(db_session, email="poster@example.com", name="Poster")
+    listing_id = insert_listing(db_session, poster, remaining_quantity=10)
+    claimant = insert_member(db_session, email="claimant@example.com")
+
+    approved_at = datetime.now(timezone.utc)
+    claim_id = insert_claim(
+        db_session,
+        listing_id,
+        claimant,
+        quantity=2,
+        status="approved",
+        approved_quantity=2,
+        approved_at=approved_at,
+    )
+
+    response = confirm_pickup(str(claim_id), claimant, db_session)
+
+    assert response.status == "picked_up"
+    assert response.approved_quantity == 2
+    assert response.picked_up_at is not None
+    assert response.listing_id == str(listing_id)
+    assert response.claimant_id == str(claimant.id)
+
+    row = db_session.scalars(
+        select(Claim).where(Claim.id == claim_id)
+    ).first()
+    assert row.status == "picked_up"
+    assert row.picked_up_at is not None
+
+
+def test_confirm_pickup_rejects_unapproved_claim(db_session):
+    """Only an approved claim may be marked as picked up."""
+    poster = insert_member(db_session, email="poster@example.com", name="Poster")
+    listing_id = insert_listing(db_session, poster, remaining_quantity=10)
+    claimant = insert_member(db_session, email="claimant@example.com")
+
+    claim_id = insert_claim(db_session, listing_id, claimant, quantity=2, status="requested")
+
+    with pytest.raises(HTTPException) as raised:
+        confirm_pickup(str(claim_id), claimant, db_session)
+
+    assert raised.value.status_code == 409
+    assert "approved" in raised.value.detail.lower()
+
+
+def test_confirm_pickup_rejects_nonclaimant(db_session):
+    """Only the requestor may confirm pickup."""
+    poster = insert_member(db_session, email="poster@example.com", name="Poster")
+    listing_id = insert_listing(db_session, poster, remaining_quantity=10)
+    claimant = insert_member(db_session, email="claimant@example.com")
+    other_member = insert_member(db_session, email="other@example.com", name="Other")
+
+    claim_id = insert_claim(
+        db_session,
+        listing_id,
+        claimant,
+        quantity=2,
+        status="approved",
+        approved_quantity=2,
+        approved_at=datetime.now(timezone.utc),
+    )
+
+    with pytest.raises(HTTPException) as raised:
+        confirm_pickup(str(claim_id), other_member, db_session)
+
+    assert raised.value.status_code == 403
+    assert "requestor" in raised.value.detail.lower()
 
 
 # --- Scenario 3: quantity must be positive ----------------------------------

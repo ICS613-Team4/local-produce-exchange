@@ -136,9 +136,12 @@ function RequestQueuesPage() {
     loadAllRequests()
   }, [memberId, listingFilter, reloadCounter])
 
-  // The status outcome line for one request. Approved and denied show their
-  // decision details; every other status shows its plain name.
-  function buildStatusOutcome(item: AllRequestItem) {
+  // The status outcome lines for one request, one bullet per line. Approved and
+  // denied show their decision details; a picked-up request keeps its Approved
+  // line and adds a "Picked up on" line below it, so the owner can see both the
+  // approval and that the recipient confirmed the pickup. Every other status
+  // shows its plain name.
+  function buildStatusOutcomeLines(item: AllRequestItem) {
     if (item.status === 'approved') {
       let approvedQuantity = 0
       if (item.approved_quantity !== null) {
@@ -148,25 +151,51 @@ function RequestQueuesPage() {
       if (item.approved_at !== null) {
         approvedAtText = formatTimestamp(item.approved_at)
       }
-      return 'Approved: ' + approvedQuantity + ' on ' + approvedAtText
+      return ['Approved: ' + approvedQuantity + ' on ' + approvedAtText]
+    }
+    if (item.status === 'picked_up') {
+      // A picked-up request was approved first, so its approval details are still
+      // set. Show the same Approved line, then the picked-up line right below it.
+      let approvedQuantity = 0
+      if (item.approved_quantity !== null) {
+        approvedQuantity = item.approved_quantity
+      }
+      let approvedAtText = ''
+      if (item.approved_at !== null) {
+        approvedAtText = formatTimestamp(item.approved_at)
+      }
+      let pickedUpAtText = ''
+      if (item.picked_up_at !== null) {
+        pickedUpAtText = formatTimestamp(item.picked_up_at)
+      }
+      return [
+        'Approved: ' + approvedQuantity + ' on ' + approvedAtText,
+        'Picked up on ' + pickedUpAtText,
+      ]
     }
     if (item.status === 'denied') {
       let deniedAtText = ''
       if (item.denied_at !== null) {
         deniedAtText = formatTimestamp(item.denied_at)
       }
-      return 'Denied on ' + deniedAtText
+      return ['Denied on ' + deniedAtText]
     }
-    return 'Status: ' + item.status
+    return ['Status: ' + item.status]
   }
 
   // Build one request row: who asked and when, the status outcome line, and,
   // when the request is still actionable, the Approve/Deny buttons.
   function buildRequestRow(item: AllRequestItem) {
     const requestedAtText = formatTimestamp(item.requested_at)
-    const statusOutcome = buildStatusOutcome(item)
+    const statusOutcomeLines = buildStatusOutcomeLines(item)
+    const statusOutcomeItems = []
+    for (let index = 0; index < statusOutcomeLines.length; index = index + 1) {
+      statusOutcomeItems.push(<li key={index}>{statusOutcomeLines[index]}</li>)
+    }
+    // The exchange thread stays reachable after pickup too, so show the link on
+    // an approved or a picked-up request.
     let threadLink = null
-    if (item.status === 'approved') {
+    if (item.status === 'approved' || item.status === 'picked_up') {
       const exchangeThreadTarget = '/exchange-thread?claim=' + item.id
       threadLink = <Link to={exchangeThreadTarget}>Arrange the Exchange</Link>
     }
@@ -216,9 +245,7 @@ function RequestQueuesPage() {
     return (
       <li key={item.id}>
         {item.claimant_name} requested {item.requested_quantity} ({requestedAtText})
-        <ul>
-          <li>{statusOutcome}</li>
-        </ul>
+        <ul>{statusOutcomeItems}</ul>
         {threadLink}
         {actionList}
       </li>
