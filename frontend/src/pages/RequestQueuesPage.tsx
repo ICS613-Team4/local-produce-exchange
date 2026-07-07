@@ -192,12 +192,17 @@ function RequestQueuesPage() {
     for (let index = 0; index < statusOutcomeLines.length; index = index + 1) {
       statusOutcomeItems.push(<li key={index}>{statusOutcomeLines[index]}</li>)
     }
-    // The exchange thread stays reachable after pickup too, so show the link on
-    // an approved or a picked-up request.
+    // The exchange thread stays reachable after pickup too. Before pickup the
+    // link is about arranging the handoff; once the recipient has confirmed the
+    // pickup, the handoff is done, so the link becomes "Contact the Recipient"
+    // (the owner viewing this page is the provider, so they contact the recipient).
     let threadLink = null
-    if (item.status === 'approved' || item.status === 'picked_up') {
+    if (item.status === 'approved') {
       const exchangeThreadTarget = '/exchange-thread?claim=' + item.id
       threadLink = <Link to={exchangeThreadTarget}>Arrange the Exchange</Link>
+    } else if (item.status === 'picked_up') {
+      const exchangeThreadTarget = '/exchange-thread?claim=' + item.id
+      threadLink = <Link to={exchangeThreadTarget}>Contact the Recipient</Link>
     }
 
     // Approve and Deny are shown independently. Approve needs remaining stock

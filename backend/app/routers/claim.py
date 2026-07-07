@@ -660,11 +660,19 @@ def build_my_request_items(claims):
             )
         if listing_row is None:
             continue
+        # The listing's owner is who the caller requested from (the provider), so
+        # the my-requests page can show their name. The owner foreign key is
+        # required, but guard a missing owner row with an empty name rather than
+        # failing the whole response.
+        owner_name = ""
+        if listing_row.owner is not None:
+            owner_name = listing_row.owner.name
         items.append(
             MyRequestItem(
                 id=str(claim_row.id),
                 listing_id=str(listing_row.id),
                 listing_title=listing_row.title,
+                owner_name=owner_name,
                 requested_quantity=claim_row.requested_quantity,
                 approved_quantity=claim_row.approved_quantity,
                 status=claim_row.status,

@@ -182,10 +182,11 @@ def test_my_requests_all_sections_empty_when_no_requests(db_session):
     assert response.denied == []
 
 
-@pytest.mark.parametrize("other_status", ["picked_up", "completed", "cancelled"])
+@pytest.mark.parametrize("other_status", ["completed", "cancelled"])
 def test_my_requests_excludes_other_statuses(db_session, other_status):
     # Only pending, approved, and denied have sections. A claim in any other state
-    # (picked up, completed, withdrawn) shows in none of them.
+    # (completed, withdrawn) shows in none of them. A picked-up claim is the
+    # exception: it stays in the approved section, covered by its own test below.
     caller = insert_member(db_session, email="cara@example.com", name="Cara")
     poster = insert_member(db_session, email="poster@example.com", name="Poster")
     listing = insert_listing(db_session, poster, title="Lemons")
@@ -196,6 +197,25 @@ def test_my_requests_excludes_other_statuses(db_session, other_status):
     assert response.pending == []
     assert response.approved == []
     assert response.denied == []
+
+
+def test_my_requests_keeps_picked_up_in_approved(db_session):
+    # Once the recipient confirms pickup, the claim moves to "picked_up" but stays
+    # in the approved section so they can still see it (with the pickup line the
+    # page renders). It carries the provider's name like the other rows.
+    caller = insert_member(db_session, email="cara@example.com", name="Cara")
+    poster = insert_member(db_session, email="poster@example.com", name="Polly Poster")
+    listing = insert_listing(db_session, poster, title="Lemons")
+    insert_claim(db_session, listing, caller, status="picked_up")
+
+    response = get_my_requests(caller, db_session)
+
+    assert response.pending == []
+    assert response.denied == []
+    assert len(response.approved) == 1
+    assert response.approved[0].status == "picked_up"
+    assert response.approved[0].listing_title == "Lemons"
+    assert response.approved[0].owner_name == "Polly Poster"
 
 
 # --- caller status gate -----------------------------------------------------

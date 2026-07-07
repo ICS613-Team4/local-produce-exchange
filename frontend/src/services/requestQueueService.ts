@@ -84,6 +84,7 @@ export type MyRequestItem = {
   id: string
   listing_id: string
   listing_title: string
+  owner_name: string
   requested_quantity: number
   approved_quantity: number | null
   status: string

@@ -48,6 +48,7 @@ function makeMyRequestsBody() {
         id: 'p1',
         listing_id: 'l1',
         listing_title: 'Apples',
+        owner_name: 'Carol Chen',
         requested_quantity: 3,
         approved_quantity: null,
         status: 'requested',
@@ -61,6 +62,7 @@ function makeMyRequestsBody() {
         id: 'a1',
         listing_id: 'l2',
         listing_title: 'Bananas',
+        owner_name: 'Bob Baker',
         requested_quantity: 5,
         approved_quantity: 2,
         status: 'approved',
@@ -74,6 +76,7 @@ function makeMyRequestsBody() {
         id: 'd1',
         listing_id: 'l3',
         listing_title: 'Cherries',
+        owner_name: 'Alice Admin',
         requested_quantity: 4,
         approved_quantity: null,
         status: 'denied',
@@ -122,10 +125,11 @@ test('renders Pending, Approved, and Denied sections with their requests', async
   expect(headings[1].textContent).toBe('Approved')
   expect(headings[2].textContent).toBe('Denied')
 
-  // Each request shows in the right section with the right wording.
-  expect(screen.getByText(/Apples: You requested 3 on/)).toBeTruthy()
-  expect(screen.getByText(/Bananas: You were approved for: 2 on/)).toBeTruthy()
-  expect(screen.getByText(/Cherries: Your request for 4 was denied on:/)).toBeTruthy()
+  // Each request shows in the right section with the right wording, prefixed by
+  // the provider's first name (the owner the caller requested from).
+  expect(screen.getByText(/Carol - Apples: You requested 3 on/)).toBeTruthy()
+  expect(screen.getByText(/Bob - Bananas: You were approved for: 2 on/)).toBeTruthy()
+  expect(screen.getByText(/Alice - Cherries: Your request for 4 was denied on:/)).toBeTruthy()
 
   // The local time-zone note shows under the sections.
   expect(screen.getByText(/All times are shown in your local time zone/)).toBeTruthy()
@@ -145,7 +149,7 @@ test('shows the Exchange Thread link only on approved requests', async () => {
   expect(threadLinks.length).toBe(1)
   expect(threadLinks[0].getAttribute('href')).toContain('/exchange-thread')
   // The link sits on the approved row (the same list item as the Bananas text).
-  const approvedRow = screen.getByText(/Bananas: You were approved for: 2 on/).closest('li')
+  const approvedRow = screen.getByText(/Bob - Bananas: You were approved for: 2 on/).closest('li')
   expect(approvedRow?.querySelector('a')).toBeTruthy()
 })
 
@@ -184,6 +188,7 @@ test('renders a section newest-first in the order the backend returns', async ()
         id: 'newer',
         listing_id: 'l1',
         listing_title: 'Newer',
+        owner_name: 'Bob Baker',
         requested_quantity: 1,
         approved_quantity: null,
         status: 'requested',
@@ -195,6 +200,7 @@ test('renders a section newest-first in the order the backend returns', async ()
         id: 'older',
         listing_id: 'l2',
         listing_title: 'Older',
+        owner_name: 'Carol Chen',
         requested_quantity: 1,
         approved_quantity: null,
         status: 'requested',
@@ -280,7 +286,7 @@ test('a Pending request shows a Withdraw Request button', async () => {
   // The pending row has the button; the approved and denied rows do not.
   const withdrawButtons = screen.getAllByRole('button', { name: 'Withdraw Request' })
   expect(withdrawButtons.length).toBe(1)
-  const pendingRow = screen.getByText(/Apples: You requested 3 on/).closest('li')
+  const pendingRow = screen.getByText(/Carol - Apples: You requested 3 on/).closest('li')
   expect(pendingRow?.querySelector('button')).toBeTruthy()
 })
 

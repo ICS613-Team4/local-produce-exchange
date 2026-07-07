@@ -80,6 +80,7 @@ class MyRequestItem(BaseModel):
     id: str
     listing_id: str
     listing_title: str
+    owner_name: str
     requested_quantity: int
     approved_quantity: Optional[int] = None
     status: str

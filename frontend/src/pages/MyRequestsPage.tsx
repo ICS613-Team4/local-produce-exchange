@@ -179,6 +179,15 @@ function MyRequestsPage() {
   // Build the row text for one request. Each section shows the listing title, the
   // quantity that matters for that state, and the time it entered that state.
   function buildRequestRow(item: MyRequestItem) {
+    // Prefix the produce title with the provider's first name — the owner the
+    // caller requested from (for example "Dave - Backyard Meyer Lemons"). When no
+    // owner name came back, fall back to the bare title so the row still reads
+    // cleanly.
+    let produceLabel = item.listing_title
+    if (item.owner_name !== '') {
+      const ownerFirstName = item.owner_name.split(' ')[0]
+      produceLabel = ownerFirstName + ' - ' + item.listing_title
+    }
     if (item.status === 'approved') {
       // Show the approved quantity (a partial approval can be less than asked)
       // and when it was approved.
@@ -198,7 +207,7 @@ function MyRequestsPage() {
       const isThisRowConfirming = confirmingPickupClaimId === item.id
       return (
         <li key={item.id}>
-          {item.listing_title}: You were approved for: {approvedQuantity} on {approvedAtText}{' '}
+          {produceLabel}: You were approved for: {approvedQuantity} on {approvedAtText}{' '}
           <Link to={exchangeThreadTarget}>Arrange the Exchange</Link>{' '}
           <button
             type="button"
@@ -218,7 +227,7 @@ function MyRequestsPage() {
       }
       return (
         <li key={item.id}>
-          {item.listing_title}: You confirmed pickup for {approvedQuantity} on {pickedUpAtText}
+          {produceLabel}: You confirmed pickup for {approvedQuantity} on {pickedUpAtText}
         </li>
       )
     }
@@ -229,7 +238,7 @@ function MyRequestsPage() {
       }
       return (
         <li key={item.id}>
-          {item.listing_title}: Your request for {item.requested_quantity} was denied on:{' '}
+          {produceLabel}: Your request for {item.requested_quantity} was denied on:{' '}
           {deniedAtText}
         </li>
       )
@@ -240,7 +249,7 @@ function MyRequestsPage() {
     const isThisRowPending = withdrawingClaimId === item.id
     return (
       <li key={item.id}>
-        {item.listing_title}: You requested {item.requested_quantity} on {requestedAtText}{' '}
+        {produceLabel}: You requested {item.requested_quantity} on {requestedAtText}{' '}
         <button
           type="button"
           disabled={isThisRowPending}

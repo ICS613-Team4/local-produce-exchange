@@ -694,7 +694,7 @@ function ListingDetailPage() {
           <>
             <p>Your pickup was confirmed on: {pickedUpAtText}.</p>
             <p>
-              <Link to={exchangeThreadTarget}>Arrange the Exchange</Link>
+              <Link to={exchangeThreadTarget}>Contact the Provider</Link>
             </p>
           </>
         )
