@@ -57,6 +57,7 @@ export type AllRequestItem = {
   status: string
   requested_at: string
   approved_at: string | null
+  picked_up_at: string | null
   denied_at: string | null
   can_decide: boolean
   can_deny: boolean
@@ -83,11 +84,13 @@ export type MyRequestItem = {
   id: string
   listing_id: string
   listing_title: string
+  owner_name: string
   requested_quantity: number
   approved_quantity: number | null
   status: string
   requested_at: string
   approved_at: string | null
+  picked_up_at: string | null
   denied_at: string | null
 }
 
@@ -174,6 +177,7 @@ export type ClaimDecisionResponse = {
   status: string
   requested_at: string
   approved_at: string | null
+  picked_up_at: string | null
   denied_at: string | null
 }
 
@@ -376,6 +380,55 @@ export async function sendWithdrawClaimRequest(
       } catch {
         // If a proxy or server problem returns plain text or HTML, keep the
         // HTTP status and show the body instead of throwing it away.
+        data = responseText
+      }
+    }
+
+    return {
+      ok: response.ok,
+      status: response.status,
+      data: data,
+      errorMessage: '',
+    }
+  } catch (caughtError) {
+    let errorMessage: string
+    if (caughtError instanceof DOMException && caughtError.name === 'TimeoutError') {
+      errorMessage =
+        'Timeout: no answer from the backend after ' + requestQueueTimeoutMilliseconds + ' ms.'
+    } else {
+      errorMessage = 'Request failed: ' + String(caughtError)
+    }
+
+    return {
+      ok: false,
+      status: 0,
+      data: '',
+      errorMessage: errorMessage,
+    }
+  }
+}
+
+export async function sendConfirmPickupRequest(
+  memberId: string,
+  claimId: string,
+): Promise<RequestQueuesResult> {
+  const url = '/api/claims/' + claimId + '/pickup'
+
+  try {
+    const response = await fetch(url, {
+      method: 'PATCH',
+      headers: {
+        'X-Member-Id': memberId,
+      },
+      signal: AbortSignal.timeout(requestQueueTimeoutMilliseconds),
+    })
+
+    const responseText = await response.text()
+    let data: unknown = ''
+    if (responseText !== '') {
+      try {
+        data = JSON.parse(responseText)
+      } catch {
         data = responseText
       }
     }

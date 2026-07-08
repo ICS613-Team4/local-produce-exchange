@@ -32,6 +32,7 @@ class ClaimResponse(BaseModel):
     status: str
     requested_at: datetime
     approved_at: Optional[datetime] = None
+    picked_up_at: Optional[datetime] = None
     denied_at: Optional[datetime] = None
     cancelled_at: Optional[datetime] = None
 
@@ -79,11 +80,13 @@ class MyRequestItem(BaseModel):
     id: str
     listing_id: str
     listing_title: str
+    owner_name: str
     requested_quantity: int
     approved_quantity: Optional[int] = None
     status: str
     requested_at: datetime
     approved_at: Optional[datetime] = None
+    picked_up_at: Optional[datetime] = None
     denied_at: Optional[datetime] = None
 
 
@@ -110,6 +113,7 @@ class AllRequestItem(BaseModel):
     status: str
     requested_at: datetime
     approved_at: Optional[datetime] = None
+    picked_up_at: Optional[datetime] = None
     denied_at: Optional[datetime] = None
     can_decide: bool
     can_deny: bool

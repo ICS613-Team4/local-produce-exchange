@@ -115,32 +115,41 @@ def test_seed_database_inserts_all_groups(db_connection, monkeypatch):
     assert count_rows(session_factory, MemberProfile) == 4
     assert count_rows(session_factory, InviteToken) == 2
     assert count_rows(session_factory, Listing) == 8
-    assert count_rows(session_factory, Claim) == 3
+    assert count_rows(session_factory, Claim) == 5
 
 
 def test_seed_database_inserts_demo_claims(db_connection, monkeypatch):
-    # US-10: the seed adds a few pending demo claims so the request-queue page,
-    # the dashboard widget, and the detail control have visible content.
+    # US-10 / US-11: the seed adds demo claims so the request-queue page, the
+    # dashboard widget, and the detail control have visible content: three pending
+    # requests plus two approved claims (used by the pickup-confirmation demo).
     session_factory = bind_seed_to_connection(db_connection, monkeypatch)
     seed.seed_database()
 
     session = session_factory()
     try:
         claims = session.scalars(select(Claim)).all()
-        assert len(claims) == 3
+        assert len(claims) == 5
         quantities = []
         listing_ids = set()
+        pending_count = 0
+        approved_count = 0
         for claim in claims:
-            # Every demo claim is pending and points at a listing and a claimant.
-            assert claim.status == "requested"
+            # Every demo claim points at a listing and a claimant.
             assert claim.listing_id is not None
             assert claim.claimant_id is not None
+            if claim.status == "requested":
+                pending_count = pending_count + 1
+            elif claim.status == "approved":
+                approved_count = approved_count + 1
             quantities.append(claim.requested_quantity)
             listing_ids.add(claim.listing_id)
         quantities.sort()
-        assert quantities == [1, 2, 3]
-        # The three claims span two listings: two on the lemons, one on the squash.
-        assert len(listing_ids) == 2
+        assert quantities == [1, 1, 2, 3, 3]
+        # Three pending and two approved demo claims.
+        assert pending_count == 3
+        assert approved_count == 2
+        # The claims span three listings: the lemons, the squash, and the basil.
+        assert len(listing_ids) == 3
     finally:
         session.close()
 
@@ -176,7 +185,7 @@ def test_seed_database_does_not_duplicate_rows(db_connection, monkeypatch):
     assert count_rows(session_factory, Listing) == 8
     # The claim guard (table_is_empty on Claim) keeps the second run from adding
     # duplicate demo claims.
-    assert count_rows(session_factory, Claim) == 3
+    assert count_rows(session_factory, Claim) == 5
 
 
 def test_seed_restores_deleted_invite_tokens(db_connection, monkeypatch):
@@ -211,7 +220,7 @@ def test_seed_restores_deleted_listings(db_connection, monkeypatch):
 
     seed.seed_database()
     assert count_rows(session_factory, Listing) == 8
-    assert count_rows(session_factory, Claim) == 3
+    assert count_rows(session_factory, Claim) == 5
     assert count_rows(session_factory, Member) == 4
 
 
