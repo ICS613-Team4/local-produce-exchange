@@ -220,7 +220,7 @@ function MyRequestsPage() {
       )
     }
     if (item.status === 'picked_up') {
-      let approvedQuantity = item.approved_quantity ?? item.requested_quantity
+      const approvedQuantity = item.approved_quantity ?? item.requested_quantity
       let pickedUpAtText = ''
       if (item.picked_up_at !== null) {
         pickedUpAtText = formatTimestamp(item.picked_up_at)
