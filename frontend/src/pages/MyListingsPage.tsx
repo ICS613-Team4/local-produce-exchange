@@ -100,10 +100,17 @@ function MyListingsPage() {
     return listing.status
   }
 
-  // Deactivate one active listing the owner views. Copies the ListingDetailPage
-  // deactivate handler shape: a same-tick double-click guard, a confirm, the
-  // call, then the result handling. On success, bump reloadCounter so the list
-  // reloads and the row updates.
+  function getStatusBadgeClasses(listing: ListingDetail) {
+    if (listing.status === 'active') {
+      return 'bg-primary-50 text-primary-700'
+    }
+    if (isAdminDeactivated(listing)) {
+      return 'bg-red-50 text-error'
+    }
+    return 'bg-background-alt text-text-muted'
+  }
+
+  // Deactivate one active listing the owner views.
   async function handleDeactivate(listingId: string) {
     const requestKey = listingId + '|' + memberId
     if (deactivateInFlightRef.current === requestKey) {
@@ -130,8 +137,6 @@ function MyListingsPage() {
 
     setDeactivatingId('')
 
-    // Stale login: a 401 means the saved id no longer works. Clear the creds and
-    // fall back to logged-out, the same as the load path above.
     if (deactivateResult.status === 401) {
       window.localStorage.removeItem('memberId')
       window.localStorage.removeItem('memberName')
@@ -142,14 +147,10 @@ function MyListingsPage() {
     }
 
     if (deactivateResult.ok === true) {
-      // Reload the list so the just-deactivated row shows its new status.
       setReloadCounter((currentValue) => currentValue + 1)
       return
     }
 
-    // Failure, never silent. Pick the message by the same precedence the other
-    // pages use: a transport error first, then the server's detail, then a
-    // generic line so the message is never empty.
     let failureMessage = 'Could not deactivate the listing. Please try again.'
     if (deactivateResult.errorMessage !== '') {
       failureMessage = deactivateResult.errorMessage
@@ -162,77 +163,83 @@ function MyListingsPage() {
     setActionError(failureMessage)
   }
 
-  // Build one listing row: the title, a status label, the posted date, and the
-  // per-row controls chosen by an if/else chain on the listing's state.
-  //
-  // ponytail: the existing GET/PUT listing endpoints only act on active
-  // listings, so a non-active row's title is plain text (the detail page returns
-  // "This listing is unavailable" for it) and its Edit link is hidden until
-  // those endpoints are widened. Left as-is for this slice.
   function buildListingRow(listing: ListingDetail) {
     const postedText = formatTimestamp(listing.created_at)
     const statusLabel = buildStatusLabel(listing)
+    const badgeClasses = getStatusBadgeClasses(listing)
 
-    // Active titles link to the detail page; non-active titles are plain text.
     let titleNode
     if (listing.status === 'active') {
-      titleNode = <Link to={'/listings/' + listing.id}>{listing.title}</Link>
+      titleNode = (
+        <Link to={'/listings/' + listing.id} className="text-base font-semibold text-text hover:text-primary-600 transition-colors">
+          {listing.title}
+        </Link>
+      )
     } else {
-      titleNode = <span>{listing.title}</span>
+      titleNode = <span className="text-base font-semibold text-text-muted">{listing.title}</span>
     }
 
-    // The per-row controls.
     let controls
     if (isAdminDeactivated(listing)) {
-      // The member can do nothing to an admin-deactivated listing.
       controls = (
-        <p>An administrator deactivated this listing, so you cannot edit or change it.</p>
+        <p className="text-xs text-error mt-2">
+          An administrator deactivated this listing, so you cannot edit or change it.
+        </p>
       )
     } else if (listing.status === 'active') {
-      // Active: edit, a disabled Activate (no member-activate endpoint yet), and
-      // a working Deactivate.
       const isThisRowPending = deactivatingId === listing.id
       controls = (
-        <p>
-          <Link to={'/listings/' + listing.id + '/edit'}>Edit</Link>{' '}
-          <button type="button" disabled>
-            Activate listing
-          </button>{' '}
+        <div className="flex flex-wrap items-center gap-2 mt-3">
+          <Link
+            to={'/listings/' + listing.id + '/edit'}
+            className="inline-flex items-center px-3 py-1.5 text-xs font-medium text-primary-600 border border-primary-200 rounded-md hover:bg-primary-50 transition-colors"
+          >
+            Edit
+          </Link>
           <button
             type="button"
             disabled={isThisRowPending}
             onClick={() => handleDeactivate(listing.id)}
+            className="inline-flex items-center px-3 py-1.5 text-xs font-medium text-error border border-red-200 rounded-md hover:bg-error-bg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Deactivate listing
+            {isThisRowPending ? 'Deactivating…' : 'Deactivate'}
           </button>
-        </p>
+          <button type="button" disabled className="inline-flex items-center px-3 py-1.5 text-xs font-medium text-text-muted border border-border rounded-md opacity-50 cursor-not-allowed">
+            Activate listing
+          </button>
+        </div>
       )
     } else {
-      // Owner-deactivated, or any other non-admin non-active status: the owner
-      // can act on it, so Activate is enabled. There is no member-activate
-      // endpoint yet, so the click just tells them it is not built. Deactivate
-      // stays disabled because the listing is already deactivated.
       controls = (
-        <>
-          <p>
+        <div className="mt-3 space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={() => window.alert('Reactivating a listing will be implemented in User Story 31.')}
+              className="inline-flex items-center px-3 py-1.5 text-xs font-medium text-primary-600 border border-primary-200 rounded-md hover:bg-primary-50 transition-colors"
             >
               Activate listing
-            </button>{' '}
-            <button type="button" disabled>
+            </button>
+            <button type="button" disabled className="inline-flex items-center px-3 py-1.5 text-xs font-medium text-text-muted border border-border rounded-md opacity-50 cursor-not-allowed">
               Deactivate listing
             </button>
-          </p>
-          <p>This listing cannot be edited or changed until reactivation is implemented.</p>
-        </>
+          </div>
+          <p className="text-xs text-text-muted">This listing cannot be edited until reactivation is implemented.</p>
+        </div>
       )
     }
 
     return (
-      <li key={listing.id}>
-        {titleNode} - {statusLabel} (posted on: {postedText})
+      <li key={listing.id} className="bg-surface rounded-xl border border-border p-5 shadow-sm">
+        <div className="flex items-start justify-between">
+          <div>
+            {titleNode}
+            <p className="text-xs text-text-muted mt-1">Posted {postedText}</p>
+          </div>
+          <span className={'inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium shrink-0 ml-3 ' + badgeClasses}>
+            {statusLabel}
+          </span>
+        </div>
         {controls}
       </li>
     )
@@ -244,15 +251,34 @@ function MyListingsPage() {
   // Build the content area with a plain if/else chain, checked in a set order.
   let contentArea
   if (memberId === '') {
-    contentArea = <p role="alert">{notLoggedInMessage}</p>
+    contentArea = (
+      <div className="rounded-lg bg-error-bg border border-red-200 px-4 py-3 text-sm text-error" role="alert">
+        {notLoggedInMessage}
+      </div>
+    )
   } else if (result === null) {
-    contentArea = <p>Loading your listings...</p>
+    contentArea = <p className="text-text-muted text-sm py-8 text-center">Loading your listings...</p>
   } else if (result.errorMessage !== '') {
-    contentArea = <p role="alert">{result.errorMessage}</p>
+    contentArea = (
+      <div className="rounded-lg bg-error-bg border border-red-200 px-4 py-3 text-sm text-error" role="alert">
+        {result.errorMessage}
+      </div>
+    )
   } else if (result.ok) {
     const listings = result.data as ListingDetail[]
     if (listings.length === 0) {
-      contentArea = <p>You have not posted any listings yet.</p>
+      contentArea = (
+        <div className="text-center py-12">
+          <span className="text-4xl mb-4 block">📦</span>
+          <p className="text-text-muted">You have not posted any listings yet.</p>
+          <Link
+            to="/listings/create"
+            className="mt-4 inline-flex items-center px-6 py-2.5 text-sm font-semibold text-text-inverse bg-primary-600 rounded-lg hover:bg-primary-700 shadow-sm transition-all duration-150"
+          >
+            Create your first listing
+          </Link>
+        </div>
+      )
     } else {
       const rows = []
       for (let index = 0; index < listings.length; index = index + 1) {
@@ -260,10 +286,8 @@ function MyListingsPage() {
       }
       contentArea = (
         <>
-          <ul>{rows}</ul>
-          <p>
-            <small>{timeZoneNote}</small>
-          </p>
+          <ul className="space-y-4">{rows}</ul>
+          <p className="text-xs text-text-muted mt-4">{timeZoneNote}</p>
         </>
       )
     }
@@ -275,18 +299,34 @@ function MyListingsPage() {
         detailMessage = dataObject.detail
       }
     }
-    contentArea = <p role="alert">{detailMessage}</p>
+    contentArea = (
+      <div className="rounded-lg bg-error-bg border border-red-200 px-4 py-3 text-sm text-error" role="alert">
+        {detailMessage}
+      </div>
+    )
   }
 
   // A failed deactivate shows its message above the list, without hiding it.
   let actionErrorArea = null
   if (actionError !== '') {
-    actionErrorArea = <p role="alert">{actionError}</p>
+    actionErrorArea = (
+      <div className="rounded-lg bg-error-bg border border-red-200 px-4 py-3 text-sm text-error mb-4" role="alert">
+        {actionError}
+      </div>
+    )
   }
 
   return (
     <section>
-      <h1>Browse My Listings</h1>
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-3xl font-bold text-text">My Listings</h1>
+        <Link
+          to="/listings/create"
+          className="inline-flex items-center px-5 py-2.5 text-sm font-semibold text-text-inverse bg-primary-600 rounded-lg hover:bg-primary-700 shadow-sm transition-all duration-150"
+        >
+          + New listing
+        </Link>
+      </div>
       {actionErrorArea}
       {contentArea}
     </section>

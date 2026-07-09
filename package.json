@@ -8,7 +8,7 @@
     "fix:frontend": "npm --prefix frontend ci",
     "backend": "uv run --locked --directory backend uvicorn app.main:app --reload --port 8000 --log-level debug",
     "fix:backend": "uv sync --locked --reinstall --all-groups --directory backend",
-    "fix:db": "npm run fix:frontend && npm run fix:backend && npm run db:reset && npm run db:up && npm run db:migrate && npm run db:seed",
+    "fix:db": "npm run db:reset",
     "db": "docker compose up --remove-orphans db pgweb",
     "db:up": "docker compose up -d --remove-orphans --wait db && docker compose up -d pgweb",
     "db:down": "docker compose down --remove-orphans",

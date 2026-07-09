@@ -91,13 +91,26 @@ function ExchangeThreadPage() {
     }
   }
 
+  // One chat row. The viewer's own messages sit on the right in the primary
+  // green; the other member's messages sit on the left in the neutral bubble.
+  // The sender name always shows so a reloaded thread stays readable.
   function buildMessage(msg: MessageData) {
+    const isOwnMessage = msg.sender_id === memberId
+    let rowClasses = 'flex flex-col items-start'
+    let bubbleClasses =
+      'max-w-[75%] rounded-2xl rounded-bl-md bg-background-alt px-4 py-2.5 text-sm text-text whitespace-pre-wrap break-words'
+    if (isOwnMessage) {
+      rowClasses = 'flex flex-col items-end'
+      bubbleClasses =
+        'max-w-[75%] rounded-2xl rounded-br-md bg-primary-600 px-4 py-2.5 text-sm text-text-inverse whitespace-pre-wrap break-words'
+    }
     return (
-      <li key={msg.id} style={{ marginBottom: '0.75rem' }}>
-        <strong>{msg.sender_name}</strong>{' '}
-        <small>{formatTimestamp(msg.sent_at)}</small>
-        <br />
-        {msg.body}
+      <li key={msg.id} className={rowClasses}>
+        <p className="text-xs text-text-muted mb-1">
+          <span className="font-medium text-text">{msg.sender_name}</span>{' '}
+          {formatTimestamp(msg.sent_at)}
+        </p>
+        <div className={bubbleClasses}>{msg.body}</div>
       </li>
     )
   }
@@ -106,63 +119,91 @@ function ExchangeThreadPage() {
 
   let content
   if (memberId === '') {
-    content = <p role="alert">{notLoggedInMessage}</p>
+    content = (
+      <div className="rounded-lg bg-error-bg border border-red-200 px-4 py-3 text-sm text-error" role="alert">
+        {notLoggedInMessage}
+      </div>
+    )
   } else if (claimId === '') {
-    content = <p role="alert">No exchange specified. Try navigating here from a request page.</p>
+    content = (
+      <div className="rounded-lg bg-error-bg border border-red-200 px-4 py-3 text-sm text-error" role="alert">
+        No exchange specified. Try navigating here from a request page.
+      </div>
+    )
   } else if (loadError !== '') {
-    content = <p role="alert">{loadError}</p>
+    content = (
+      <div className="rounded-lg bg-error-bg border border-red-200 px-4 py-3 text-sm text-error" role="alert">
+        {loadError}
+      </div>
+    )
   } else if (thread === null) {
-    content = <p>Loading exchange thread...</p>
+    content = <p className="text-text-muted text-sm py-8 text-center">Loading exchange thread...</p>
   } else {
     const messageList =
       thread.messages.length === 0 ? (
-        <p>No messages yet. Start the conversation below.</p>
+        <p className="text-sm text-text-muted py-8 text-center">
+          No messages yet. Start the conversation below.
+        </p>
       ) : (
-        <ul style={{ listStyle: 'none', padding: 0 }}>
-          {thread.messages.map(buildMessage)}
-        </ul>
+        <ul className="flex flex-col gap-4">{thread.messages.map(buildMessage)}</ul>
       )
 
     content = (
-      <>
-        {messageList}
-        <p>
-          <small>{timeZoneNote}</small>
-        </p>
-        <hr />
-        <form onSubmit={handleSend}>
-          <label htmlFor="message-body">
-            <strong>Send a message</strong>
-          </label>
-          <br />
-          <textarea
-            id="message-body"
-            rows={4}
-            cols={60}
-            maxLength={MESSAGE_MAX_LENGTH}
-            value={messageBody}
-            onChange={(e) => setMessageBody(e.target.value)}
-            disabled={sending}
-            placeholder="Type your message here…"
-          />
-          <br />
-          {sendError !== '' && <p role="alert">{sendError}</p>}
-          <button type="submit" disabled={sending}>
-            {sending ? 'Sending…' : 'Send'}
-          </button>
-        </form>
-      </>
+      <div className="bg-surface rounded-xl border border-border shadow-sm">
+        <div className="p-6">
+          {messageList}
+          <p className="text-xs text-text-muted mt-4">{timeZoneNote}</p>
+        </div>
+        <div className="border-t border-border p-6">
+          <form onSubmit={handleSend}>
+            <label htmlFor="message-body" className="block text-sm font-semibold text-text mb-2">
+              Send a message
+            </label>
+            <textarea
+              id="message-body"
+              rows={4}
+              maxLength={MESSAGE_MAX_LENGTH}
+              value={messageBody}
+              onChange={(e) => setMessageBody(e.target.value)}
+              disabled={sending}
+              placeholder="Type your message here…"
+              className="w-full px-4 py-2.5 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-150 resize-y disabled:opacity-50 disabled:cursor-not-allowed"
+            />
+            {sendError !== '' && (
+              <div className="rounded-lg bg-error-bg border border-red-200 px-4 py-3 text-sm text-error mt-3" role="alert">
+                {sendError}
+              </div>
+            )}
+            <div className="flex justify-end mt-3">
+              <button
+                type="submit"
+                disabled={sending}
+                className="px-6 py-2.5 text-sm font-semibold text-text-inverse bg-primary-600 rounded-lg hover:bg-primary-700 shadow-sm transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {sending ? 'Sending…' : 'Send'}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
     )
   }
 
   return (
-    <section>
-      <h1>Exchange Thread</h1>
-      <p>
-        <Link to="/my-requests">← Back to My Requests</Link>
-      </p>
+    <div className="max-w-3xl mx-auto">
+      <div className="mb-6">
+        <p className="mb-2">
+          <Link
+            to="/my-requests"
+            className="inline-flex items-center text-sm font-medium text-primary-600 hover:text-primary-700"
+          >
+            ← Back to My Requests
+          </Link>
+        </p>
+        <h1 className="text-3xl font-bold text-text">Exchange Thread</h1>
+      </div>
       {content}
-    </section>
+    </div>
   )
 }
 

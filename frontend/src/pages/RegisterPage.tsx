@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router'
+import { Link, useNavigate, useSearchParams } from 'react-router'
 
 import { sendRegisterRequest } from '../services/authService'
 
@@ -105,66 +105,94 @@ function RegisterPage() {
   // Build the error area only when there is an error to show.
   let errorArea = <></>
   if (errorMessage !== '') {
-    errorArea = <p role="alert">{errorMessage}</p>
+    errorArea = (
+      <div className="rounded-lg bg-error-bg border border-red-200 px-4 py-3 text-sm text-error mt-4" role="alert">
+        {errorMessage}
+      </div>
+    )
   }
 
+  const inputClasses = 'w-full px-4 py-2.5 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-150'
+  const labelClasses = 'block text-sm font-medium text-text mb-1.5'
+
   return (
-    <section>
-      <h1>Register</h1>
-      <p>Create your member account with the invite token you received.</p>
-      <form onSubmit={handleSubmit}>
-        <p>
-          <label htmlFor="register-name">Name</label>{' '}
-          <input
-            id="register-name"
-            type="text"
-            autoComplete="name"
-            required
-            value={name}
-            onChange={handleNameChange}
-          />
+    <div className="max-w-md mx-auto">
+      <div className="bg-surface rounded-xl border border-border p-8 shadow-sm">
+        <h1 className="text-2xl font-bold text-text mb-2">Register</h1>
+        <p className="text-sm text-text-muted mb-6">Create your member account with the invite token you received.</p>
+        <form onSubmit={handleSubmit} className="space-y-5">
+          <div>
+            <label htmlFor="register-name" className={labelClasses}>Name</label>
+            <input
+              id="register-name"
+              type="text"
+              autoComplete="name"
+              required
+              value={name}
+              onChange={handleNameChange}
+              className={inputClasses}
+              placeholder="Your name"
+            />
+          </div>
+          <div>
+            <label htmlFor="register-email" className={labelClasses}>Email</label>
+            <input
+              id="register-email"
+              type="email"
+              autoComplete="email"
+              required
+              value={email}
+              onChange={handleEmailChange}
+              className={inputClasses}
+              placeholder="you@example.com"
+            />
+          </div>
+          <div>
+            <label htmlFor="register-password" className={labelClasses}>Password</label>
+            <input
+              id="register-password"
+              type="password"
+              autoComplete="new-password"
+              required
+              value={password}
+              onChange={handlePasswordChange}
+              className={inputClasses}
+            />
+          </div>
+          <div>
+            <label htmlFor="register-invite-token" className={labelClasses}>Invite token</label>
+            <input
+              id="register-invite-token"
+              type="text"
+              autoComplete="off"
+              required
+              value={inviteToken}
+              onChange={handleInviteTokenChange}
+              className={inputClasses}
+              placeholder="Paste your invite token"
+            />
+          </div>
+          <div className="rounded-lg bg-background-alt px-4 py-3 text-xs text-text-muted">
+            For testing, use invite token:{' '}
+            <code className="font-mono bg-background px-1.5 py-0.5 rounded text-primary-700">demo-invite-pending-abc123</code>{' '}
+            (one time use)
+          </div>
+          <button
+            type="submit"
+            className="w-full px-4 py-2.5 text-sm font-semibold text-text-inverse bg-primary-600 rounded-lg hover:bg-primary-700 shadow-sm hover:shadow transition-all duration-150"
+          >
+            Register
+          </button>
+        </form>
+        {errorArea}
+        <p className="mt-6 text-center text-sm text-text-muted">
+          Already have an account?{' '}
+          <Link to="/login" className="font-medium text-primary-600 hover:text-primary-700">
+            Log in
+          </Link>
         </p>
-        <p>
-          <label htmlFor="register-email">Email</label>{' '}
-          <input
-            id="register-email"
-            type="email"
-            autoComplete="email"
-            required
-            value={email}
-            onChange={handleEmailChange}
-          />
-        </p>
-        <p>
-          <label htmlFor="register-password">Password</label>{' '}
-          <input
-            id="register-password"
-            type="password"
-            autoComplete="new-password"
-            required
-            value={password}
-            onChange={handlePasswordChange}
-          />
-        </p>
-        <p>
-          <label htmlFor="register-invite-token">Invite token</label>{' '}
-          <input
-            id="register-invite-token"
-            type="text"
-            autoComplete="off"
-            required
-            value={inviteToken}
-            onChange={handleInviteTokenChange}
-          />
-        </p>
-        <p>
-          For testing, use invite token: <code>demo-invite-pending-abc123</code>{' '}
-          (one time use)
-        </p>
-        <button type="submit">Register</button>
-      </form>
-      {errorArea}
-    </section>
+      </div>
+    </div>
   )
 }
 

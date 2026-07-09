@@ -73,7 +73,7 @@ test('shows the success text after a valid payload', async () => {
   })
 
   renderTestPage()
-  fireEvent.click(screen.getByText('Call backend API with valid JSON'))
+  fireEvent.click(screen.getByText('Valid JSON'))
 
   // findByText waits for the state update that follows the fake fetch.
   const requestBox = screen.getByText(/"foo":"bar"/)
@@ -90,7 +90,7 @@ test('shows the error text after a rejected payload', async () => {
   })
 
   renderTestPage()
-  fireEvent.click(screen.getByText('Call backend API with wrong type'))
+  fireEvent.click(screen.getByText('Wrong type'))
 
   const requestBox = screen.getByText(/"baz":"not-a-number"/)
   const resultBox = await screen.findByText(/Error \(HTTP 422\)/)
@@ -106,7 +106,7 @@ test('shows the JSON parse error after malformed JSON', async () => {
   })
 
   renderTestPage()
-  fireEvent.click(screen.getByText('Call backend API with malformed JSON'))
+  fireEvent.click(screen.getByText('Malformed JSON'))
 
   const requestBox = screen.getByText('{"foo": "bar", "baz": 123')
   const resultBox = await screen.findByText(/Error \(HTTP 422\)/)
@@ -128,8 +128,8 @@ test('does not let an older backend response overwrite a newer response', async 
   })
 
   renderTestPage()
-  fireEvent.click(screen.getByText('Call backend API with valid JSON'))
-  fireEvent.click(screen.getByText('Call backend API with wrong type'))
+  fireEvent.click(screen.getByText('Valid JSON'))
+  fireEvent.click(screen.getByText('Wrong type'))
 
   const secondBody = { detail: [{ type: 'int_parsing', loc: ['body', 'baz'] }] }
   secondResponse.resolveResponse(makeFakeResponse(false, 422, secondBody))
@@ -152,7 +152,7 @@ test('shows the timeout message when the request times out', async () => {
   })
 
   renderTestPage()
-  fireEvent.click(screen.getByText('Call backend API with valid JSON'))
+  fireEvent.click(screen.getByText('Valid JSON'))
 
   const requestBox = screen.getByText(/"foo":"bar"/)
   const resultBox = await screen.findByText(/Timeout: no answer from the backend/)

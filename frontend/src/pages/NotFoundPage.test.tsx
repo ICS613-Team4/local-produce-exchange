@@ -19,7 +19,7 @@ test('an unknown URL renders the not-found page', () => {
   render(<App />)
 
   const heading = screen.getByRole('heading', { name: 'Page not found' })
-  const bodyText = screen.getByText('The page you asked for does not exist.')
+  const bodyText = screen.getByText(/doesn't exist or has been moved/)
 
   expect(heading).toBeTruthy()
   expect(bodyText).toBeTruthy()

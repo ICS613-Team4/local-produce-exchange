@@ -94,7 +94,7 @@ test('renders the controls and lists the active listings on open', async () => {
   // machine's locale or time zone.
   const timeZoneOptions = { timeZoneName: 'short' as const }
   const postedExpected = new Date('2026-06-19T00:00:00.000Z').toLocaleString(undefined, timeZoneOptions)
-  expect(screen.getByText('Posted on: ' + postedExpected)).toBeTruthy()
+  expect(screen.getByText('Posted ' + postedExpected)).toBeTruthy()
 
   // The local time-zone note shows under each card's pickup time.
   expect(screen.getByText(/All times are shown in your local time zone/)).toBeTruthy()
@@ -108,7 +108,7 @@ test('shows the empty message when nothing matches', async () => {
 
   renderBrowse()
 
-  expect(await screen.findByText('No listings match.')).toBeTruthy()
+  expect(await screen.findByText('No listings match your search.')).toBeTruthy()
 })
 
 test('submits the search text, category, and repeated tag params', async () => {
@@ -121,7 +121,7 @@ test('submits the search text, category, and repeated tag params', async () => {
 
   renderBrowse()
   // Wait for the open load to finish before changing the controls.
-  await screen.findByText('No listings match.')
+  await screen.findByText('No listings match your search.')
 
   fireEvent.change(screen.getByLabelText('Search'), { target: { value: 'lemon' } })
   fireEvent.change(screen.getByLabelText('Category'), { target: { value: 'Fruit' } })
@@ -146,7 +146,7 @@ test('Clear resets the controls and reloads the full list', async () => {
   })
 
   renderBrowse()
-  await screen.findByText('No listings match.')
+  await screen.findByText('No listings match your search.')
 
   const searchInput = screen.getByLabelText('Search') as HTMLInputElement
   fireEvent.change(searchInput, { target: { value: 'lemon' } })
@@ -212,7 +212,7 @@ test('checking two tags then unchecking one keeps only the remaining tag', async
   })
 
   renderBrowse()
-  await screen.findByText('No listings match.')
+  await screen.findByText('No listings match your search.')
 
   // Check two dietary tags, then uncheck the first.
   fireEvent.click(screen.getByLabelText('vegan'))

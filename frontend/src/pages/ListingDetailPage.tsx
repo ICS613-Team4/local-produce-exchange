@@ -30,10 +30,10 @@ function ListingDetailPage() {
   const listingId = params.id ?? ''
 
   // memberId is the single source of auth truth: logged in means it is not
-  // empty. memberName is only the display text. Both live in state so the page
-  // can switch the nav on logout or a stale-session 401 without a reload.
+  // empty. The shared nav shows who is logged in, so this page keeps only the
+  // name setter, which the 401 paths use to clear a stale session.
   const [memberId, setMemberId] = useState(window.localStorage.getItem('memberId') ?? '')
-  const [memberName, setMemberName] = useState(window.localStorage.getItem('memberName') ?? '')
+  const [, setMemberName] = useState(window.localStorage.getItem('memberName') ?? '')
 
   // Holds the whole response. null means the listing has not loaded yet, which
   // doubles as the loading state, so no separate loading flag is needed.
@@ -503,16 +503,7 @@ function ListingDetailPage() {
     loadMyClaim()
   }, [viewerIsNonOwnerOfLoaded, loadedListingId, memberId])
 
-  // Show a short status line when logged in. The shared nav owns the log in and
-  // log out controls now, so a logged-out viewer needs nothing here.
-  let loggedInArea = null
-  if (memberId !== '') {
-    let loggedInLine = 'Logged in.'
-    if (memberName !== '') {
-      loggedInLine = 'Logged in as ' + memberName + '.'
-    }
-    loggedInArea = <p>{loggedInLine}</p>
-  }
+  const inputClasses = 'w-full px-4 py-2.5 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-150'
 
   // Build the content area with a plain if/else chain, checked in a set order.
   // Every branch assigns (the chain ends with a plain else), so no initial value.
@@ -520,14 +511,22 @@ function ListingDetailPage() {
   if (memberId === '') {
     // A logged-out viewer cannot load details (the GET requires auth). This also
     // covers the just-cleared 401 case above.
-    contentArea = <p role="alert">{notLoggedInMessage}</p>
+    contentArea = (
+      <div className="rounded-lg bg-error-bg border border-red-200 px-4 py-3 text-sm text-error" role="alert">
+        {notLoggedInMessage}
+      </div>
+    )
   } else if (result === null || resultListingId !== listingId) {
     // First render, or a route change before the next response arrives.
-    contentArea = <p>Loading the listing...</p>
+    contentArea = <p className="text-text-muted text-sm">Loading the listing...</p>
   } else if (result.errorMessage !== '') {
     // A transport failure (timeout or network error); the service returns this
     // with status 0, so check it before the HTTP-status branches.
-    contentArea = <p role="alert">{result.errorMessage}</p>
+    contentArea = (
+      <div className="rounded-lg bg-error-bg border border-red-200 px-4 py-3 text-sm text-error" role="alert">
+        {result.errorMessage}
+      </div>
+    )
   } else if (result.ok) {
     // The backend owns this shape, so read the body with one plain cast.
     const listing = result.data as ListingDetail
@@ -548,6 +547,12 @@ function ListingDetailPage() {
     const pickupStartText = formatTimestamp(listing.pickup_start)
     const pickupEndText = formatTimestamp(listing.pickup_end)
     const postedText = formatTimestamp(listing.created_at)
+    // Say who posted the listing when the backend sent the owner's name. The
+    // field is optional on the type, so check it is a real non-empty string.
+    let postedLine = 'Posted ' + postedText
+    if (typeof listing.owner_name === 'string' && listing.owner_name !== '') {
+      postedLine = 'Posted by ' + listing.owner_name + ' on ' + postedText
+    }
     // Spell out, in plain words, that the times above are in the viewer's own
     // local zone, the way calendar and event sites do. We add the IANA zone
     // name (like "Pacific/Honolulu") when the browser can report it.
@@ -565,23 +570,38 @@ function ListingDetailPage() {
       // stays hidden while loading or after a count-fetch failure.
       let pendingCountLine = null
       if (pendingCount !== null) {
-        pendingCountLine = <p>Pending requests: {pendingCount}</p>
+        pendingCountLine = (
+          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-background-alt text-sm text-text-muted">
+            <span className="font-medium text-text">{pendingCount}</span> pending request{pendingCount !== 1 ? 's' : ''}
+          </div>
+        )
       }
       ownerActionsArea = (
-        <>
-          <p>
-            <Link to={'/listings/' + listing.id + '/edit'}>Edit listing</Link>
-          </p>
-          <p>
-            <button onClick={handleDeactivate} disabled={isDeactivating}>
-              Deactivate listing
-            </button>
-          </p>
+        <div className="border-t border-border pt-6 mt-6 space-y-4">
+          <h3 className="text-sm font-semibold text-text uppercase tracking-wide">Owner Actions</h3>
           {pendingCountLine}
-          <p>
-            <Link to={'/requests?listing=' + listing.id}>View requests</Link>
-          </p>
-        </>
+          <div className="flex flex-wrap items-center gap-3">
+            <Link
+              to={'/listings/' + listing.id + '/edit'}
+              className="inline-flex items-center px-5 py-2 text-sm font-medium text-primary-600 border border-primary-200 rounded-lg hover:bg-primary-50 transition-colors"
+            >
+              Edit listing
+            </Link>
+            <button
+              onClick={handleDeactivate}
+              disabled={isDeactivating}
+              className="inline-flex items-center px-5 py-2 text-sm font-medium text-error border border-red-200 rounded-lg hover:bg-error-bg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isDeactivating ? 'Deactivating…' : 'Deactivate listing'}
+            </button>
+            <Link
+              to={'/requests?listing=' + listing.id}
+              className="inline-flex items-center px-5 py-2 text-sm font-medium text-text-muted border border-border rounded-lg hover:bg-background-alt transition-colors"
+            >
+              View requests
+            </Link>
+          </div>
+        </div>
       )
     }
 
@@ -591,9 +611,17 @@ function ListingDetailPage() {
     // listing cannot flash for one frame after a route change.
     let deactivateMessageArea = null
     if (deactivated === true) {
-      deactivateMessageArea = <p>{deactivateMessage}</p>
+      deactivateMessageArea = (
+        <div className="rounded-lg bg-success-bg border border-green-200 px-4 py-3 text-sm text-success mt-4">
+          {deactivateMessage}
+        </div>
+      )
     } else if (deactivateMessage !== '') {
-      deactivateMessageArea = <p role="alert">{deactivateMessage}</p>
+      deactivateMessageArea = (
+        <div className="rounded-lg bg-error-bg border border-red-200 px-4 py-3 text-sm text-error mt-4" role="alert">
+          {deactivateMessage}
+        </div>
+      )
     }
     // The non-owner request area. What it shows depends on the viewer's own claim
     // on this listing:
@@ -619,39 +647,62 @@ function ListingDetailPage() {
       } else if (myClaim === null) {
         // No request made yet, so show the form.
         requestArea = (
-          <form onSubmit={handleRequestSubmit}>
-            <label>
-              Request quantity:{' '}
-              <input
-                type="number"
-                min="1"
-                max={listing.remaining_quantity}
-                step="1"
-                required
-                value={requestQuantity}
-                onChange={(changeEvent) => setRequestQuantity(changeEvent.target.value)}
-              />
-            </label>{' '}
-            <button type="submit" disabled={isRequesting}>
-              Submit
-            </button>
-          </form>
+          <div className="border-t border-border pt-6 mt-6">
+            <h3 className="text-sm font-semibold text-text uppercase tracking-wide mb-4">Request this item</h3>
+            <form onSubmit={handleRequestSubmit} className="flex items-end gap-3">
+              <div className="flex-1 max-w-[200px]">
+                <label className="block text-sm font-medium text-text mb-1.5">Quantity</label>
+                <input
+                  type="number"
+                  min="1"
+                  max={listing.remaining_quantity}
+                  step="1"
+                  required
+                  value={requestQuantity}
+                  onChange={(changeEvent) => setRequestQuantity(changeEvent.target.value)}
+                  className={inputClasses}
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={isRequesting}
+                className="px-6 py-2.5 text-sm font-semibold text-text-inverse bg-primary-600 rounded-lg hover:bg-primary-700 shadow-sm transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isRequesting ? 'Submitting…' : 'Submit request'}
+              </button>
+            </form>
+          </div>
         )
         // The failure line, announced with role="alert".
         if (requestMessage !== '') {
-          requestMessageArea = <p role="alert">{requestMessage}</p>
+          requestMessageArea = (
+            <div className="rounded-lg bg-error-bg border border-red-200 px-4 py-3 text-sm text-error mt-4" role="alert">
+              {requestMessage}
+            </div>
+          )
         }
       } else if (myClaim.status === 'requested') {
         // The request is in, waiting on the owner. Show the pending line.
         const requestedAtText = formatTimestamp(myClaim.requested_at)
         requestArea = (
-          <p>
-            You requested {myClaim.requested_quantity} quantity on: {requestedAtText}
-          </p>
+          <div className="border-t border-border pt-6 mt-6">
+            <div className="rounded-lg bg-warning-bg border border-amber-200 px-4 py-3">
+              <p className="text-sm font-medium text-warning">Request pending</p>
+              <p className="text-sm text-text-muted mt-1">
+                You requested {myClaim.requested_quantity} quantity on {requestedAtText}
+              </p>
+            </div>
+          </div>
         )
       } else if (myClaim.status === 'denied') {
         // Denied. The spec asks for a plain "was denied" line, nothing more.
-        requestArea = <p>Your request was denied.</p>
+        requestArea = (
+          <div className="border-t border-border pt-6 mt-6">
+            <div className="rounded-lg bg-error-bg border border-red-200 px-4 py-3">
+              <p className="text-sm font-medium text-error">Your request was denied.</p>
+            </div>
+          </div>
+        )
       } else if (myClaim.status === 'approved') {
         // Approved. Show the approved quantity and when, plus the Exchange Thread
         // link and a confirm pickup action.
@@ -668,20 +719,35 @@ function ListingDetailPage() {
         // at a placeholder route for now.
         const exchangeThreadTarget = '/exchange-thread?claim=' + myClaim.id
         requestArea = (
-          <>
-            <p>
-              Your request was approved for {approvedQuantity} on: {approvedAtText}.
-            </p>
-            <p>
-              <Link to={exchangeThreadTarget}>Arrange the Exchange</Link>
-            </p>
-            <p>
-              <button type="button" disabled={isConfirmingPickup} onClick={handleConfirmPickup}>
-                Confirm pickup
-              </button>
-            </p>
-            {pickupMessage !== '' ? <p role="alert">{pickupMessage}</p> : null}
-          </>
+          <div className="border-t border-border pt-6 mt-6">
+            <div className="rounded-lg bg-success-bg border border-green-200 px-4 py-3">
+              <p className="text-sm font-medium text-success">Request approved</p>
+              <p className="text-sm text-text-muted mt-1">
+                Your request was approved for {approvedQuantity} on: {approvedAtText}.
+              </p>
+              <div className="flex flex-wrap items-center gap-3 mt-3">
+                <Link
+                  to={exchangeThreadTarget}
+                  className="inline-flex items-center text-sm font-medium text-primary-600 hover:text-primary-700"
+                >
+                  Arrange the Exchange →
+                </Link>
+                <button
+                  type="button"
+                  disabled={isConfirmingPickup}
+                  onClick={handleConfirmPickup}
+                  className="inline-flex items-center px-4 py-1.5 text-sm font-semibold text-text-inverse bg-primary-600 rounded-lg hover:bg-primary-700 shadow-sm transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Confirm pickup
+                </button>
+              </div>
+              {pickupMessage !== '' ? (
+                <p className="text-sm text-error mt-2" role="alert">
+                  {pickupMessage}
+                </p>
+              ) : null}
+            </div>
+          </div>
         )
       } else if (myClaim.status === 'picked_up') {
         let pickedUpAtValue = ''
@@ -691,18 +757,32 @@ function ListingDetailPage() {
         const pickedUpAtText = formatTimestamp(pickedUpAtValue)
         const exchangeThreadTarget = '/exchange-thread?claim=' + myClaim.id
         requestArea = (
-          <>
-            <p>Your pickup was confirmed on: {pickedUpAtText}.</p>
-            <p>
-              <Link to={exchangeThreadTarget}>Contact the Provider</Link>
-            </p>
-          </>
+          <div className="border-t border-border pt-6 mt-6">
+            <div className="rounded-lg bg-info-bg border border-blue-200 px-4 py-3">
+              <p className="text-sm font-medium text-info">Pickup confirmed</p>
+              <p className="text-sm text-text-muted mt-1">
+                Your pickup was confirmed on: {pickedUpAtText}.
+              </p>
+              <Link
+                to={exchangeThreadTarget}
+                className="inline-flex items-center mt-3 text-sm font-medium text-primary-600 hover:text-primary-700"
+              >
+                Contact the Provider →
+              </Link>
+            </div>
+          </div>
         )
       } else {
         // A withdrawn (cancelled) request. The member already requested this
         // listing, so the backend will not accept another; show a short line
         // instead of the form.
-        requestArea = <p>You withdrew your request.</p>
+        requestArea = (
+          <div className="border-t border-border pt-6 mt-6">
+            <div className="rounded-lg bg-background-alt border border-border px-4 py-3">
+              <p className="text-sm text-text-muted">You withdrew your request.</p>
+            </div>
+          </div>
+        )
       }
     }
 
@@ -710,27 +790,57 @@ function ListingDetailPage() {
     // is left) are two different numbers, so label each on its own line.
     contentArea = (
       <article>
-        <h2>{listing.title}</h2>
-        <p>{listing.description}</p>
-        <p>Posted on: {postedText}</p>
-        <p>Category: {listing.category}</p>
-        <p>Quantity available: {listing.total_quantity}</p>
-        <p>Remaining quantity: {listing.remaining_quantity}</p>
-        <p>Dietary tags: {dietaryText}</p>
-        <p>Allergen tags: {allergenText}</p>
-        <p>Pickup Window Start: {pickupStartText}</p>
-        <p>Pickup Window End: {pickupEndText}</p>
+        <div className="flex items-start justify-between mb-4">
+          <h2 className="text-2xl font-bold text-text">{listing.title}</h2>
+          {listing.category && (
+            <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-primary-50 text-primary-700 shrink-0 ml-4">
+              {listing.category}
+            </span>
+          )}
+        </div>
+        <p className="text-text-muted leading-relaxed mb-6">{listing.description}</p>
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+          <div className="bg-background-alt rounded-lg p-3 text-center">
+            <p className="text-xs text-text-muted uppercase tracking-wide">Available</p>
+            <p className="text-xl font-bold text-text mt-1">{listing.total_quantity}</p>
+          </div>
+          <div className="bg-background-alt rounded-lg p-3 text-center">
+            <p className="text-xs text-text-muted uppercase tracking-wide">Remaining</p>
+            <p className="text-xl font-bold text-primary-600 mt-1">{listing.remaining_quantity}</p>
+          </div>
+          <div className="bg-background-alt rounded-lg p-3 text-center">
+            <p className="text-xs text-text-muted uppercase tracking-wide">Dietary</p>
+            <p className="text-sm font-medium text-text mt-1">{dietaryText}</p>
+          </div>
+          <div className="bg-background-alt rounded-lg p-3 text-center">
+            <p className="text-xs text-text-muted uppercase tracking-wide">Allergens</p>
+            <p className="text-sm font-medium text-text mt-1">{allergenText}</p>
+          </div>
+        </div>
+
+        <div className="bg-background-alt rounded-lg p-4 mb-4">
+          <p className="text-xs text-text-muted uppercase tracking-wide mb-2">Pickup Window</p>
+          <p className="text-sm text-text">
+            {pickupStartText} — {pickupEndText}
+          </p>
+          <p className="text-xs text-text-muted mt-1">{timeZoneNote}</p>
+        </div>
+
+        <p className="text-xs text-text-muted">{postedLine}</p>
+
         {requestArea}
         {requestMessageArea}
-        <p>
-          <small>{timeZoneNote}</small>
-        </p>
         {ownerActionsArea}
         {deactivateMessageArea}
       </article>
     )
   } else if (result.status === 404) {
-    contentArea = <p role="alert">This listing is unavailable.</p>
+    contentArea = (
+      <div className="rounded-lg bg-error-bg border border-red-200 px-4 py-3 text-sm text-error" role="alert">
+        This listing is unavailable.
+      </div>
+    )
   } else {
     // Any other HTTP failure (for example 403 or 503). Show the detail message
     // and the raw response, like the create page does.
@@ -745,8 +855,10 @@ function ListingDetailPage() {
     }
     contentArea = (
       <>
-        <p role="alert">{detailMessage}</p>
-        <pre style={{ border: '1px solid black', padding: '10px', whiteSpace: 'pre-wrap' }}>
+        <div className="rounded-lg bg-error-bg border border-red-200 px-4 py-3 text-sm text-error" role="alert">
+          {detailMessage}
+        </div>
+        <pre className="mt-4 text-xs font-mono bg-background border border-border rounded-lg px-4 py-3 whitespace-pre-wrap text-text-muted">
           {formatApiResult(result.ok, result.status, result.data)}
         </pre>
       </>
@@ -754,12 +866,14 @@ function ListingDetailPage() {
   }
 
   return (
-    <section>
-      <h1>Listing details</h1>
-      {loggedInArea}
-      {contentArea}
-    </section>
+    <div className="max-w-3xl mx-auto">
+      <h1 className="text-3xl font-bold text-text mb-6">Listing details</h1>
+      <div className="bg-surface rounded-xl border border-border p-8 shadow-sm">
+        {contentArea}
+      </div>
+    </div>
   )
 }
 
 export default ListingDetailPage
+

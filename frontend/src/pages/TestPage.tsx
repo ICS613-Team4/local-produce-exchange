@@ -70,25 +70,51 @@ function TestPage() {
   }
 
   return (
-    <section>
-      <h1>Test Page</h1>
-      <p>
+    <div className="max-w-3xl mx-auto">
+      <h1 className="text-3xl font-bold text-text mb-2">Test Page</h1>
+      <p className="text-sm text-text-muted mb-6">
         Use the buttons below to call the sample backend endpoint and see the raw
         request and response. This page is a development tool and is open to
         everyone, logged in or not.
       </p>
-      <button onClick={handleGoodClick}>Call backend API with valid JSON</button>
-      <button onClick={handleBadClick}>Call backend API with wrong type</button>
-      <button onClick={handleMalformedClick}>Call backend API with malformed JSON</button>
-      <h2>Sent to backend</h2>
-      <pre style={{ border: '1px solid black', padding: '10px', whiteSpace: 'pre-wrap' }}>
-        {requestDisplayText}
-      </pre>
-      <h2>Backend response</h2>
-      <pre style={{ border: '1px solid black', padding: '10px', whiteSpace: 'pre-wrap' }}>
-        {responseDisplayText}
-      </pre>
-    </section>
+
+      <div className="flex flex-wrap gap-3 mb-8">
+        <button
+          onClick={handleGoodClick}
+          className="px-5 py-2.5 text-sm font-semibold text-text-inverse bg-primary-600 rounded-lg hover:bg-primary-700 shadow-sm transition-all duration-150"
+        >
+          Valid JSON
+        </button>
+        <button
+          onClick={handleBadClick}
+          className="px-5 py-2.5 text-sm font-medium text-warning border border-amber-200 rounded-lg hover:bg-warning-bg transition-colors"
+        >
+          Wrong type
+        </button>
+        <button
+          onClick={handleMalformedClick}
+          className="px-5 py-2.5 text-sm font-medium text-error border border-red-200 rounded-lg hover:bg-error-bg transition-colors"
+        >
+          Malformed JSON
+        </button>
+      </div>
+
+      <div className="space-y-6">
+        <div className="bg-surface rounded-xl border border-border p-6 shadow-sm">
+          <h2 className="text-sm font-semibold text-text uppercase tracking-wide mb-3">Sent to backend</h2>
+          <pre className="text-xs font-mono bg-background border border-border rounded-lg px-4 py-3 whitespace-pre-wrap text-text-muted overflow-x-auto">
+            {requestDisplayText}
+          </pre>
+        </div>
+
+        <div className="bg-surface rounded-xl border border-border p-6 shadow-sm">
+          <h2 className="text-sm font-semibold text-text uppercase tracking-wide mb-3">Backend response</h2>
+          <pre className="text-xs font-mono bg-background border border-border rounded-lg px-4 py-3 whitespace-pre-wrap text-text-muted overflow-x-auto">
+            {responseDisplayText}
+          </pre>
+        </div>
+      </div>
+    </div>
   )
 }
 

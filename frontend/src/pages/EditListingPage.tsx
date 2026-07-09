@@ -98,8 +98,10 @@ function EditListingPage() {
   const params = useParams()
   const listingId = params.id ?? ''
 
+  // The shared nav shows who is logged in, so this page keeps only the name
+  // setter, which the 401 paths use to clear a stale session.
   const [memberId, setMemberId] = useState(window.localStorage.getItem('memberId') ?? '')
-  const [memberName, setMemberName] = useState(window.localStorage.getItem('memberName') ?? '')
+  const [, setMemberName] = useState(window.localStorage.getItem('memberName') ?? '')
 
   const [result, setResult] = useState<ListingResult | null>(null)
   const [resultListingId, setResultListingId] = useState('')
@@ -288,140 +290,177 @@ function EditListingPage() {
     }
   }
 
-  // Show a short status line when logged in. The shared nav owns the log in and
-  // log out controls now, so a logged-out viewer needs nothing here.
-  let loggedInArea = null
-  if (memberId !== '') {
-    let loggedInLine = 'Logged in.'
-    if (memberName !== '') {
-      loggedInLine = 'Logged in as ' + memberName + '.'
-    }
-    loggedInArea = <p>{loggedInLine}</p>
-  }
+  const inputClasses = 'w-full px-4 py-2.5 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-150'
+  const labelClasses = 'block text-sm font-medium text-text mb-1.5'
 
   let contentArea
   if (memberId === '') {
-    contentArea = <p role="alert">{notLoggedInMessage}</p>
+    contentArea = (
+      <div className="rounded-lg bg-error-bg border border-red-200 px-4 py-3 text-sm text-error" role="alert">
+        {notLoggedInMessage}
+      </div>
+    )
   } else if (result === null || resultListingId !== listingId) {
-    contentArea = <p>Loading the listing...</p>
+    contentArea = <p className="text-text-muted text-sm">Loading the listing...</p>
   } else if (result.errorMessage !== '') {
-    contentArea = <p role="alert">{result.errorMessage}</p>
+    contentArea = (
+      <div className="rounded-lg bg-error-bg border border-red-200 px-4 py-3 text-sm text-error" role="alert">
+        {result.errorMessage}
+      </div>
+    )
   } else if (result.ok) {
     const listing = result.data as ListingDetail
     if (listing.owner_id !== memberId) {
-      contentArea = <p role="alert">You can only edit your own listing.</p>
+      contentArea = (
+        <div className="rounded-lg bg-error-bg border border-red-200 px-4 py-3 text-sm text-error" role="alert">
+          You can only edit your own listing.
+        </div>
+      )
     } else {
       let successArea = <></>
       if (successMessage !== '') {
         successArea = (
-          <>
-            <p>{successMessage}</p>
-            <p>
-              <Link to={'/listings/' + listing.id}>View the updated listing</Link>
-            </p>
-          </>
+          <div className="rounded-lg bg-success-bg border border-green-200 px-4 py-3 text-sm text-success mb-4">
+            <p className="font-medium">{successMessage}</p>
+            <Link
+              to={'/listings/' + listing.id}
+              className="text-primary-600 hover:text-primary-700 font-medium mt-1 inline-block"
+            >
+              View the updated listing →
+            </Link>
+          </div>
         )
       }
 
       let errorArea = <></>
       if (errorMessage !== '') {
-        errorArea = <p role="alert">{errorMessage}</p>
+        errorArea = (
+          <div className="rounded-lg bg-error-bg border border-red-200 px-4 py-3 text-sm text-error mb-4" role="alert">
+            {errorMessage}
+          </div>
+        )
       }
 
       contentArea = (
         <>
           {successArea}
           {errorArea}
-          <form onSubmit={handleSubmit}>
-            <p>
-              <label htmlFor="listing-title">Title</label>{' '}
+          <form onSubmit={handleSubmit} className="space-y-5">
+            <div>
+              <label htmlFor="listing-title" className={labelClasses}>Title</label>
               <input
                 id="listing-title"
                 type="text"
                 required
                 value={title}
                 onChange={handleTitleChange}
+                className={inputClasses}
               />
-            </p>
-            <p>
-              <label htmlFor="listing-description">Description</label>{' '}
+            </div>
+            <div>
+              <label htmlFor="listing-description" className={labelClasses}>Description</label>
               <textarea
                 id="listing-description"
                 required
                 value={description}
                 onChange={handleDescriptionChange}
+                className={inputClasses + ' min-h-[100px] resize-y'}
               />
-            </p>
-            <p>
-              <label htmlFor="listing-category">Category</label>{' '}
-              <input
-                id="listing-category"
-                type="text"
-                required
-                value={category}
-                onChange={handleCategoryChange}
-              />
-            </p>
-            <p>
-              <label htmlFor="listing-quantity">Quantity available</label>{' '}
-              <input
-                id="listing-quantity"
-                type="number"
-                required
-                min="1"
-                step="1"
-                value={totalQuantity}
-                onChange={handleTotalQuantityChange}
-              />
-            </p>
-            <p>
-              <label htmlFor="listing-dietary">Dietary tags (comma-separated)</label>{' '}
-              <input
-                id="listing-dietary"
-                type="text"
-                value={dietaryTags}
-                onChange={handleDietaryTagsChange}
-              />
-            </p>
-            <p>
-              <label htmlFor="listing-allergen">Allergen tags (comma-separated)</label>{' '}
-              <input
-                id="listing-allergen"
-                type="text"
-                value={allergenTags}
-                onChange={handleAllergenTagsChange}
-              />
-            </p>
-            <p>
-              <label htmlFor="listing-pickup-start">Pickup start</label>{' '}
-              <input
-                id="listing-pickup-start"
-                type="datetime-local"
-                required
-                value={pickupStart}
-                onChange={handlePickupStartChange}
-              />
-            </p>
-            <p>
-              <label htmlFor="listing-pickup-end">Pickup end</label>{' '}
-              <input
-                id="listing-pickup-end"
-                type="datetime-local"
-                required
-                min={pickupStart}
-                value={pickupEnd}
-                onChange={handlePickupEndChange}
-              />
-            </p>
-            <button type="submit" disabled={isSubmitting}>
-              Save changes
-            </button>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label htmlFor="listing-category" className={labelClasses}>Category</label>
+                <input
+                  id="listing-category"
+                  type="text"
+                  required
+                  value={category}
+                  onChange={handleCategoryChange}
+                  className={inputClasses}
+                />
+              </div>
+              <div>
+                <label htmlFor="listing-quantity" className={labelClasses}>Quantity available</label>
+                <input
+                  id="listing-quantity"
+                  type="number"
+                  required
+                  min="1"
+                  step="1"
+                  value={totalQuantity}
+                  onChange={handleTotalQuantityChange}
+                  className={inputClasses}
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label htmlFor="listing-dietary" className={labelClasses}>Dietary tags</label>
+                <input
+                  id="listing-dietary"
+                  type="text"
+                  value={dietaryTags}
+                  onChange={handleDietaryTagsChange}
+                  className={inputClasses}
+                />
+                <p className="text-xs text-text-muted mt-1">Comma-separated</p>
+              </div>
+              <div>
+                <label htmlFor="listing-allergen" className={labelClasses}>Allergen tags</label>
+                <input
+                  id="listing-allergen"
+                  type="text"
+                  value={allergenTags}
+                  onChange={handleAllergenTagsChange}
+                  className={inputClasses}
+                />
+                <p className="text-xs text-text-muted mt-1">Comma-separated</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label htmlFor="listing-pickup-start" className={labelClasses}>Pickup start</label>
+                <input
+                  id="listing-pickup-start"
+                  type="datetime-local"
+                  required
+                  value={pickupStart}
+                  onChange={handlePickupStartChange}
+                  className={inputClasses}
+                />
+              </div>
+              <div>
+                <label htmlFor="listing-pickup-end" className={labelClasses}>Pickup end</label>
+                <input
+                  id="listing-pickup-end"
+                  type="datetime-local"
+                  required
+                  min={pickupStart}
+                  value={pickupEnd}
+                  onChange={handlePickupEndChange}
+                  className={inputClasses}
+                />
+              </div>
+            </div>
+            <div className="pt-2">
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="w-full sm:w-auto px-8 py-2.5 text-sm font-semibold text-text-inverse bg-primary-600 rounded-lg hover:bg-primary-700 shadow-sm hover:shadow transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isSubmitting ? 'Saving…' : 'Save changes'}
+              </button>
+            </div>
           </form>
         </>
       )
     }
   } else if (result.status === 404) {
-    contentArea = <p role="alert">This listing is unavailable.</p>
+    contentArea = (
+      <div className="rounded-lg bg-error-bg border border-red-200 px-4 py-3 text-sm text-error" role="alert">
+        This listing is unavailable.
+      </div>
+    )
   } else {
     let detail: unknown = undefined
     if (typeof result.data === 'object' && result.data !== null) {
@@ -432,15 +471,20 @@ function EditListingPage() {
     if (typeof detail === 'string') {
       detailMessage = detail
     }
-    contentArea = <p role="alert">{detailMessage}</p>
+    contentArea = (
+      <div className="rounded-lg bg-error-bg border border-red-200 px-4 py-3 text-sm text-error" role="alert">
+        {detailMessage}
+      </div>
+    )
   }
 
   return (
-    <section>
-      <h1>Edit listing</h1>
-      {loggedInArea}
-      {contentArea}
-    </section>
+    <div className="max-w-2xl mx-auto">
+      <div className="bg-surface rounded-xl border border-border p-8 shadow-sm">
+        <h1 className="text-2xl font-bold text-text mb-2">Edit listing</h1>
+        {contentArea}
+      </div>
+    </div>
   )
 }
 

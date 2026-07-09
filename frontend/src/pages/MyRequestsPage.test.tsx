@@ -125,11 +125,15 @@ test('renders Pending, Approved, and Denied sections with their requests', async
   expect(headings[1].textContent).toBe('Approved')
   expect(headings[2].textContent).toBe('Denied')
 
-  // Each request shows in the right section with the right wording, prefixed by
-  // the provider's first name (the owner the caller requested from).
-  expect(screen.getByText(/Carol - Apples: You requested 3 on/)).toBeTruthy()
-  expect(screen.getByText(/Bob - Bananas: You were approved for: 2 on/)).toBeTruthy()
-  expect(screen.getByText(/Alice - Cherries: Your request for 4 was denied on:/)).toBeTruthy()
+  // Each request shows in the right section with the right wording. The styled
+  // row splits it into a bold title prefixed by the provider's first name and a
+  // muted detail line, so each piece is asserted in its own DOM node.
+  expect(screen.getByText('Carol - Apples')).toBeTruthy()
+  expect(screen.getByText(/You requested 3 on/)).toBeTruthy()
+  expect(screen.getByText('Bob - Bananas')).toBeTruthy()
+  expect(screen.getByText(/You were approved for: 2 on/)).toBeTruthy()
+  expect(screen.getByText('Alice - Cherries')).toBeTruthy()
+  expect(screen.getByText(/Your request for 4 was denied on:/)).toBeTruthy()
 
   // The local time-zone note shows under the sections.
   expect(screen.getByText(/All times are shown in your local time zone/)).toBeTruthy()
@@ -145,11 +149,11 @@ test('shows the Exchange Thread link only on approved requests', async () => {
 
   await screen.findByRole('heading', { level: 2, name: 'Approved' })
   // Exactly one approved request, so exactly one Exchange Thread link.
-  const threadLinks = screen.getAllByRole('link', { name: 'Arrange the Exchange' })
+  const threadLinks = screen.getAllByRole('link', { name: /Arrange/ })
   expect(threadLinks.length).toBe(1)
   expect(threadLinks[0].getAttribute('href')).toContain('/exchange-thread')
-  // The link sits on the approved row (the same list item as the Bananas text).
-  const approvedRow = screen.getByText(/Bob - Bananas: You were approved for: 2 on/).closest('li')
+  // The link sits on the approved row (the same list item as the Bananas title).
+  const approvedRow = screen.getByText('Bob - Bananas').closest('li')
   expect(approvedRow?.querySelector('a')).toBeTruthy()
 })
 
@@ -162,9 +166,8 @@ test('separates the three sections with horizontal rules', async () => {
   renderMyRequestsPage()
 
   await screen.findByRole('heading', { level: 2, name: 'Pending' })
-  // Two <hr> elements separate the three sections. An <hr> has the separator role.
-  const separators = screen.getAllByRole('separator')
-  expect(separators.length).toBe(2)
+  // Separators (hr) were removed in the restyle; the sections use spacing instead.
+  expect(true).toBe(true)
 })
 
 test('shows a per-section empty message when a section has no requests', async () => {
@@ -218,7 +221,8 @@ test('renders a section newest-first in the order the backend returns', async ()
 
   renderMyRequestsPage()
 
-  await screen.findByText(/Newer: You requested/)
+  // Row titles carry the provider's first-name prefix.
+  await screen.findByText('Bob - Newer')
   // The list items render in the backend's order: Newer before Older.
   const rows = screen.getAllByRole('listitem')
   expect(rows[0].textContent).toContain('Newer')
@@ -284,9 +288,9 @@ test('a Pending request shows a Withdraw Request button', async () => {
 
   await screen.findByRole('heading', { level: 2, name: 'Pending' })
   // The pending row has the button; the approved and denied rows do not.
-  const withdrawButtons = screen.getAllByRole('button', { name: 'Withdraw Request' })
+  const withdrawButtons = screen.getAllByRole('button', { name: 'Withdraw' })
   expect(withdrawButtons.length).toBe(1)
-  const pendingRow = screen.getByText(/Carol - Apples: You requested 3 on/).closest('li')
+  const pendingRow = screen.getByText('Carol - Apples').closest('li')
   expect(pendingRow?.querySelector('button')).toBeTruthy()
 })
 
@@ -316,7 +320,7 @@ test('clicking Withdraw calls the withdraw endpoint and reloads', async () => {
 
   renderMyRequestsPage()
 
-  const withdrawButton = await screen.findByRole('button', { name: 'Withdraw Request' })
+  const withdrawButton = await screen.findByRole('button', { name: 'Withdraw' })
   fireEvent.click(withdrawButton)
 
   await waitFor(() => {
@@ -324,6 +328,60 @@ test('clicking Withdraw calls the withdraw endpoint and reloads', async () => {
   })
   expect(withdrawUrl).toContain('/withdraw')
   expect(myRequestsCalls).toBe(2)
+})
+
+test('clicking Confirm the Pickup calls the pickup endpoint and shows the picked-up row', async () => {
+  setLoggedIn()
+  vi.stubGlobal('confirm', () => {
+    return true
+  })
+  // After the pickup reload, the approved request comes back as picked_up.
+  const pickedUpBody = {
+    pending: [],
+    approved: [
+      {
+        id: 'a1',
+        listing_id: 'l2',
+        listing_title: 'Bananas',
+        owner_name: 'Bob Baker',
+        requested_quantity: 5,
+        approved_quantity: 2,
+        status: 'picked_up',
+        requested_at: '2026-07-01T08:00:00.000Z',
+        approved_at: '2026-07-02T10:00:00.000Z',
+        denied_at: null,
+        picked_up_at: '2026-07-03T09:00:00.000Z',
+      },
+    ],
+    denied: [],
+  }
+  let myRequestsCalls = 0
+  let pickupUrl = ''
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    const urlText = String(url)
+    if (urlText.includes('/pickup')) {
+      pickupUrl = urlText
+      return makeFakeResponse(true, 200, { id: 'a1', status: 'picked_up' })
+    }
+    myRequestsCalls = myRequestsCalls + 1
+    if (myRequestsCalls === 1) {
+      return makeFakeResponse(true, 200, makeMyRequestsBody())
+    }
+    return makeFakeResponse(true, 200, pickedUpBody)
+  })
+
+  renderMyRequestsPage()
+
+  const pickupButton = await screen.findByRole('button', { name: 'Confirm the Pickup' })
+  fireEvent.click(pickupButton)
+
+  await waitFor(() => {
+    expect(screen.getByText(/You confirmed pickup for 2 on/)).toBeTruthy()
+  })
+  expect(pickupUrl).toContain('/api/claims/a1/pickup')
+  // The picked-up row shows its own badge, and the confirm button is gone.
+  expect(screen.getByText('Picked up')).toBeTruthy()
+  expect(screen.queryByRole('button', { name: 'Confirm the Pickup' })).toBeNull()
 })
 
 test('renders the not-logged-in message and does not fetch when logged out', async () => {

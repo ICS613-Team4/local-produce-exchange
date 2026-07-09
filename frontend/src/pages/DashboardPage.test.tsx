@@ -139,30 +139,29 @@ async function waitForStateUpdates() {
 test('shows the title and the member action links', () => {
   renderDashboard()
 
-  expect(screen.getByRole('heading', { name: 'Member Dashboard' })).toBeTruthy()
+  expect(screen.getByRole('heading', { name: /Welcome back/ })).toBeTruthy()
 
-  const browseLink = screen.getByRole('link', { name: 'Browse All Listings' })
+  const browseLink = screen.getByRole('link', { name: /Browse/i })
   expect(browseLink.getAttribute('href')).toBe('/browse')
 
-  const createLink = screen.getByRole('link', { name: 'Create a Listing' })
+  const createLink = screen.getByRole('link', { name: 'New Listing' })
   expect(createLink.getAttribute('href')).toBe('/listings/create')
 
-  // The new nav link to the My Listings page.
-  const myListingsLink = screen.getByRole('link', { name: 'See All My Listings' })
+  const myListingsLink = screen.getByRole('link', { name: /See all listings/i })
   expect(myListingsLink.getAttribute('href')).toBe('/my-listings')
 
-  const inviteLink = screen.getByRole('link', { name: 'Invite a New Member' })
+  const inviteLink = screen.getByRole('link', { name: 'Invite' })
   expect(inviteLink.getAttribute('href')).toBe('/invite')
 
-  const profileLink = screen.getByRole('link', { name: 'View Your Profile' })
+  const profileLink = screen.getByRole('link', { name: 'Profile' })
   expect(profileLink.getAttribute('href')).toBe('/profile')
 
   const incomingRequestsLink = screen.getByRole('link', {
-    name: 'See All Incoming Requests',
+    name: /See all incoming/i,
   })
   expect(incomingRequestsLink.getAttribute('href')).toBe('/requests')
 
-  const myRequestsLink = screen.getByRole('link', { name: 'See My Requests to Other Members' })
+  const myRequestsLink = screen.getByRole('link', { name: /See all my requests/i })
   expect(myRequestsLink.getAttribute('href')).toBe('/my-requests')
 })
 
@@ -187,7 +186,7 @@ test('shows the latest-listings preview for a logged-in member', async () => {
   const timeZoneOptions = { timeZoneName: 'short' as const }
   const postedExpected = new Date('2026-06-19T00:00:00.000Z').toLocaleString(undefined, timeZoneOptions)
   const previewListItem = previewLink.closest('li')
-  expect(previewListItem?.textContent).toContain('(posted on: ' + postedExpected + ')')
+  expect(previewListItem?.textContent).toContain(postedExpected)
 
   // The preview asks for the five newest listings with the stored member id.
   expect(listingsUrl).toBe('/api/listings?limit=5')
@@ -447,7 +446,7 @@ test('Outgoing requests shows only pending requests, with a plain title and a Wi
   expect(await screen.findByText(/Their Lemons/)).toBeTruthy()
   // The outgoing title is plain text, not a link.
   expect(screen.queryByRole('link', { name: 'Their Lemons' })).toBeNull()
-  expect(screen.getByRole('button', { name: 'Withdraw Request' })).toBeTruthy()
+  expect(screen.getByRole('button', { name: 'Withdraw' })).toBeTruthy()
 })
 
 test('clicking Withdraw calls the withdraw endpoint and reloads', async () => {
@@ -473,7 +472,7 @@ test('clicking Withdraw calls the withdraw endpoint and reloads', async () => {
 
   renderDashboard()
 
-  const withdrawButton = await screen.findByRole('button', { name: 'Withdraw Request' })
+  const withdrawButton = await screen.findByRole('button', { name: 'Withdraw' })
   fireEvent.click(withdrawButton)
 
   await waitFor(() => {
@@ -494,18 +493,16 @@ test('the section links point to the requests, my-requests, and my-listings page
   // Wait for a section to finish loading so the links are present.
   expect(await screen.findByText('No incoming requests.')).toBeTruthy()
 
-  // Two links now read "See All Incoming Requests" (the nav bullet and the
-  // Incoming section), and both point to the same page.
-  const seeAllRequestsLinks = screen.getAllByRole('link', { name: 'See All Incoming Requests' })
+  // Two links now point to the incoming queue.
+  const seeAllRequestsLinks = screen.getAllByRole('link', { name: /See all incoming/i })
   expect(seeAllRequestsLinks.length).toBeGreaterThan(0)
   expect(seeAllRequestsLinks[0].getAttribute('href')).toBe('/requests')
 
-  const seeAllYours = screen.getByRole('link', { name: 'See All My Requests' })
+  const seeAllYours = screen.getByRole('link', { name: /See all my requests/i })
   expect(seeAllYours.getAttribute('href')).toBe('/my-requests')
 
-  // Two links now read "See All My Listings" (the nav bullet and the My
-  // Active Listings section), and both point to the same page.
-  const browseMineLinks = screen.getAllByRole('link', { name: 'See All My Listings' })
+  // The My Active Listings card links to the full listings page.
+  const browseMineLinks = screen.getAllByRole('link', { name: /See all listings/i })
   expect(browseMineLinks.length).toBeGreaterThan(0)
   expect(browseMineLinks[0].getAttribute('href')).toBe('/my-listings')
 })
@@ -604,7 +601,7 @@ test('a failed withdraw shows the server message via an alert', async () => {
 
   renderDashboard()
 
-  const withdrawButton = await screen.findByRole('button', { name: 'Withdraw Request' })
+  const withdrawButton = await screen.findByRole('button', { name: 'Withdraw' })
   fireEvent.click(withdrawButton)
   await waitForStateUpdates()
 

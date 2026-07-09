@@ -448,6 +448,17 @@ def get_listing(
     if category is None:
         category = ""
 
+    # Look up the owner's name so the page can show "Posted by <name>". A
+    # lookup failure or a missing member just leaves the name empty; the
+    # listing itself still loads.
+    owner_name = ""
+    try:
+        owner_row = session.scalars(select(Member).where(Member.id == row.owner_id)).first()
+        if owner_row is not None:
+            owner_name = owner_row.name
+    except Exception as error:
+        logger.error("Reading the listing owner failed: %s", error)
+
     # Build the response from the stored row: the ids as strings (same as the
     # create response), the coerced text, the tag lists, the two pickup times
     # pulled from the range above, and the status and created_at.
@@ -465,6 +476,7 @@ def get_listing(
         pickup_end=pickup_end,
         status=row.status,
         created_at=row.created_at,
+        owner_name=owner_name,
     )
 
 

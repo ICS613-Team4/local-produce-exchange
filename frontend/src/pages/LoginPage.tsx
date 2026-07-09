@@ -127,17 +127,25 @@ function LoginPage() {
     let loggedInSuccessArea = <></>
     if (justRegistered) {
       loggedInSuccessArea = (
-        <p className="success-message" role="status">
+        <div className="rounded-lg bg-success-bg border border-green-200 px-4 py-3 text-sm text-success mb-4" role="status">
           Your account was created.
-        </p>
+        </div>
       )
     }
     return (
-      <section>
-        <h1>Log in</h1>
-        {loggedInSuccessArea}
-        <p>{alreadyLoggedInLine}</p>
-      </section>
+      <div className="max-w-md mx-auto">
+        <div className="bg-surface rounded-xl border border-border p-8 shadow-sm">
+          <h1 className="text-2xl font-bold text-text mb-4">Log in</h1>
+          {loggedInSuccessArea}
+          <p className="text-text-muted">{alreadyLoggedInLine}</p>
+          <Link
+            to="/dashboard"
+            className="mt-6 inline-flex items-center justify-center w-full px-4 py-2.5 text-sm font-semibold text-text-inverse bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors"
+          >
+            Go to Dashboard
+          </Link>
+        </div>
+      </div>
     )
   }
 
@@ -147,57 +155,77 @@ function LoginPage() {
   let successArea = <></>
   if (justRegistered) {
     successArea = (
-      <p className="success-message" role="status">
+      <div className="rounded-lg bg-success-bg border border-green-200 px-4 py-3 text-sm text-success mb-4" role="status">
         Your account was created. Please log in.
-      </p>
+      </div>
     )
   }
 
   // Build the error area only when there is an error to show.
   let errorArea = <></>
   if (errorMessage !== '') {
-    errorArea = <p role="alert">{errorMessage}</p>
+    errorArea = (
+      <div className="rounded-lg bg-error-bg border border-red-200 px-4 py-3 text-sm text-error mt-4" role="alert">
+        {errorMessage}
+      </div>
+    )
   }
 
+  const inputClasses = 'w-full px-4 py-2.5 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-150'
+  const labelClasses = 'block text-sm font-medium text-text mb-1.5'
+
   return (
-    <section>
-      <h1>Log in</h1>
-      <p>Sign in with your registered email and password.</p>
-      {successArea}
-      <form onSubmit={handleSubmit}>
-        <p>
-          <label htmlFor="login-email">Email</label>{' '}
-          <input
-            id="login-email"
-            type="email"
-            autoComplete="username"
-            required
-            value={email}
-            onChange={handleEmailChange}
-          />
+    <div className="max-w-md mx-auto">
+      <div className="bg-surface rounded-xl border border-border p-8 shadow-sm">
+        <h1 className="text-2xl font-bold text-text mb-2">Log in</h1>
+        <p className="text-sm text-text-muted mb-6">Sign in with your registered email and password.</p>
+        {successArea}
+        <form onSubmit={handleSubmit} className="space-y-5">
+          <div>
+            <label htmlFor="login-email" className={labelClasses}>Email</label>
+            <input
+              id="login-email"
+              type="email"
+              autoComplete="username"
+              required
+              value={email}
+              onChange={handleEmailChange}
+              className={inputClasses}
+              placeholder="you@example.com"
+            />
+          </div>
+          <div>
+            <label htmlFor="login-password" className={labelClasses}>Password</label>
+            <input
+              id="login-password"
+              type="password"
+              autoComplete="current-password"
+              required
+              value={password}
+              onChange={handlePasswordChange}
+              className={inputClasses}
+            />
+          </div>
+          <div className="rounded-lg bg-background-alt px-4 py-3 text-xs text-text-muted">
+            For testing, use email: <code className="font-mono bg-background px-1.5 py-0.5 rounded text-primary-700">alice@example.com</code> password:{' '}
+            <code className="font-mono bg-background px-1.5 py-0.5 rounded text-primary-700">password</code>
+          </div>
+          <button
+            type="submit"
+            className="w-full px-4 py-2.5 text-sm font-semibold text-text-inverse bg-primary-600 rounded-lg hover:bg-primary-700 shadow-sm hover:shadow transition-all duration-150"
+          >
+            Log in
+          </button>
+        </form>
+        {errorArea}
+        <p className="mt-6 text-center text-sm text-text-muted">
+          Don't have an account?{' '}
+          <Link to="/register" className="font-medium text-primary-600 hover:text-primary-700">
+            Register here
+          </Link>
         </p>
-        <p>
-          <label htmlFor="login-password">Password</label>{' '}
-          <input
-            id="login-password"
-            type="password"
-            autoComplete="current-password"
-            required
-            value={password}
-            onChange={handlePasswordChange}
-          />
-        </p>
-        <p>
-          For testing, use email: <code>alice@example.com</code> password:{' '}
-          <code>password</code>
-        </p>
-        <button type="submit">Log in</button>
-      </form>
-      <p>
-        Don't have an account? <Link to="/register">Register here</Link>
-      </p>
-      {errorArea}
-    </section>
+      </div>
+    </div>
   )
 }
 

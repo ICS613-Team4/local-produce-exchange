@@ -25,18 +25,24 @@ export function formatTimestamp(isoString: string): string {
   return parsedDate.toLocaleString(undefined, formatOptions)
 }
 
-// Returns the viewer's IANA time zone name, like "Pacific/Honolulu" or
-// "America/Los_Angeles". The page shows this in a one-line note so the user
-// knows, in plain words, that the listing times are in their own local zone.
-// If the browser cannot report a zone for some reason, we return an empty
-// string and the page leaves the zone name out of its note.
+// Returns the viewer's time zone as an everyday name, like "Pacific Daylight
+// Time" or "Hawaii-Aleutian Standard Time". The page shows this in a one-line
+// note so the user knows the listing times are in their own local zone. The
+// technical IANA id (like "America/Los_Angeles") reads oddly in end-user
+// prose, so we format today's date and pull out the zone's long display name
+// instead. If the browser cannot report one, we return an empty string and
+// the page leaves the zone name out of its note.
 export function getLocalTimeZoneName(): string {
-  const resolvedOptions = Intl.DateTimeFormat().resolvedOptions()
-  const timeZoneName = resolvedOptions.timeZone
-  if (timeZoneName === undefined) {
-    return ''
+  // formatToParts breaks a formatted date into labeled pieces; the
+  // timeZoneName piece holds the human-friendly zone name.
+  const formatter = new Intl.DateTimeFormat(undefined, { timeZoneName: 'long' })
+  const parts = formatter.formatToParts(new Date())
+  for (let index = 0; index < parts.length; index = index + 1) {
+    if (parts[index].type === 'timeZoneName') {
+      return parts[index].value
+    }
   }
-  return timeZoneName
+  return ''
 }
 
 // Builds the one-line note that tells the viewer the times on the page are in

@@ -30,7 +30,7 @@ test('shows welcoming copy about the produce exchange', () => {
   // A few words from the body copy, so the test breaks if the welcome text is
   // removed but does not pin every word.
   expect(screen.getByText(/local produce exchange/)).toBeTruthy()
-  expect(screen.getByText(/Register with an invite/)).toBeTruthy()
+  expect(screen.getByText(/good food gets shared/)).toBeTruthy()
 })
 
 test('links to the login and register pages', () => {
@@ -40,7 +40,7 @@ test('links to the login and register pages', () => {
   expect(loginLink.getAttribute('href')).toBe('/login')
 
   const registerLink = screen.getByRole('link', {
-    name: 'Register with an invite from a current member',
+    name: 'Register with an invite',
   })
   expect(registerLink.getAttribute('href')).toBe('/register')
 })

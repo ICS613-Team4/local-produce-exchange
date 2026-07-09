@@ -126,7 +126,7 @@ test('wires the /test route to the test page for a logged-out visitor', () => {
   // The page heading (not the nav link of the same name) renders, which only
   // happens if App registered the route.
   expect(screen.getByRole('heading', { name: 'Test Page' })).toBeTruthy()
-  expect(screen.getByText('Call backend API with valid JSON')).toBeTruthy()
+  expect(screen.getByText('Valid JSON')).toBeTruthy()
 })
 
 test('guards the /dashboard route, showing the log-in message when logged out', () => {
@@ -212,14 +212,14 @@ test('wires the /my-listings route inside RequireAuth for a logged-in member', a
 
   // The my-listings page heading renders, which only happens if App registered
   // the route inside RequireAuth and let a logged-in member through.
-  expect(await screen.findByRole('heading', { name: 'Browse My Listings' })).toBeTruthy()
+  expect(await screen.findByRole('heading', { name: 'My Listings' })).toBeTruthy()
 })
 
 test('guards the /my-listings route, showing the log-in message when logged out', () => {
   window.history.pushState({}, '', '/my-listings')
   render(<App />)
 
-  expect(screen.queryByRole('heading', { name: 'Browse My Listings' })).toBeNull()
+  expect(screen.queryByRole('heading', { name: 'My Listings' })).toBeNull()
   const loginLink = screen.getByRole('link', { name: 'log in' })
   expect(loginLink.getAttribute('href')).toBe('/login')
 })

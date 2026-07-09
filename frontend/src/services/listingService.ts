@@ -32,6 +32,10 @@ export type ListingDetail = {
   // an "administrator deactivated this" note. Optional so the existing pages
   // that read this type (which never send it) keep type-checking.
   deactivated_by?: string | null
+  // The owner's display name. Only the GET-details endpoint fills it (the
+  // detail page shows "Posted by <name>"); the other listing endpoints send
+  // an empty string, so it is optional here for the same reason as above.
+  owner_name?: string
 }
 
 // The shape of the listing fields the page builds and sends. The two pickup

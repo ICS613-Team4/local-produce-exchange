@@ -110,6 +110,9 @@ def test_get_listing_returns_full_details_for_an_active_listing(db_session):
     assert response.pickup_start == start
     assert response.pickup_end == end
     assert response.status == "active"
+    # The owner's display name rides along so the page can show "Posted by".
+    # The helper above owns this listing, and its name is "Viewer".
+    assert response.owner_name == "Viewer"
 
 
 # --- not found: unknown id, malformed id ---

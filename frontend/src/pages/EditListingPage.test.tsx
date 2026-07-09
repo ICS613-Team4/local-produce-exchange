@@ -178,8 +178,8 @@ test('prefills the form for the owner', async () => {
   const descriptionInput = screen.getByLabelText('Description') as HTMLTextAreaElement
   const categoryInput = screen.getByLabelText('Category') as HTMLInputElement
   const quantityInput = screen.getByLabelText('Quantity available') as HTMLInputElement
-  const dietaryInput = screen.getByLabelText('Dietary tags (comma-separated)') as HTMLInputElement
-  const allergenInput = screen.getByLabelText('Allergen tags (comma-separated)') as HTMLInputElement
+  const dietaryInput = screen.getByLabelText('Dietary tags') as HTMLInputElement
+  const allergenInput = screen.getByLabelText('Allergen tags') as HTMLInputElement
   const pickupStartInput = screen.getByLabelText('Pickup start') as HTMLInputElement
   const pickupEndInput = screen.getByLabelText('Pickup end') as HTMLInputElement
 
@@ -208,7 +208,8 @@ test('shows success, keeps the page open, and re-enables the button after save',
   submitForm()
 
   expect(await screen.findByText('Your changes were saved.')).toBeTruthy()
-  const link = screen.getByRole('link', { name: 'View the updated listing' })
+  // The styled link carries a trailing arrow in its accessible name.
+  const link = screen.getByRole('link', { name: /View the updated listing/ })
   expect(link.getAttribute('href')).toBe('/listings/abc')
   expect(screen.getByRole('heading', { name: 'Edit listing' })).toBeTruthy()
   const button = screen.getByRole('button', { name: 'Save changes' }) as HTMLButtonElement
@@ -231,7 +232,7 @@ test('disables the button while the save request is in flight', async () => {
   submitForm()
 
   await waitFor(() => {
-    const button = screen.getByRole('button', { name: 'Save changes' }) as HTMLButtonElement
+    const button = screen.getByRole('button', { name: 'Saving…' }) as HTMLButtonElement
     expect(button.disabled).toBe(true)
   })
 
@@ -334,10 +335,10 @@ test('sends numeric quantity, split tags, and ISO pickup times on save', async (
   renderEditPage()
   await waitForLoadedForm()
   fireEvent.change(screen.getByLabelText('Quantity available'), { target: { value: '7' } })
-  fireEvent.change(screen.getByLabelText('Dietary tags (comma-separated)'), {
+  fireEvent.change(screen.getByLabelText('Dietary tags'), {
     target: { value: 'vegan, , organic' },
   })
-  fireEvent.change(screen.getByLabelText('Allergen tags (comma-separated)'), {
+  fireEvent.change(screen.getByLabelText('Allergen tags'), {
     target: { value: 'nuts' },
   })
   fireEvent.change(screen.getByLabelText('Pickup start'), { target: { value: '2026-07-01T09:00' } })
@@ -459,14 +460,14 @@ test('refills the form from the saved response after a successful save', async (
   renderEditPage()
   await waitForLoadedForm()
   fireEvent.change(screen.getByLabelText('Title'), { target: { value: '  Fresh Kale  ' } })
-  fireEvent.change(screen.getByLabelText('Dietary tags (comma-separated)'), {
+  fireEvent.change(screen.getByLabelText('Dietary tags'), {
     target: { value: ' Vegan , , Vegan ' },
   })
   submitForm()
 
   await screen.findByText('Your changes were saved.')
   const titleInput = screen.getByLabelText('Title') as HTMLInputElement
-  const dietaryInput = screen.getByLabelText('Dietary tags (comma-separated)') as HTMLInputElement
+  const dietaryInput = screen.getByLabelText('Dietary tags') as HTMLInputElement
   expect(titleInput.value).toBe('Fresh Kale')
   expect(dietaryInput.value).toBe('Vegan')
 })

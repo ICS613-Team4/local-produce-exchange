@@ -66,3 +66,7 @@ class ListingResponse(BaseModel):
     # one. The default keeps every existing construction site (create, browse,
     # get-details, edit) working without passing this field.
     deactivated_by: str | None = None
+    # The owner's display name, so the detail page can show "Posted by <name>".
+    # Only the GET-details route fills it; the default keeps every other
+    # construction site (create, browse, my-listings, edit) working unchanged.
+    owner_name: str = ""
