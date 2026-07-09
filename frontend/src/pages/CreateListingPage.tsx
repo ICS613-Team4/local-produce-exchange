@@ -176,100 +176,136 @@ function CreateListingPage() {
   // Build the error area only when there is an error to show.
   let errorArea = <></>
   if (errorMessage !== '') {
-    errorArea = <p role="alert">{errorMessage}</p>
+    errorArea = (
+      <div className="rounded-lg bg-error-bg border border-red-200 px-4 py-3 text-sm text-error mt-4" role="alert">
+        {errorMessage}
+      </div>
+    )
   }
 
+  const inputClasses = 'w-full px-4 py-2.5 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-150'
+  const labelClasses = 'block text-sm font-medium text-text mb-1.5'
+
   return (
-    <section>
-      <h1>Create a listing</h1>
-      <p>Fill in the details below to post a new listing.</p>
-      <form onSubmit={handleSubmit}>
-        <p>
-          <label htmlFor="listing-title">Title</label>{' '}
-          <input
-            id="listing-title"
-            type="text"
-            required
-            value={title}
-            onChange={handleTitleChange}
-          />
-        </p>
-        <p>
-          <label htmlFor="listing-description">Description</label>{' '}
-          <textarea
-            id="listing-description"
-            required
-            value={description}
-            onChange={handleDescriptionChange}
-          />
-        </p>
-        <p>
-          <label htmlFor="listing-category">Category</label>{' '}
-          <input
-            id="listing-category"
-            type="text"
-            required
-            value={category}
-            onChange={handleCategoryChange}
-          />
-        </p>
-        <p>
-          <label htmlFor="listing-quantity">Quantity available</label>{' '}
-          <input
-            id="listing-quantity"
-            type="number"
-            required
-            min="1"
-            step="1"
-            value={totalQuantity}
-            onChange={handleTotalQuantityChange}
-          />
-        </p>
-        <p>
-          <label htmlFor="listing-dietary">Dietary tags (comma-separated)</label>{' '}
-          <input
-            id="listing-dietary"
-            type="text"
-            value={dietaryTags}
-            onChange={handleDietaryTagsChange}
-          />
-        </p>
-        <p>
-          <label htmlFor="listing-allergen">Allergen tags (comma-separated)</label>{' '}
-          <input
-            id="listing-allergen"
-            type="text"
-            value={allergenTags}
-            onChange={handleAllergenTagsChange}
-          />
-        </p>
-        <p>
-          <label htmlFor="listing-pickup-start">Pickup start</label>{' '}
-          <input
-            id="listing-pickup-start"
-            type="datetime-local"
-            required
-            value={pickupStart}
-            onChange={handlePickupStartChange}
-          />
-        </p>
-        <p>
-          <label htmlFor="listing-pickup-end">Pickup end</label>{' '}
-          <input
-            id="listing-pickup-end"
-            type="datetime-local"
-            required
-            min={pickupStart}
-            value={pickupEnd}
-            onChange={handlePickupEndChange}
-          />
-        </p>
-        <button type="submit" disabled={isSubmitting}>
-          Create listing
-        </button>
-      </form>
-      {errorArea}
-    </section>
+    <div className="max-w-2xl mx-auto">
+      <div className="bg-surface rounded-xl border border-border p-8 shadow-sm">
+        <h1 className="text-2xl font-bold text-text mb-2">Create a listing</h1>
+        <p className="text-sm text-text-muted mb-6">Fill in the details below to post a new listing.</p>
+        <form onSubmit={handleSubmit} className="space-y-5">
+          <div>
+            <label htmlFor="listing-title" className={labelClasses}>Title</label>
+            <input
+              id="listing-title"
+              type="text"
+              required
+              value={title}
+              onChange={handleTitleChange}
+              className={inputClasses}
+              placeholder="e.g. Fresh Tomatoes"
+            />
+          </div>
+          <div>
+            <label htmlFor="listing-description" className={labelClasses}>Description</label>
+            <textarea
+              id="listing-description"
+              required
+              value={description}
+              onChange={handleDescriptionChange}
+              className={inputClasses + ' min-h-[100px] resize-y'}
+              placeholder="Describe what you're sharing…"
+            />
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label htmlFor="listing-category" className={labelClasses}>Category</label>
+              <input
+                id="listing-category"
+                type="text"
+                required
+                value={category}
+                onChange={handleCategoryChange}
+                className={inputClasses}
+                placeholder="e.g. Vegetables"
+              />
+            </div>
+            <div>
+              <label htmlFor="listing-quantity" className={labelClasses}>Quantity available</label>
+              <input
+                id="listing-quantity"
+                type="number"
+                required
+                min="1"
+                step="1"
+                value={totalQuantity}
+                onChange={handleTotalQuantityChange}
+                className={inputClasses}
+              />
+            </div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label htmlFor="listing-dietary" className={labelClasses}>Dietary tags</label>
+              <input
+                id="listing-dietary"
+                type="text"
+                value={dietaryTags}
+                onChange={handleDietaryTagsChange}
+                className={inputClasses}
+                placeholder="vegan, gluten-free"
+              />
+              <p className="text-xs text-text-muted mt-1">Comma-separated</p>
+            </div>
+            <div>
+              <label htmlFor="listing-allergen" className={labelClasses}>Allergen tags</label>
+              <input
+                id="listing-allergen"
+                type="text"
+                value={allergenTags}
+                onChange={handleAllergenTagsChange}
+                className={inputClasses}
+                placeholder="contains nuts"
+              />
+              <p className="text-xs text-text-muted mt-1">Comma-separated</p>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label htmlFor="listing-pickup-start" className={labelClasses}>Pickup start</label>
+              <input
+                id="listing-pickup-start"
+                type="datetime-local"
+                required
+                value={pickupStart}
+                onChange={handlePickupStartChange}
+                className={inputClasses}
+              />
+            </div>
+            <div>
+              <label htmlFor="listing-pickup-end" className={labelClasses}>Pickup end</label>
+              <input
+                id="listing-pickup-end"
+                type="datetime-local"
+                required
+                min={pickupStart}
+                value={pickupEnd}
+                onChange={handlePickupEndChange}
+                className={inputClasses}
+              />
+            </div>
+          </div>
+          <div className="pt-2">
+            <button
+              type="submit"
+              disabled={isSubmitting}
+              className="w-full sm:w-auto px-8 py-2.5 text-sm font-semibold text-text-inverse bg-primary-600 rounded-lg hover:bg-primary-700 shadow-sm hover:shadow transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isSubmitting ? 'Creating…' : 'Create listing'}
+            </button>
+          </div>
+        </form>
+        {errorArea}
+      </div>
+    </div>
   )
 }
 

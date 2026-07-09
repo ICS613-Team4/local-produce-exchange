@@ -169,16 +169,16 @@ test('renders the group with every request status in the backend order', async (
   renderRequestsPage('/requests')
 
   expect(await screen.findByText('Backyard Meyer Lemons')).toBeTruthy()
-  expect(screen.getByText('Your Remaining Quantity: 24')).toBeTruthy()
-  expect(screen.getByText(/Bob Baker requested 3/)).toBeTruthy()
-  expect(screen.getByText(/Carol Chen requested 2/)).toBeTruthy()
+  expect(screen.getByText(/24 remaining/)).toBeTruthy()
+  expect(screen.getByText('Bob Baker')).toBeTruthy()
+  expect(screen.getByText('Carol Chen')).toBeTruthy()
   // Bob's pending status and Carol's approved outcome both show.
-  expect(screen.getByText('Status: requested')).toBeTruthy()
+  expect(screen.getByText('Requested')).toBeTruthy()
   expect(screen.getByText(/Approved: 2 on/)).toBeTruthy()
 
   // Bob's row comes before Carol's, the order the backend returned.
-  const bobRow = screen.getByText(/Bob Baker requested 3/)
-  const carolRow = screen.getByText(/Carol Chen requested 2/)
+  const bobRow = screen.getByText('Bob Baker')
+  const carolRow = screen.getByText('Carol Chen')
   const relativePosition = bobRow.compareDocumentPosition(carolRow)
   expect(relativePosition & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
 })
@@ -195,8 +195,54 @@ test('shows the exchange thread link only on approved requests', async () => {
   expect(threadLinks.length).toBe(1)
   expect(threadLinks[0].getAttribute('href')).toContain('/exchange-thread?claim=c2')
 
-  const pendingRow = screen.getByText(/Bob Baker requested 3/).closest('li')
+  // The claimant name sits in its own styled span, so find the row through it.
+  const pendingRow = screen.getByText('Bob Baker').closest('li')
   expect(pendingRow?.querySelector('a')).toBeNull()
+})
+
+test('a picked-up request shows both outcome lines and the Contact the Recipient link', async () => {
+  setLoggedIn()
+  const body = {
+    groups: [
+      {
+        listing_id: 'lemons',
+        listing_title: 'Backyard Meyer Lemons',
+        remaining_quantity: 24,
+        requests: [
+          {
+            id: 'c3',
+            claimant_id: 'carol',
+            claimant_name: 'Carol Chen',
+            requested_quantity: 2,
+            approved_quantity: 2,
+            status: 'picked_up',
+            requested_at: '2026-07-01T10:00:00.000Z',
+            approved_at: '2026-07-02T10:00:00.000Z',
+            picked_up_at: '2026-07-03T09:00:00.000Z',
+            denied_at: null,
+            can_decide: false,
+            can_deny: false,
+          },
+        ],
+      },
+    ],
+  }
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, body)
+  })
+
+  renderRequestsPage('/requests')
+
+  // Both outcome lines survive: the original approval and the pickup.
+  expect(await screen.findByText(/Approved: 2 on/)).toBeTruthy()
+  expect(screen.getByText(/Picked up on/)).toBeTruthy()
+  // The badge special-cases the status text (not a literal "Picked_up").
+  expect(screen.getByText('Picked up')).toBeTruthy()
+  const recipientLink = screen.getByRole('link', { name: 'Contact the Recipient' })
+  expect(recipientLink.getAttribute('href')).toContain('/exchange-thread?claim=c3')
+  // A finished exchange offers no Approve or Deny.
+  expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Deny' })).toBeNull()
 })
 
 test('an actionable request shows Approve/Deny and a click reloads with the new status', async () => {
@@ -237,12 +283,12 @@ test('an actionable request shows Approve/Deny and a click reloads with the new 
 
   renderRequestsPage('/requests')
 
-  const approveButton = await screen.findByRole('button', { name: 'Approve this request' })
+  const approveButton = await screen.findByRole('button', { name: 'Approve' })
   fireEvent.click(approveButton)
 
   // After the reload there are no actionable rows, so the button is gone.
   await waitFor(() => {
-    expect(screen.queryByRole('button', { name: 'Approve this request' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
   })
   expect(decideUrl).toContain('/api/claims/c1/approve')
   expect(getCalls).toBe(2)
@@ -273,7 +319,7 @@ test('denying an actionable request sends a PATCH to the deny path', async () =>
 
   renderRequestsPage('/requests')
 
-  const denyButton = await screen.findByRole('button', { name: 'Deny this request' })
+  const denyButton = await screen.findByRole('button', { name: 'Deny' })
   fireEvent.click(denyButton)
   await waitForStateUpdates()
 
@@ -292,10 +338,10 @@ test('a non-actionable request shows its status read-only with no buttons', asyn
 
   renderRequestsPage('/requests')
 
-  expect(await screen.findByText(/Carol Chen requested 2/)).toBeTruthy()
+  expect(await screen.findByText('Carol Chen')).toBeTruthy()
   expect(screen.getByText(/Approved: 2 on/)).toBeTruthy()
-  expect(screen.queryByRole('button', { name: 'Approve this request' })).toBeNull()
-  expect(screen.queryByRole('button', { name: 'Deny this request' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Deny' })).toBeNull()
 })
 
 test('an exhausted listing still shows Deny (not Approve) on a pending request', async () => {
@@ -311,9 +357,9 @@ test('an exhausted listing still shows Deny (not Approve) on a pending request',
 
   renderRequestsPage('/requests')
 
-  expect(await screen.findByText(/Bob Baker requested 3/)).toBeTruthy()
-  expect(screen.queryByRole('button', { name: 'Approve this request' })).toBeNull()
-  expect(screen.getByRole('button', { name: 'Deny this request' })).toBeTruthy()
+  expect(await screen.findByText('Bob Baker')).toBeTruthy()
+  expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
+  expect(screen.getByRole('button', { name: 'Deny' })).toBeTruthy()
 })
 
 test('cancelling the confirm does not send a decision', async () => {
@@ -336,12 +382,12 @@ test('cancelling the confirm does not send a decision', async () => {
 
   renderRequestsPage('/requests')
 
-  const approveButton = await screen.findByRole('button', { name: 'Approve this request' })
+  const approveButton = await screen.findByRole('button', { name: 'Approve' })
   fireEvent.click(approveButton)
   await waitForStateUpdates()
 
   expect(patchCount).toBe(0)
-  expect(screen.getByRole('button', { name: 'Approve this request' })).toBeTruthy()
+  expect(screen.getByRole('button', { name: 'Approve' })).toBeTruthy()
 })
 
 test('shows the global empty state when there are no active listings', async () => {
@@ -565,13 +611,13 @@ test('a failed decision shows the server message and keeps the buttons', async (
 
   renderRequestsPage('/requests')
 
-  const approveButton = await screen.findByRole('button', { name: 'Approve this request' })
+  const approveButton = await screen.findByRole('button', { name: 'Approve' })
   fireEvent.click(approveButton)
   await waitForStateUpdates()
 
   expect(alertMessage).toContain('not pending')
   // The buttons stay so the owner can retry.
-  expect(screen.getByRole('button', { name: 'Approve this request' })).toBeTruthy()
+  expect(screen.getByRole('button', { name: 'Approve' })).toBeTruthy()
 })
 
 test('a transport failure on a decision shows the transport message via an alert', async () => {
@@ -596,7 +642,7 @@ test('a transport failure on a decision shows the transport message via an alert
 
   renderRequestsPage('/requests')
 
-  const approveButton = await screen.findByRole('button', { name: 'Approve this request' })
+  const approveButton = await screen.findByRole('button', { name: 'Approve' })
   fireEvent.click(approveButton)
   await waitForStateUpdates()
 

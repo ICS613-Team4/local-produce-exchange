@@ -12,12 +12,23 @@ test('formats a timezone-aware ISO string in the local locale with the zone name
   expect(resultText).toBe(expectedText)
 })
 
-test('reports a non-empty IANA time zone name for the running environment', () => {
-  // The exact zone depends on the machine, so we only check the helper returns
-  // the same value the browser reports, which the page shows in its note.
-  const expectedZoneName = Intl.DateTimeFormat().resolvedOptions().timeZone
+test('reports the everyday time zone name, not the technical IANA id', () => {
+  // The exact zone depends on the machine, so build the expected value the
+  // same way the helper does: the long display name of today's zone.
+  const parts = new Intl.DateTimeFormat(undefined, { timeZoneName: 'long' }).formatToParts(
+    new Date(),
+  )
+  let expectedZoneName = ''
+  for (let index = 0; index < parts.length; index = index + 1) {
+    if (parts[index].type === 'timeZoneName') {
+      expectedZoneName = parts[index].value
+    }
+  }
   const resultZoneName = getLocalTimeZoneName()
   expect(resultZoneName).toBe(expectedZoneName)
+  expect(resultZoneName).not.toBe('')
+  // The everyday name has no slash, unlike IANA ids such as "America/Los_Angeles".
+  expect(resultZoneName.includes('/')).toBe(false)
 })
 
 test('returns an empty string unchanged', () => {

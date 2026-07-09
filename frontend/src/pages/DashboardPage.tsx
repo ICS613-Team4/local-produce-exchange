@@ -18,40 +18,25 @@ import type {
 import { formatTimestamp, getLocalTimeZoneNote } from '../utils/formatTimestamp'
 
 function DashboardPage() {
-  // The logged-in member id, read once from localStorage. The route is under
-  // RequireAuth, which already validated the member, so this page uses simple
-  // error handling, not the 401 cred-clearing state machine. An empty value
-  // means nobody is logged in, so every fetch below is skipped.
   const memberId = window.localStorage.getItem('memberId') ?? ''
+  const memberName = window.localStorage.getItem('memberName') ?? ''
 
-  // Each section holds its own response. null means it has not loaded yet, which
-  // doubles as that section's loading state. Each section loads on its own, so
-  // one section failing does not blank the others.
   const [previewResult, setPreviewResult] = useState<ListingResult | null>(null)
   const [myListingsResult, setMyListingsResult] = useState<ListingResult | null>(null)
   const [incomingResult, setIncomingResult] = useState<RequestQueuesResult | null>(null)
   const [outgoingResult, setOutgoingResult] = useState<RequestQueuesResult | null>(null)
 
-  // Bumped after a decision or a withdraw to re-run the matching load effect, so
-  // the decided/withdrawn row drops out and the remaining quantity updates.
   const [incomingReload, setIncomingReload] = useState(0)
   const [outgoingReload, setOutgoingReload] = useState(0)
 
-  // The claim id whose decision or withdraw is in flight, so only that row's
-  // buttons are greyed while it runs.
   const [decidingClaimId, setDecidingClaimId] = useState('')
   const [withdrawingClaimId, setWithdrawingClaimId] = useState('')
 
-  // Same-tick double-click guards, holding the claim id in flight, like the
-  // ListingDetailPage and RequestQueuesPage handlers.
   const decisionInFlightRef = useRef('')
   const withdrawInFlightRef = useRef('')
 
-  // Load a small preview of the five newest active listings when logged in.
   useEffect(() => {
-    if (memberId === '') {
-      return
-    }
+    if (memberId === '') { return }
     async function loadPreview() {
       const loadedResult = await sendBrowseListingsRequest(memberId, { limit: 5 })
       setPreviewResult(loadedResult)
@@ -59,11 +44,8 @@ function DashboardPage() {
     loadPreview()
   }, [memberId])
 
-  // Load the caller's own listings for the My Active Listings section.
   useEffect(() => {
-    if (memberId === '') {
-      return
-    }
+    if (memberId === '') { return }
     async function loadMyListings() {
       const loadedResult = await sendGetMyListingsRequest(memberId)
       setMyListingsResult(loadedResult)
@@ -71,12 +53,8 @@ function DashboardPage() {
     loadMyListings()
   }, [memberId])
 
-  // Load the live incoming-request queue (pending requests on the caller's
-  // listings). Reloads after a decision so the decided row drops out.
   useEffect(() => {
-    if (memberId === '') {
-      return
-    }
+    if (memberId === '') { return }
     async function loadIncoming() {
       const loadedResult = await sendGetRequestQueuesRequest(memberId, '')
       setIncomingResult(loadedResult)
@@ -84,12 +62,8 @@ function DashboardPage() {
     loadIncoming()
   }, [memberId, incomingReload])
 
-  // Load the caller's own outgoing requests. Reloads after a withdraw so the
-  // withdrawn row drops out.
   useEffect(() => {
-    if (memberId === '') {
-      return
-    }
+    if (memberId === '') { return }
     async function loadOutgoing() {
       const loadedResult = await sendGetMyRequestsRequest(memberId)
       setOutgoingResult(loadedResult)
@@ -97,13 +71,8 @@ function DashboardPage() {
     loadOutgoing()
   }, [memberId, outgoingReload])
 
-  // Approve or deny one pending request from the live queue. Confirms, guards
-  // against a double-click, calls the decide endpoint, then on success reloads
-  // the incoming queue. The backend stays the real permission gate.
   async function handleDecision(claimId: string, decision: string) {
-    if (decisionInFlightRef.current === claimId) {
-      return
-    }
+    if (decisionInFlightRef.current === claimId) { return }
     decisionInFlightRef.current = claimId
 
     let confirmMessage = 'Approve this request? This is final.'
@@ -112,165 +81,161 @@ function DashboardPage() {
     }
     const confirmed = window.confirm(confirmMessage)
     if (confirmed === false) {
-      if (decisionInFlightRef.current === claimId) {
-        decisionInFlightRef.current = ''
-      }
+      if (decisionInFlightRef.current === claimId) { decisionInFlightRef.current = '' }
       return
     }
 
     setDecidingClaimId(claimId)
-
     const decisionResult = await sendDecideClaimRequest(memberId, claimId, decision)
 
-    if (decisionInFlightRef.current === claimId) {
-      decisionInFlightRef.current = ''
-    }
+    if (decisionInFlightRef.current === claimId) { decisionInFlightRef.current = '' }
     setDecidingClaimId('')
 
-    // A timeout or network failure comes back with status 0 and a message.
     if (decisionResult.errorMessage !== '') {
       window.alert(decisionResult.errorMessage)
       return
     }
-
-    // Any HTTP failure (for example a 403 non-owner or a 409 already-decided).
     if (decisionResult.ok === false) {
       let detailMessage = 'Could not update the request. Please try again.'
       if (typeof decisionResult.data === 'object' && decisionResult.data !== null) {
         const dataObject = decisionResult.data as { detail?: unknown }
-        if (typeof dataObject.detail === 'string') {
-          detailMessage = dataObject.detail
-        }
+        if (typeof dataObject.detail === 'string') { detailMessage = dataObject.detail }
       }
       window.alert(detailMessage)
       return
     }
-
-    // Success: reload the queue so the decided row drops out and the remaining
-    // quantity reflects the backend value.
     setIncomingReload((currentValue) => currentValue + 1)
   }
 
-  // Withdraw one of the caller's own pending requests. Same shape as
-  // handleDecision, but it acts as the requester, not the listing owner.
   async function handleWithdraw(claimId: string) {
-    if (withdrawInFlightRef.current === claimId) {
-      return
-    }
+    if (withdrawInFlightRef.current === claimId) { return }
     withdrawInFlightRef.current = claimId
 
     const confirmed = window.confirm('Withdraw this request? It will leave the queue.')
     if (confirmed === false) {
-      if (withdrawInFlightRef.current === claimId) {
-        withdrawInFlightRef.current = ''
-      }
+      if (withdrawInFlightRef.current === claimId) { withdrawInFlightRef.current = '' }
       return
     }
 
     setWithdrawingClaimId(claimId)
-
     const withdrawResult = await sendWithdrawClaimRequest(memberId, claimId)
 
-    if (withdrawInFlightRef.current === claimId) {
-      withdrawInFlightRef.current = ''
-    }
+    if (withdrawInFlightRef.current === claimId) { withdrawInFlightRef.current = '' }
     setWithdrawingClaimId('')
 
     if (withdrawResult.errorMessage !== '') {
       window.alert(withdrawResult.errorMessage)
       return
     }
-
     if (withdrawResult.ok === false) {
       let detailMessage = 'Could not withdraw the request. Please try again.'
       if (typeof withdrawResult.data === 'object' && withdrawResult.data !== null) {
         const dataObject = withdrawResult.data as { detail?: unknown }
-        if (typeof dataObject.detail === 'string') {
-          detailMessage = dataObject.detail
-        }
+        if (typeof dataObject.detail === 'string') { detailMessage = dataObject.detail }
       }
       window.alert(detailMessage)
       return
     }
-
     setOutgoingReload((currentValue) => currentValue + 1)
   }
 
-  // The note that tells the viewer the times on this page are in their local zone.
   const timeZoneNote = getLocalTimeZoneNote()
 
-  // --- Latest Community Listings preview (unchanged from before) -------------
+  // --- Quick actions --------------------------------------------------------
+  const quickActions = (
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">
+      <Link to="/browse" className="flex flex-col items-center gap-2 p-4 bg-surface rounded-xl border border-border shadow-sm hover:shadow-md hover:border-primary-200 transition-all duration-200 group">
+        <span aria-hidden="true" className="text-2xl group-hover:scale-110 transition-transform">🔍</span>
+        <span className="text-xs font-medium text-text-muted group-hover:text-primary-600">Browse</span>
+      </Link>
+      <Link to="/listings/create" className="flex flex-col items-center gap-2 p-4 bg-surface rounded-xl border border-border shadow-sm hover:shadow-md hover:border-primary-200 transition-all duration-200 group">
+        <span aria-hidden="true" className="text-2xl group-hover:scale-110 transition-transform">➕</span>
+        <span className="text-xs font-medium text-text-muted group-hover:text-primary-600">New Listing</span>
+      </Link>
+      <Link to="/invite" className="flex flex-col items-center gap-2 p-4 bg-surface rounded-xl border border-border shadow-sm hover:shadow-md hover:border-primary-200 transition-all duration-200 group">
+        <span aria-hidden="true" className="text-2xl group-hover:scale-110 transition-transform">💌</span>
+        <span className="text-xs font-medium text-text-muted group-hover:text-primary-600">Invite</span>
+      </Link>
+      <Link to="/profile" className="flex flex-col items-center gap-2 p-4 bg-surface rounded-xl border border-border shadow-sm hover:shadow-md hover:border-primary-200 transition-all duration-200 group">
+        <span aria-hidden="true" className="text-2xl group-hover:scale-110 transition-transform">👤</span>
+        <span className="text-xs font-medium text-text-muted group-hover:text-primary-600">Profile</span>
+      </Link>
+    </div>
+  )
+
+  // --- Latest Community Listings preview ------------------------------------
   let previewArea
   if (memberId === '') {
     previewArea = null
   } else if (previewResult === null) {
-    previewArea = <p>Loading latest listings...</p>
+    previewArea = <p className="text-sm text-text-muted">Loading latest listings...</p>
   } else if (previewResult.errorMessage !== '') {
-    previewArea = <p role="alert">{previewResult.errorMessage}</p>
+    previewArea = <p className="text-sm text-error" role="alert">{previewResult.errorMessage}</p>
   } else if (previewResult.ok) {
     const listings = previewResult.data as ListingDetail[]
     if (listings.length === 0) {
-      previewArea = <p>No listings yet.</p>
+      previewArea = <p className="text-sm text-text-muted">No listings yet.</p>
     } else {
       const previewItems = []
       for (let index = 0; index < listings.length; index = index + 1) {
         const listing = listings[index]
         const postedText = formatTimestamp(listing.created_at)
         previewItems.push(
-          <li key={listing.id}>
-            <Link to={'/listings/' + listing.id}>{listing.title}</Link> (posted on: {postedText})
+          <li key={listing.id} className="flex items-center justify-between py-2.5 border-b border-border last:border-0">
+            <Link to={'/listings/' + listing.id} className="text-sm font-medium text-text hover:text-primary-600 transition-colors truncate">
+              {listing.title}
+            </Link>
+            <span className="text-xs text-text-muted shrink-0 ml-3">{postedText}</span>
           </li>,
         )
       }
-      previewArea = <ul>{previewItems}</ul>
+      previewArea = (
+        <>
+          <ul>{previewItems}</ul>
+          <Link to="/browse" className="mt-3 inline-flex items-center text-sm font-medium text-primary-600 hover:text-primary-700">
+            Browse all →
+          </Link>
+        </>
+      )
     }
   } else {
-    previewArea = <p role="alert">Could not load the latest listings.</p>
+    previewArea = <p className="text-sm text-error" role="alert">Could not load the latest listings.</p>
   }
 
   // --- My Active Listings section -------------------------------------------
   let myActiveArea
   if (myListingsResult === null) {
-    myActiveArea = <p>Loading your active listings...</p>
+    myActiveArea = <p className="text-sm text-text-muted">Loading your active listings...</p>
   } else if (myListingsResult.errorMessage !== '') {
-    myActiveArea = <p role="alert">{myListingsResult.errorMessage}</p>
+    myActiveArea = <p className="text-sm text-error" role="alert">{myListingsResult.errorMessage}</p>
   } else if (myListingsResult.ok) {
     const listings = myListingsResult.data as ListingDetail[]
     const activeRows = []
     for (let index = 0; index < listings.length; index = index + 1) {
       const listing = listings[index]
-      if (listing.status !== 'active') {
-        continue
-      }
+      if (listing.status !== 'active') { continue }
       const postedText = formatTimestamp(listing.created_at)
       activeRows.push(
-        <li key={listing.id}>
-          <Link to={'/listings/' + listing.id}>{listing.title}</Link> (posted on: {postedText}) -{' '}
-          {listing.remaining_quantity} remaining
+        <li key={listing.id} className="flex items-center justify-between py-2.5 border-b border-border last:border-0">
+          <div className="flex items-center gap-3 min-w-0">
+            <Link to={'/listings/' + listing.id} className="text-sm font-medium text-text hover:text-primary-600 transition-colors truncate">
+              {listing.title}
+            </Link>
+            <span className="text-xs text-text-muted shrink-0">{postedText}</span>
+          </div>
+          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-primary-50 text-primary-700 shrink-0 ml-3">
+            {listing.remaining_quantity} left
+          </span>
         </li>,
       )
     }
     if (activeRows.length === 0) {
-      myActiveArea = (
-        <>
-          <p>You have no active listings.</p>
-          <p>
-            <Link to="/my-listings">See All My Listings</Link>
-          </p>
-        </>
-      )
+      myActiveArea = <p className="text-sm text-text-muted">You have no active listings.</p>
     } else {
-      myActiveArea = (
-        <>
-          <ul>{activeRows}</ul>
-          <p>
-            <Link to="/my-listings">See All My Listings</Link>
-          </p>
-        </>
-      )
+      myActiveArea = <ul>{activeRows}</ul>
     }
   } else {
-    myActiveArea = <p role="alert">Could not load your active listings.</p>
+    myActiveArea = <p className="text-sm text-error" role="alert">Could not load your active listings.</p>
   }
 
   function buildIncomingGroup(group: ListingQueueGroup) {
@@ -284,50 +249,48 @@ function DashboardPage() {
       const requestedAtText = formatTimestamp(item.requested_at)
       const isThisRowPending = decidingClaimId === item.id
 
-      // Approve and Deny are shown independently. Approve needs remaining stock
-      // (can_decide); Deny does not (can_deny), so an exhausted-but-active listing
-      // still lets the owner clear a pending request.
       let approveButton = null
       if (item.can_decide === true) {
         approveButton = (
-          <>
-            {' '}
-            <button
-              type="button"
-              disabled={isThisRowPending}
-              onClick={() => handleDecision(item.id, 'approve')}
-            >
-              Approve
-            </button>
-          </>
+          <button
+            type="button"
+            disabled={isThisRowPending}
+            onClick={() => handleDecision(item.id, 'approve')}
+            className="inline-flex items-center px-3 py-1 text-xs font-medium text-success border border-green-200 rounded-md hover:bg-success-bg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Approve
+          </button>
         )
       }
       let denyButton = null
       if (item.can_deny === true) {
         denyButton = (
-          <>
-            {' '}
-            <button
-              type="button"
-              disabled={isThisRowPending}
-              onClick={() => handleDecision(item.id, 'deny')}
-            >
-              Deny
-            </button>
-          </>
+          <button
+            type="button"
+            disabled={isThisRowPending}
+            onClick={() => handleDecision(item.id, 'deny')}
+            className="inline-flex items-center px-3 py-1 text-xs font-medium text-error border border-red-200 rounded-md hover:bg-error-bg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Deny
+          </button>
         )
       }
       rowItems.push(
-        <li key={item.id}>
-          {item.claimant_name} requested {item.requested_quantity} ({requestedAtText})
-          {approveButton}
-          {denyButton}
+        <li key={item.id} className="flex items-center justify-between py-2.5 border-b border-border last:border-0">
+          <div className="min-w-0">
+            <p className="text-sm text-text">{item.claimant_name} requested {item.requested_quantity}</p>
+            <p className="text-xs text-text-muted">{requestedAtText}</p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0 ml-3">
+            {approveButton}
+            {denyButton}
+          </div>
         </li>,
       )
     }
     return (
-      <article key={group.listing_id}>
-        <h3>{titleText}</h3>
+      <article key={group.listing_id} className="mb-4">
+        <h3 className="text-sm font-semibold text-text mb-2">{titleText}</h3>
         <ul>{rowItems}</ul>
       </article>
     )
@@ -336,169 +299,149 @@ function DashboardPage() {
   // --- Incoming requests section --------------------------------------------
   let incomingArea
   if (incomingResult === null) {
-    incomingArea = <p>Loading incoming requests...</p>
+    incomingArea = <p className="text-sm text-text-muted">Loading incoming requests...</p>
   } else if (incomingResult.errorMessage !== '') {
-    incomingArea = <p role="alert">{incomingResult.errorMessage}</p>
+    incomingArea = <p className="text-sm text-error" role="alert">{incomingResult.errorMessage}</p>
   } else if (incomingResult.ok) {
     const responseData = incomingResult.data as RequestQueuesResponse
     const groups = responseData.groups
     if (groups.length === 0) {
-      incomingArea = (
-        <>
-          <p>No incoming requests.</p>
-          <p>
-            <Link to="/requests">See All Incoming Requests</Link>
-          </p>
-        </>
-      )
+      incomingArea = <p className="text-sm text-text-muted">No incoming requests.</p>
     } else {
       const groupViews = []
       for (let index = 0; index < groups.length; index = index + 1) {
         groupViews.push(buildIncomingGroup(groups[index]))
       }
-      incomingArea = (
-        <>
-          <div>{groupViews}</div>
-          <p>
-            <Link to="/requests">See All Incoming Requests</Link>
-          </p>
-        </>
-      )
+      incomingArea = <div>{groupViews}</div>
     }
   } else {
-    incomingArea = <p role="alert">Could not load incoming requests.</p>
+    incomingArea = <p className="text-sm text-error" role="alert">Could not load incoming requests.</p>
   }
 
   // --- Outgoing requests section --------------------------------------------
   let outgoingArea
   if (outgoingResult === null) {
-    outgoingArea = <p>Loading outgoing requests...</p>
+    outgoingArea = <p className="text-sm text-text-muted">Loading outgoing requests...</p>
   } else if (outgoingResult.errorMessage !== '') {
-    outgoingArea = <p role="alert">{outgoingResult.errorMessage}</p>
+    outgoingArea = <p className="text-sm text-error" role="alert">{outgoingResult.errorMessage}</p>
   } else if (outgoingResult.ok) {
     const responseData = outgoingResult.data as MyRequestsResponse
     const pending = responseData.pending
     if (pending.length === 0) {
-      outgoingArea = (
-        <>
-          <p>You have no pending requests.</p>
-          <p>
-            <Link to="/my-requests">See All My Requests</Link>
-          </p>
-        </>
-      )
+      outgoingArea = <p className="text-sm text-text-muted">You have no pending requests.</p>
     } else {
       const outgoingRows = []
       for (let index = 0; index < pending.length; index = index + 1) {
         const item = pending[index]
         const requestedAtText = formatTimestamp(item.requested_at)
         const isThisRowPending = withdrawingClaimId === item.id
-        // The listing title is plain text here: the my-requests response does not
-        // carry the listing status, and the detail page rejects non-active rows,
-        // so a link could land on an unavailable page.
         outgoingRows.push(
-          <li key={item.id}>
-            {item.listing_title}: you requested {item.requested_quantity} on {requestedAtText}{' '}
+          <li key={item.id} className="flex items-center justify-between py-2.5 border-b border-border last:border-0">
+            <div className="min-w-0">
+              <p className="text-sm text-text">{item.listing_title}: requested <span className="font-medium">{item.requested_quantity}</span></p>
+              <p className="text-xs text-text-muted">{requestedAtText}</p>
+            </div>
             <button
               type="button"
               disabled={isThisRowPending}
               onClick={() => handleWithdraw(item.id)}
+              className="inline-flex items-center px-3 py-1 text-xs font-medium text-text-muted border border-border rounded-md hover:bg-background-alt hover:text-text transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0 ml-3"
             >
-              Withdraw Request
+              Withdraw
             </button>
           </li>,
         )
       }
-      outgoingArea = (
-        <>
-          <ul>{outgoingRows}</ul>
-          <p>
-            <Link to="/my-requests">See All My Requests</Link>
-          </p>
-        </>
-      )
+      outgoingArea = <ul>{outgoingRows}</ul>
     }
   } else {
-    outgoingArea = <p role="alert">Could not load outgoing requests.</p>
+    outgoingArea = <p className="text-sm text-error" role="alert">Could not load outgoing requests.</p>
+  }
+
+  // The greeting shown at the top of the page.
+  let greetingName = 'there'
+  if (memberName !== '') {
+    greetingName = memberName
   }
 
   return (
     <section>
-      <h1>Member Dashboard</h1>
-      <ul>
-        <li>
-          <Link to="/browse">Browse All Listings</Link>
-        </li>
-        <li>
-          <Link to="/listings/create">Create a Listing</Link>
-        </li>
-        <li>
-          <Link to="/my-listings">See All My Listings</Link>
-        </li>
-        <li>
-          <Link to="/invite">Invite a New Member</Link>
-        </li>
-        <li>
-          <Link to="/profile">View Your Profile</Link>
-        </li>
-        <li>
-          <Link to="/requests">See All Incoming Requests</Link>
-        </li>
-        <li>
-          <Link to="/my-requests">See My Requests to Other Members</Link>
-        </li>
-      </ul>
-      <section>
-        <h2>Latest Community Listings</h2>
-        {previewArea}
-        <p>
-          <small>{timeZoneNote}</small>
-        </p>
-      </section>
-      <hr />
-      <section>
-        <h2>My Active Listings</h2>
-        {myActiveArea}
-        <p>
-          <small>{timeZoneNote}</small>
-        </p>
-      </section>
-      <hr />
-      <section>
-        <h2>Incoming Request Queue</h2>
-        {incomingArea}
-        <p>
-          <small>{timeZoneNote}</small>
-        </p>
-      </section>
-      <hr />
-      <section>
-        <h2>My Requests to Other Members</h2>
-        {outgoingArea}
-        <p>
-          <small>{timeZoneNote}</small>
-        </p>
-      </section>
-      <hr />
-      <section>
-        {/* ponytail: placeholder until the exchange-history feature (US-18/US-19
-            pickup and completion, R2) is built. Static markup, no fetch: one
-            subheading per claim status in lifecycle order. */}
-        <h2>Exchange History</h2>
-        <p>Exchange history is not available yet.</p>
-        <h3>Requested</h3>
-        <p>Nothing here yet.</p>
-        <h3>Approved</h3>
-        <p>Nothing here yet.</p>
-        <h3>Picked up</h3>
-        <p>Nothing here yet.</p>
-        <h3>Completed</h3>
-        <p>Nothing here yet.</p>
-        <h3>Cancelled</h3>
-        <p>Nothing here yet.</p>
-        <h3>Denied</h3>
-        <p>Nothing here yet.</p>
-      </section>
+      <h1 className="text-3xl font-bold text-text mb-2">
+        Welcome back, {greetingName} 👋
+      </h1>
+      <p className="text-sm text-text-muted mb-6">{timeZoneNote}</p>
+
+      {quickActions}
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Latest Community Listings */}
+        <div className="bg-surface rounded-xl border border-border p-6 shadow-sm">
+          <h2 className="text-base font-semibold text-text mb-4">Latest Community Listings</h2>
+          {previewArea}
+        </div>
+
+        {/* My Active Listings. The See-all link sits outside the loading and
+            error branches so the page always offers the way to the full list. */}
+        <div className="bg-surface rounded-xl border border-border p-6 shadow-sm">
+          <h2 className="text-base font-semibold text-text mb-4">My Active Listings</h2>
+          {myActiveArea}
+          <Link to="/my-listings" className="mt-3 inline-flex items-center text-sm font-medium text-primary-600 hover:text-primary-700">
+            See all listings →
+          </Link>
+        </div>
+
+        {/* Incoming Request Queue */}
+        <div className="bg-surface rounded-xl border border-border p-6 shadow-sm">
+          <h2 className="text-base font-semibold text-text mb-4">Incoming Requests</h2>
+          {incomingArea}
+          <Link to="/requests" className="mt-3 inline-flex items-center text-sm font-medium text-primary-600 hover:text-primary-700">
+            See all incoming →
+          </Link>
+        </div>
+
+        {/* My Requests to Others */}
+        <div className="bg-surface rounded-xl border border-border p-6 shadow-sm">
+          <h2 className="text-base font-semibold text-text mb-4">My Requests to Others</h2>
+          {outgoingArea}
+          <Link to="/my-requests" className="mt-3 inline-flex items-center text-sm font-medium text-primary-600 hover:text-primary-700">
+            See all my requests →
+          </Link>
+        </div>
+      </div>
+
+      {/* Exchange History: placeholder until the exchange-history feature is
+          built. Static markup, no fetch: one subheading per claim status in
+          lifecycle order. */}
+      <div className="bg-surface rounded-xl border border-border p-6 shadow-sm mt-6">
+        <h2 className="text-base font-semibold text-text mb-1">Exchange History</h2>
+        <p className="text-sm text-text-muted mb-4">Exchange history is not available yet.</p>
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          <div className="rounded-lg bg-background-alt px-4 py-3">
+            <h3 className="text-sm font-semibold text-text">Requested</h3>
+            <p className="text-xs text-text-muted mt-0.5">Nothing here yet.</p>
+          </div>
+          <div className="rounded-lg bg-background-alt px-4 py-3">
+            <h3 className="text-sm font-semibold text-text">Approved</h3>
+            <p className="text-xs text-text-muted mt-0.5">Nothing here yet.</p>
+          </div>
+          <div className="rounded-lg bg-background-alt px-4 py-3">
+            <h3 className="text-sm font-semibold text-text">Picked up</h3>
+            <p className="text-xs text-text-muted mt-0.5">Nothing here yet.</p>
+          </div>
+          <div className="rounded-lg bg-background-alt px-4 py-3">
+            <h3 className="text-sm font-semibold text-text">Completed</h3>
+            <p className="text-xs text-text-muted mt-0.5">Nothing here yet.</p>
+          </div>
+          <div className="rounded-lg bg-background-alt px-4 py-3">
+            <h3 className="text-sm font-semibold text-text">Cancelled</h3>
+            <p className="text-xs text-text-muted mt-0.5">Nothing here yet.</p>
+          </div>
+          <div className="rounded-lg bg-background-alt px-4 py-3">
+            <h3 className="text-sm font-semibold text-text">Denied</h3>
+            <p className="text-xs text-text-muted mt-0.5">Nothing here yet.</p>
+          </div>
+        </div>
+      </div>
     </section>
   )
 }

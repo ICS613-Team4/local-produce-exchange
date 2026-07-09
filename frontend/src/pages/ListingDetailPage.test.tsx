@@ -103,12 +103,16 @@ function makeActiveListing() {
     pickup_end: '2026-07-01T11:00:00.000Z',
     status: 'active',
     created_at: '2026-06-19T00:00:00.000Z',
+    owner_name: 'Olivia Owner',
   }
   return listing
 }
 
 function makeListingWithTitle(title: string) {
   const listing = makeActiveListing()
+  // Clear the owner name so these listings exercise the page's fallback
+  // "Posted <date>" line (no "Posted by").
+  listing.owner_name = ''
   listing.id = title
   listing.title = title
   return listing
@@ -162,17 +166,17 @@ test('shows the listing details for an active listing', async () => {
   // The details appear once the load resolves.
   expect(await screen.findByText('Backyard Lemons')).toBeTruthy()
   expect(screen.getByText('Sweet Meyer lemons.')).toBeTruthy()
-  expect(screen.getByText('Category: Fruit')).toBeTruthy()
-  // Both quantity numbers show under their own labels (they are different).
-  expect(screen.getByText('Quantity available: 6')).toBeTruthy()
-  expect(screen.getByText('Remaining quantity: 4')).toBeTruthy()
-  // Both tag groups show.
-  expect(screen.getByText('Dietary tags: vegan, vegetarian')).toBeTruthy()
-  expect(screen.getByText('Allergen tags: contains nuts')).toBeTruthy()
-  // The pickup window shows each timestamp in the browser's locale and local
-  // time zone, with the zone's short name appended, not the raw ISO string. We
-  // build the expected text the same way the page does, so this passes on any
-  // machine's locale or time zone.
+  // Category is shown as a standalone badge.
+  expect(screen.getByText('Fruit')).toBeTruthy()
+  // Quantities are shown in separate stat cards with labels.
+  expect(screen.getByText('Available')).toBeTruthy()
+  expect(screen.getByText('6')).toBeTruthy()
+  expect(screen.getByText('Remaining')).toBeTruthy()
+  expect(screen.getByText('4')).toBeTruthy()
+  // Tag groups show values in cards.
+  expect(screen.getByText('vegan, vegetarian')).toBeTruthy()
+  expect(screen.getByText('contains nuts')).toBeTruthy()
+  // The pickup window shows the timestamps combined.
   const timeZoneOptions = { timeZoneName: 'short' as const }
   const expectedPickupStart = new Date('2026-07-01T09:00:00.000Z').toLocaleString(
     undefined,
@@ -182,11 +186,10 @@ test('shows the listing details for an active listing', async () => {
     undefined,
     timeZoneOptions,
   )
-  expect(screen.getByText('Pickup Window Start: ' + expectedPickupStart)).toBeTruthy()
-  expect(screen.getByText('Pickup Window End: ' + expectedPickupEnd)).toBeTruthy()
-  // The posted date shows, in the viewer's local zone.
+  expect(screen.getByText(expectedPickupStart + ' — ' + expectedPickupEnd)).toBeTruthy()
+  // The posted line names the owner and shows the date in the viewer's zone.
   const expectedPosted = new Date('2026-06-19T00:00:00.000Z').toLocaleString(undefined, timeZoneOptions)
-  expect(screen.getByText('Posted on: ' + expectedPosted)).toBeTruthy()
+  expect(screen.getByText('Posted by Olivia Owner on ' + expectedPosted)).toBeTruthy()
   // A plain-words note tells the user the times are in their own local zone.
   expect(screen.getByText(/All times are shown in your local time zone/)).toBeTruthy()
 })
@@ -236,9 +239,9 @@ test('shows the unavailable message on a 404', async () => {
   expect(screen.queryByText('Backyard Lemons')).toBeNull()
 })
 
-test('shows None for empty tag lists and the plain logged-in line with no stored name', async () => {
-  // memberId is the auth truth; memberName can be empty, which shows the plain
-  // "Logged in." line. Empty tag lists read as "None".
+test('shows None for empty tag lists', async () => {
+  // Empty tag lists read as "None". The shared nav owns the logged-in status
+  // now, so this page shows no login line of its own.
   window.localStorage.setItem('memberId', 'member-123')
   const listing = makeActiveListing()
   listing.dietary_tags = []
@@ -247,10 +250,13 @@ test('shows None for empty tag lists and the plain logged-in line with no stored
 
   renderDetailPage()
 
-  expect(await screen.findByText('Dietary tags: None')).toBeTruthy()
-  expect(screen.getByText('Allergen tags: None')).toBeTruthy()
-  // With no stored name, the nav shows the plain line, not "Logged in as ...".
-  expect(screen.getByText('Logged in.')).toBeTruthy()
+  // Wait for the listing to load first.
+  expect(await screen.findByText('Backyard Lemons')).toBeTruthy()
+  // With the restyled stat cards, 'None' appears as standalone text in each card.
+  const noneTexts = screen.getAllByText('None')
+  expect(noneTexts.length).toBeGreaterThanOrEqual(2)
+  // The old in-card login note is gone.
+  expect(screen.queryByText(/Logged in/)).toBeNull()
 })
 
 test('shows the detail message on a generic HTTP error', async () => {
@@ -763,7 +769,8 @@ test('shows the pending-request count and the View requests link to the owner', 
 
   renderDetailPage()
 
-  expect(await screen.findByText('Pending requests: 2')).toBeTruthy()
+  expect(await screen.findByText(/pending request/)).toBeTruthy()
+  expect(screen.getByText('2')).toBeTruthy()
   const viewLink = screen.getByRole('link', { name: 'View requests' })
   expect(viewLink.getAttribute('href')).toBe('/requests?listing=abc')
 })
@@ -873,14 +880,15 @@ test('drops a late count response after the route changes to another listing', a
 
   // Resolve the second (current) count first.
   secondCount.resolve(makeFakeResponse(true, 200, makeCountQueueBody('second', 5)))
-  expect(await screen.findByText('Pending requests: 5')).toBeTruthy()
+  expect(await screen.findByText(/pending request/)).toBeTruthy()
+  expect(screen.getByText('5')).toBeTruthy()
 
   // The stale first count resolves last and must be dropped.
   firstCount.resolve(makeFakeResponse(true, 200, makeCountQueueBody('first', 99)))
   await waitForStateUpdates()
 
-  expect(screen.getByText('Pending requests: 5')).toBeTruthy()
-  expect(screen.queryByText('Pending requests: 99')).toBeNull()
+  expect(screen.getByText('5')).toBeTruthy()
+  expect(screen.queryByText('99')).toBeNull()
 })
 
 // --- the non-owner request form and request status (UC-09) ---
@@ -960,7 +968,7 @@ test('shows the request form to a non-owner with no prior request', async () => 
   // The Submit button and the number input both show. Use findByRole so this
   // waits for the separate /my-claim fetch to resolve; getByRole would race it
   // and flake on CI, where that fetch settles a tick later than locally.
-  expect(await screen.findByRole('button', { name: 'Submit' })).toBeTruthy()
+  expect(await screen.findByRole('button', { name: 'Submit request' })).toBeTruthy()
   const quantityInput = screen.getByRole('spinbutton')
   // Native HTML5 validation: whole numbers, at least 1, no more than remaining (4).
   expect(quantityInput.getAttribute('type')).toBe('number')
@@ -978,7 +986,7 @@ test('does not show the request form to the listing owner', async () => {
   renderDetailPage()
 
   expect(await screen.findByText('Backyard Lemons')).toBeTruthy()
-  expect(screen.queryByRole('button', { name: 'Submit' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Submit request' })).toBeNull()
 })
 
 test('shows the pending line instead of the form when a request is already in', async () => {
@@ -991,9 +999,9 @@ test('shows the pending line instead of the form when a request is already in', 
 
   renderDetailPage()
 
-  expect(await screen.findByText(/You requested 2 quantity on:/)).toBeTruthy()
+  expect(await screen.findByText(/You requested 2 quantity on/)).toBeTruthy()
   // No form while a request is pending.
-  expect(screen.queryByRole('button', { name: 'Submit' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Submit request' })).toBeNull()
 })
 
 test('shows a denied line when the request was denied', async () => {
@@ -1007,7 +1015,7 @@ test('shows a denied line when the request was denied', async () => {
   renderDetailPage()
 
   expect(await screen.findByText('Your request was denied.')).toBeTruthy()
-  expect(screen.queryByRole('button', { name: 'Submit' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Submit request' })).toBeNull()
 })
 
 test('shows the approved quantity, time, and the Exchange Thread link when approved', async () => {
@@ -1030,8 +1038,73 @@ test('shows the approved quantity, time, and the Exchange Thread link when appro
 
   expect(await screen.findByText(/Your request was approved for 2 on:/)).toBeTruthy()
   // The stub link to the (not-built) Exchange Thread feature.
-  const threadLink = screen.getByRole('link', { name: 'Arrange the Exchange' })
+  const threadLink = screen.getByRole('link', { name: /Arrange the Exchange/ })
   expect(threadLink.getAttribute('href')).toContain('/exchange-thread')
+})
+
+test('shows the picked-up confirmation and the Contact the Provider link when picked up', async () => {
+  setLoggedIn()
+  stubRequestFeatureFetch(
+    makeOtherOwnedListing(),
+    () =>
+      makeFakeResponse(
+        true,
+        200,
+        makeMyClaim('picked_up', {
+          approved_quantity: 2,
+          approved_at: '2026-07-02T10:00:00.000Z',
+          picked_up_at: '2026-07-03T09:00:00.000Z',
+        }),
+      ),
+    () => makeFakeResponse(true, 201, {}),
+  )
+
+  renderDetailPage()
+
+  expect(await screen.findByText(/Your pickup was confirmed on:/)).toBeTruthy()
+  const providerLink = screen.getByRole('link', { name: /Contact the Provider/ })
+  expect(providerLink.getAttribute('href')).toContain('/exchange-thread')
+  // The pickup is done, so the confirm button is gone.
+  expect(screen.queryByRole('button', { name: 'Confirm pickup' })).toBeNull()
+})
+
+test('clicking Confirm pickup updates the claim and shows the picked-up view', async () => {
+  setLoggedIn()
+  vi.stubGlobal('confirm', () => {
+    return true
+  })
+  // The stub routes every /claims call (here the pickup PATCH) to the third
+  // response, which returns the claim moved to picked_up.
+  stubRequestFeatureFetch(
+    makeOtherOwnedListing(),
+    () =>
+      makeFakeResponse(
+        true,
+        200,
+        makeMyClaim('approved', {
+          approved_quantity: 2,
+          approved_at: '2026-07-02T10:00:00.000Z',
+        }),
+      ),
+    () =>
+      makeFakeResponse(
+        true,
+        200,
+        makeMyClaim('picked_up', {
+          approved_quantity: 2,
+          approved_at: '2026-07-02T10:00:00.000Z',
+          picked_up_at: '2026-07-03T09:00:00.000Z',
+        }),
+      ),
+  )
+
+  renderDetailPage()
+
+  const pickupButton = await screen.findByRole('button', { name: 'Confirm pickup' })
+  fireEvent.click(pickupButton)
+
+  expect(await screen.findByText(/Your pickup was confirmed on:/)).toBeTruthy()
+  expect(screen.queryByRole('button', { name: 'Confirm pickup' })).toBeNull()
 })
 
 test('submitting a request, on confirm, replaces the form with the pending line', async () => {
@@ -1055,14 +1128,14 @@ test('submitting a request, on confirm, replaces the form with the pending line'
 
   renderDetailPage()
 
-  const submitButton = await screen.findByRole('button', { name: 'Submit' })
+  const submitButton = await screen.findByRole('button', { name: 'Submit request' })
   const quantityInput = screen.getByRole('spinbutton')
   fireEvent.change(quantityInput, { target: { value: '3' } })
   fireEvent.click(submitButton)
 
   // The form is replaced by the pending confirmation line.
-  expect(await screen.findByText(/You requested 3 quantity on:/)).toBeTruthy()
-  expect(screen.queryByRole('button', { name: 'Submit' })).toBeNull()
+  expect(await screen.findByText(/You requested 3 quantity on/)).toBeTruthy()
+  expect(screen.queryByRole('button', { name: 'Submit request' })).toBeNull()
 })
 
 test('cancelling the request confirm does not post and keeps the form', async () => {
@@ -1092,14 +1165,14 @@ test('cancelling the request confirm does not post and keeps the form', async ()
 
   renderDetailPage()
 
-  const submitButton = await screen.findByRole('button', { name: 'Submit' })
+  const submitButton = await screen.findByRole('button', { name: 'Submit request' })
   const quantityInput = screen.getByRole('spinbutton')
   fireEvent.change(quantityInput, { target: { value: '3' } })
   fireEvent.click(submitButton)
   await waitForStateUpdates()
 
   expect(postCount).toBe(0)
-  expect(screen.getByRole('button', { name: 'Submit' })).toBeTruthy()
+  expect(screen.getByRole('button', { name: 'Submit request' })).toBeTruthy()
 })
 
 test('a rapid double-click submits only one request', async () => {
@@ -1130,7 +1203,7 @@ test('a rapid double-click submits only one request', async () => {
 
   renderDetailPage()
 
-  const submitButton = await screen.findByRole('button', { name: 'Submit' })
+  const submitButton = await screen.findByRole('button', { name: 'Submit request' })
   const quantityInput = screen.getByRole('spinbutton')
   fireEvent.change(quantityInput, { target: { value: '3' } })
   // Two clicks in the same tick: the in-flight ref blocks the second.
@@ -1168,7 +1241,7 @@ test('the request confirm warns it is final', async () => {
 
   renderDetailPage()
 
-  const submitButton = await screen.findByRole('button', { name: 'Submit' })
+  const submitButton = await screen.findByRole('button', { name: 'Submit request' })
   const quantityInput = screen.getByRole('spinbutton')
   fireEvent.change(quantityInput, { target: { value: '3' } })
   fireEvent.click(submitButton)
@@ -1191,14 +1264,14 @@ test('a failed request shows the server message and keeps the form', async () =>
 
   renderDetailPage()
 
-  const submitButton = await screen.findByRole('button', { name: 'Submit' })
+  const submitButton = await screen.findByRole('button', { name: 'Submit request' })
   const quantityInput = screen.getByRole('spinbutton')
   fireEvent.change(quantityInput, { target: { value: '3' } })
   fireEvent.click(submitButton)
 
   // The server's plain-words message shows, and the form stays for a retry.
   expect(await screen.findByText('You have already made a request on this listing.')).toBeTruthy()
-  expect(screen.getByRole('button', { name: 'Submit' })).toBeTruthy()
+  expect(screen.getByRole('button', { name: 'Submit request' })).toBeTruthy()
 })
 
 test('does not flash the request form while the claim status is still loading', async () => {
@@ -1223,7 +1296,7 @@ test('does not flash the request form while the claim status is still loading', 
   expect(await screen.findByText('Backyard Lemons')).toBeTruthy()
   // ...but while the claim status is still loading, the form is NOT shown (no
   // flash) and there is no loading placeholder text either.
-  expect(screen.queryByRole('button', { name: 'Submit' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Submit request' })).toBeNull()
   expect(screen.queryByText(/Loading your request status/)).toBeNull()
 
   // The status arrives as an approved claim: the link shows, and the form was
@@ -1238,6 +1311,6 @@ test('does not flash the request form while the claim status is still loading', 
       }),
     ),
   )
-  expect(await screen.findByRole('link', { name: 'Arrange the Exchange' })).toBeTruthy()
-  expect(screen.queryByRole('button', { name: 'Submit' })).toBeNull()
+  expect(await screen.findByRole('link', { name: /Arrange the Exchange/ })).toBeTruthy()
+  expect(screen.queryByRole('button', { name: 'Submit request' })).toBeNull()
 })

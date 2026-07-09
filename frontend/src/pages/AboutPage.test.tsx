@@ -17,9 +17,10 @@ test('shows the about page heading and placeholder text', () => {
     </MemoryRouter>,
   )
 
-  const heading = screen.getByRole('heading', { name: 'ICS 613 Team 4: About Page' })
-  const placeholderText = screen.getByText(/Lorem ipsum dolor sit amet/)
+  const heading = screen.getByRole('heading', { name: 'About Surplus' })
+  const bodyText = screen.getByText(/local produce exchange built by ICS 613 Team 4/)
 
   expect(heading).toBeTruthy()
-  expect(placeholderText).toBeTruthy()
+  expect(bodyText).toBeTruthy()
+
 })

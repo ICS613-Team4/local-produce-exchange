@@ -151,8 +151,14 @@ function BrowsePage() {
     const tagName = DIETARY_OPTIONS[index]
     const isChecked = selectedDietary.includes(tagName)
     dietaryCheckboxes.push(
-      <label key={tagName} style={{ marginRight: '10px' }}>
-        <input type="checkbox" value={tagName} checked={isChecked} onChange={handleDietaryToggle} />{' '}
+      <label key={tagName} className="inline-flex items-center gap-2 text-sm text-text cursor-pointer">
+        <input
+          type="checkbox"
+          value={tagName}
+          checked={isChecked}
+          onChange={handleDietaryToggle}
+          className="w-4 h-4 rounded border-border text-primary-600 focus:ring-primary-500"
+        />
         {tagName}
       </label>,
     )
@@ -164,8 +170,14 @@ function BrowsePage() {
     const tagName = ALLERGEN_OPTIONS[index]
     const isChecked = selectedAllergen.includes(tagName)
     allergenCheckboxes.push(
-      <label key={tagName} style={{ marginRight: '10px' }}>
-        <input type="checkbox" value={tagName} checked={isChecked} onChange={handleAllergenToggle} />{' '}
+      <label key={tagName} className="inline-flex items-center gap-2 text-sm text-text cursor-pointer">
+        <input
+          type="checkbox"
+          value={tagName}
+          checked={isChecked}
+          onChange={handleAllergenToggle}
+          className="w-4 h-4 rounded border-border text-primary-600 focus:ring-primary-500"
+        />
         {tagName}
       </label>,
     )
@@ -174,20 +186,31 @@ function BrowsePage() {
   // The note that tells the viewer the pickup times are in their local zone.
   const timeZoneNote = getLocalTimeZoneNote()
 
+  const inputClasses = 'w-full px-4 py-2.5 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-150'
+
   // Build the results area with a plain if/else chain, checked in a set order.
   let resultsArea
   if (result === null) {
-    resultsArea = <p>Loading listings...</p>
+    resultsArea = <p className="text-text-muted text-sm py-8 text-center">Loading listings...</p>
   } else if (result.errorMessage !== '') {
     // A transport failure (timeout or network error); status is 0 here.
-    resultsArea = <p role="alert">{result.errorMessage}</p>
+    resultsArea = (
+      <div className="rounded-lg bg-error-bg border border-red-200 px-4 py-3 text-sm text-error" role="alert">
+        {result.errorMessage}
+      </div>
+    )
   } else if (result.ok) {
     // The backend owns this shape, so read the body with one plain cast to a
     // list of listings.
     const listings = result.data as ListingDetail[]
     if (listings.length === 0) {
       // US-06 Scenario 2: nothing matched the search or filters.
-      resultsArea = <p>No listings match.</p>
+      resultsArea = (
+        <div className="text-center py-12">
+          <span className="text-4xl mb-4 block">🍃</span>
+          <p className="text-text-muted">No listings match your search.</p>
+        </div>
+      )
     } else {
       const listingCards = []
       for (let index = 0; index < listings.length; index = index + 1) {
@@ -205,26 +228,44 @@ function BrowsePage() {
         const postedText = formatTimestamp(listing.created_at)
         listingCards.push(
           <li key={listing.id}>
-            <article>
-              <h2>
-                <Link to={'/listings/' + listing.id}>{listing.title}</Link>
-              </h2>
-              <p>Posted on: {postedText}</p>
-              <p>Category: {listing.category}</p>
-              <p>Remaining quantity: {listing.remaining_quantity}</p>
-              <p>Dietary tags: {dietaryText}</p>
-              <p>Allergen tags: {allergenText}</p>
-              <p>
-                Pickup Window: {pickupStartText} to {pickupEndText}
-              </p>
-              <p>
-                <small>{timeZoneNote}</small>
-              </p>
+            {/* The grid stretches every cell in a row to the same height, so the
+                card fills its cell (h-full) and flexes as a column, with the
+                posted-on footer pushed to the bottom (mt-auto). That keeps all
+                cards in a row equal height at every screen size. */}
+            <article className="h-full flex flex-col bg-surface rounded-xl border border-border p-6 shadow-sm hover:shadow-md transition-shadow duration-200">
+              <div className="flex items-start justify-between mb-3">
+                <h2 className="text-lg font-semibold text-text">
+                  <Link to={'/listings/' + listing.id} className="hover:text-primary-600 transition-colors">
+                    {listing.title}
+                  </Link>
+                </h2>
+                {listing.category && (
+                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary-50 text-primary-700 shrink-0 ml-3">
+                    {listing.category}
+                  </span>
+                )}
+              </div>
+              <div className="space-y-1.5 text-sm text-text-muted mb-4">
+                <p>Remaining: <span className="font-medium text-text">{listing.remaining_quantity}</span></p>
+                <p>Dietary: {dietaryText}</p>
+                <p>Allergens: {allergenText}</p>
+                <p>
+                  Pickup: {pickupStartText} — {pickupEndText}
+                </p>
+                <p className="text-xs">{timeZoneNote}</p>
+              </div>
+              <div className="mt-auto pt-3 border-t border-border">
+                <p className="text-xs text-text-muted">Posted {postedText}</p>
+              </div>
             </article>
           </li>,
         )
       }
-      resultsArea = <ul>{listingCards}</ul>
+      resultsArea = (
+        <ul className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          {listingCards}
+        </ul>
+      )
     }
   } else {
     // Any other HTTP failure (for example 403 or 503). Show the backend's detail
@@ -238,44 +279,85 @@ function BrowsePage() {
     if (typeof detail === 'string') {
       detailMessage = detail
     }
-    resultsArea = <p role="alert">{detailMessage}</p>
+    resultsArea = (
+      <div className="rounded-lg bg-error-bg border border-red-200 px-4 py-3 text-sm text-error" role="alert">
+        {detailMessage}
+      </div>
+    )
   }
 
   return (
     <section>
-      <h1>Browse listings</h1>
-      <form onSubmit={handleSubmit}>
-        <p>
-          <label htmlFor="browse-search">Search</label>{' '}
-          <input id="browse-search" type="text" value={searchText} onChange={handleSearchTextChange} />{' '}
-          <button type="submit">Search</button>
-        </p>
-        <p>
-          <label htmlFor="browse-category">Category</label>{' '}
-          <select id="browse-category" value={selectedCategory} onChange={handleCategoryChange}>
-            {categoryOptionElements}
-          </select>
-        </p>
-        <fieldset>
-          <legend>Dietary tags</legend>
-          {dietaryCheckboxes}
-        </fieldset>
-        <fieldset>
-          <legend>Allergen tags</legend>
-          {allergenCheckboxes}
-          <p>
-            <small>
-              The allergen filter shows listings that carry the tag, not listings that avoid it.
-            </small>
-          </p>
-        </fieldset>
-        <p>
-          <button type="submit">Apply filters</button>{' '}
-          <button type="button" onClick={handleClear}>
-            Clear
-          </button>
-        </p>
-      </form>
+      <h1 className="text-3xl font-bold text-text mb-6">Browse listings</h1>
+
+      {/* Filters card */}
+      <div className="bg-surface rounded-xl border border-border p-6 shadow-sm mb-8">
+        <form onSubmit={handleSubmit} className="space-y-5">
+          {/* Search + Category row */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label htmlFor="browse-search" className="block text-sm font-medium text-text mb-1.5">Search</label>
+              <input
+                id="browse-search"
+                type="text"
+                value={searchText}
+                onChange={handleSearchTextChange}
+                className={inputClasses}
+                placeholder="Search titles and descriptions…"
+              />
+            </div>
+            <div>
+              <label htmlFor="browse-category" className="block text-sm font-medium text-text mb-1.5">Category</label>
+              <select
+                id="browse-category"
+                value={selectedCategory}
+                onChange={handleCategoryChange}
+                className={inputClasses}
+              >
+                {categoryOptionElements}
+              </select>
+            </div>
+          </div>
+
+          {/* Tag filters */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <fieldset>
+              <legend className="text-sm font-medium text-text mb-2">Dietary tags</legend>
+              <div className="flex flex-wrap gap-4">
+                {dietaryCheckboxes}
+              </div>
+            </fieldset>
+            <fieldset>
+              <legend className="text-sm font-medium text-text mb-2">Allergen tags</legend>
+              <div className="flex flex-wrap gap-4">
+                {allergenCheckboxes}
+              </div>
+              <p className="text-xs text-text-muted mt-2">
+                Shows listings that carry the tag, not listings that avoid it.
+              </p>
+            </fieldset>
+          </div>
+
+          {/* Action buttons */}
+          <div className="flex items-center gap-3 pt-2">
+            <button
+              type="submit"
+              className="inline-flex items-center px-6 py-2.5 text-sm font-semibold text-text-inverse bg-primary-600 rounded-lg hover:bg-primary-700 shadow-sm transition-all duration-150"
+            >
+              Apply filters
+            </button>
+            <button
+              type="button"
+              onClick={handleClear}
+              className="inline-flex items-center px-6 py-2.5 text-sm font-medium text-text-muted border border-border rounded-lg hover:bg-background-alt transition-colors"
+            >
+              Clear
+            </button>
+          </div>
+        </form>
+      </div>
+
+      {/* Results */}
       {resultsArea}
     </section>
   )

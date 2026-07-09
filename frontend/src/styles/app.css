@@ -1,0 +1,82 @@
+/* CSS requires every @import to come before all other statements, so the
+   Google Fonts import for Inter sits up here next to the Tailwind import. */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+@import "tailwindcss";
+
+/* ------------------------------------------------------------------ */
+/* Design system: Surplus – A Local Produce Exchange                  */
+/* Modern, sleek, minimalistic with warm earthy tones.                */
+/* ------------------------------------------------------------------ */
+
+@theme {
+  /* Colors – warm naturals with earthy green accents */
+  --color-primary-50: #ecfdf5;
+  --color-primary-100: #d1fae5;
+  --color-primary-200: #a7f3d0;
+  --color-primary-300: #6ee7b7;
+  --color-primary-400: #34d399;
+  --color-primary-500: #10b981;
+  --color-primary-600: #059669;
+  --color-primary-700: #047857;
+  --color-primary-800: #065f46;
+  --color-primary-900: #064e3b;
+  --color-primary-950: #022c22;
+
+  --color-surface: #ffffff;
+  --color-background: #faf7f2;
+  --color-background-alt: #f3ede4;
+
+  --color-text: #1b1b1b;
+  --color-text-muted: #6b7280;
+  --color-text-inverse: #ffffff;
+
+  --color-border: #e5e0d8;
+  --color-border-focus: #059669;
+
+  --color-error: #dc2626;
+  --color-error-bg: #fef2f2;
+  --color-success: #16a34a;
+  --color-success-bg: #f0fdf4;
+  --color-warning: #d97706;
+  --color-warning-bg: #fffbeb;
+  --color-info: #2563eb;
+  --color-info-bg: #eff6ff;
+
+  /* Typography */
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+
+  /* Spacing */
+  --spacing-page: 1.5rem;
+
+  /* Border radius */
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+  --radius-full: 9999px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Base layer resets                                                   */
+/* ------------------------------------------------------------------ */
+@layer base {
+  html {
+    @apply scroll-smooth;
+  }
+  body {
+    @apply bg-background text-text font-sans antialiased;
+  }
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-semibold tracking-tight;
+  }
+  a {
+    @apply text-primary-600 hover:text-primary-700 transition-colors duration-150;
+  }
+  /* Tailwind v4's reset leaves buttons on the default arrow cursor. Show the
+     pointing hand on every enabled button so buttons and links feel the same;
+     disabled buttons keep their own cursor (their classes set not-allowed). */
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+}

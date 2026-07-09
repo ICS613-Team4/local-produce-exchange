@@ -127,7 +127,7 @@ test('an active row shows edit, an enabled deactivate, a disabled activate, and 
   const editLink = screen.getByRole('link', { name: 'Edit' })
   expect(editLink.getAttribute('href')).toBe('/listings/a/edit')
 
-  const deactivateButton = screen.getByRole('button', { name: 'Deactivate listing' })
+  const deactivateButton = screen.getByRole('button', { name: 'Deactivate' })
   expect((deactivateButton as HTMLButtonElement).disabled).toBe(false)
 
   const activateButton = screen.getByRole('button', { name: 'Activate listing' })
@@ -218,7 +218,7 @@ test('clicking Deactivate calls the deactivate endpoint and reloads the list', a
 
   renderMyListings()
 
-  const deactivateButton = await screen.findByRole('button', { name: 'Deactivate listing' })
+  const deactivateButton = await screen.findByRole('button', { name: 'Deactivate' })
   fireEvent.click(deactivateButton)
 
   // After the reload, the row is deactivated: its title is no longer a link.
@@ -276,7 +276,7 @@ test('a failed deactivate shows the server message and keeps the row active', as
 
   renderMyListings()
 
-  const deactivateButton = await screen.findByRole('button', { name: 'Deactivate listing' })
+  const deactivateButton = await screen.findByRole('button', { name: 'Deactivate' })
   fireEvent.click(deactivateButton)
 
   // The failure shows as an alert, and the row stays active (its title is a link).
@@ -308,7 +308,7 @@ test('cancelling the deactivate confirm does not call the endpoint', async () =>
 
   renderMyListings()
 
-  const deactivateButton = await screen.findByRole('button', { name: 'Deactivate listing' })
+  const deactivateButton = await screen.findByRole('button', { name: 'Deactivate' })
   fireEvent.click(deactivateButton)
   await waitForStateUpdates()
 
@@ -330,7 +330,7 @@ test('a 401 on deactivate clears the credentials and shows the logged-out messag
 
   renderMyListings()
 
-  const deactivateButton = await screen.findByRole('button', { name: 'Deactivate listing' })
+  const deactivateButton = await screen.findByRole('button', { name: 'Deactivate' })
   fireEvent.click(deactivateButton)
 
   expect(await screen.findByText('You need to be logged in to see this page.')).toBeTruthy()

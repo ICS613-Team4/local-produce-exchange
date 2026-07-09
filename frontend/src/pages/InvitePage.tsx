@@ -72,10 +72,12 @@ function InvitePage() {
   // so the create button never appears and the backend is never called.
   if (memberId === '') {
     return (
-      <section>
-        <h1>Invite a new member</h1>
-        <p>Please log in to create an invite.</p>
-      </section>
+      <div className="max-w-lg mx-auto">
+        <div className="bg-surface rounded-xl border border-border p-8 shadow-sm">
+          <h1 className="text-2xl font-bold text-text mb-4">Invite a new member</h1>
+          <p className="text-text-muted">Please log in to create an invite.</p>
+        </div>
+      </div>
     )
   }
 
@@ -84,24 +86,39 @@ function InvitePage() {
   if (token !== '') {
     let copyArea = <></>
     if (copyMessage !== '') {
-      copyArea = <p role="status">{copyMessage}</p>
+      copyArea = (
+        <p className="text-sm text-success mt-2" role="status">{copyMessage}</p>
+      )
     }
     successArea = (
-      <div>
-        <p>
-          Here is your invite. It is shown once and will not be shown again, so
-          copy it now.
-        </p>
-        <p>Shareable registration link:</p>
-        <p>
-          <span>{shareLink}</span>{' '}
-          <button onClick={handleCopyLink}>Copy link</button>
-        </p>
-        {copyArea}
-        <p>Or share this raw token instead:</p>
-        <pre style={{ border: '1px solid black', padding: '10px', whiteSpace: 'pre-wrap' }}>
-          {token}
-        </pre>
+      <div className="mt-6 space-y-4">
+        <div className="rounded-lg bg-success-bg border border-green-200 px-4 py-3">
+          <p className="text-sm font-medium text-success mb-1">Invite created!</p>
+          <p className="text-xs text-text-muted">
+            This token is shown once and will not be shown again. Copy it now.
+          </p>
+        </div>
+        <div>
+          <p className="text-sm font-medium text-text mb-2">Shareable registration link:</p>
+          <div className="flex items-center gap-2">
+            <code className="flex-1 text-xs font-mono bg-background border border-border rounded-lg px-3 py-2.5 break-all text-primary-700">
+              {shareLink}
+            </code>
+            <button
+              onClick={handleCopyLink}
+              className="shrink-0 inline-flex items-center px-4 py-2.5 text-sm font-medium text-primary-600 border border-primary-200 rounded-lg hover:bg-primary-50 transition-colors"
+            >
+              Copy link
+            </button>
+          </div>
+          {copyArea}
+        </div>
+        <div>
+          <p className="text-sm font-medium text-text mb-2">Or share this raw token:</p>
+          <pre className="text-xs font-mono bg-background border border-border rounded-lg px-4 py-3 whitespace-pre-wrap break-all text-text-muted">
+            {token}
+          </pre>
+        </div>
       </div>
     )
   }
@@ -109,20 +126,31 @@ function InvitePage() {
   // Build the error area only when there is an error to show.
   let errorArea = <></>
   if (errorMessage !== '') {
-    errorArea = <p role="alert">{errorMessage}</p>
+    errorArea = (
+      <div className="rounded-lg bg-error-bg border border-red-200 px-4 py-3 text-sm text-error mt-4" role="alert">
+        {errorMessage}
+      </div>
+    )
   }
 
   return (
-    <section>
-      <h1>Invite a new member</h1>
-      <p>
-        Create an invite token to bring a new person into the community. Share
-        it with them so they can register.
-      </p>
-      <button onClick={handleCreateInvite}>Create an invite</button>
-      {successArea}
-      {errorArea}
-    </section>
+    <div className="max-w-lg mx-auto">
+      <div className="bg-surface rounded-xl border border-border p-8 shadow-sm">
+        <h1 className="text-2xl font-bold text-text mb-2">Invite a new member</h1>
+        <p className="text-sm text-text-muted mb-6">
+          Create an invite token to bring a new person into the community. Share
+          it with them so they can register.
+        </p>
+        <button
+          onClick={handleCreateInvite}
+          className="inline-flex items-center px-6 py-2.5 text-sm font-semibold text-text-inverse bg-primary-600 rounded-lg hover:bg-primary-700 shadow-sm hover:shadow transition-all duration-150"
+        >
+          Create an invite
+        </button>
+        {successArea}
+        {errorArea}
+      </div>
+    </div>
   )
 }
 

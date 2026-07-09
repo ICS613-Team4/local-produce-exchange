@@ -71,10 +71,10 @@ function fillForm() {
   fireEvent.change(screen.getByLabelText('Category'), { target: { value: 'Vegetables' } })
   fireEvent.change(screen.getByLabelText('Quantity available'), { target: { value: '5' } })
   // The blank middle piece checks that splitTags drops empty tags.
-  fireEvent.change(screen.getByLabelText('Dietary tags (comma-separated)'), {
+  fireEvent.change(screen.getByLabelText('Dietary tags'), {
     target: { value: 'vegan, , organic' },
   })
-  fireEvent.change(screen.getByLabelText('Allergen tags (comma-separated)'), {
+  fireEvent.change(screen.getByLabelText('Allergen tags'), {
     target: { value: 'nuts' },
   })
   fireEvent.change(screen.getByLabelText('Pickup start'), { target: { value: '2026-07-01T09:00' } })
@@ -93,8 +93,8 @@ test('renders all the listing fields and the submit button', () => {
   expect(screen.getByLabelText('Description')).toBeTruthy()
   expect(screen.getByLabelText('Category')).toBeTruthy()
   expect(screen.getByLabelText('Quantity available')).toBeTruthy()
-  expect(screen.getByLabelText('Dietary tags (comma-separated)')).toBeTruthy()
-  expect(screen.getByLabelText('Allergen tags (comma-separated)')).toBeTruthy()
+  expect(screen.getByLabelText('Dietary tags')).toBeTruthy()
+  expect(screen.getByLabelText('Allergen tags')).toBeTruthy()
   expect(screen.getByLabelText('Pickup start')).toBeTruthy()
   expect(screen.getByLabelText('Pickup end')).toBeTruthy()
   expect(screen.getByRole('button', { name: 'Create listing' })).toBeTruthy()
@@ -275,9 +275,9 @@ test('disables the submit button while the request is in flight', async () => {
   fillForm()
   submitForm()
 
-  // Mid-flight the button is disabled, so a second click cannot fire.
+  // Mid-flight the button is disabled (and relabeled), so a second click cannot fire.
   await waitFor(() => {
-    const button = screen.getByRole('button', { name: 'Create listing' }) as HTMLButtonElement
+    const button = screen.getByRole('button', { name: 'Creating…' }) as HTMLButtonElement
     expect(button.disabled).toBe(true)
   })
 
@@ -310,8 +310,8 @@ test('keeps the form and disables submit when the created listing has no id', as
   expect(screen.getByRole('heading', { name: 'Create a listing' })).toBeTruthy()
   // It did not navigate to the detail stand-in route.
   expect(screen.queryByText('listing x')).toBeNull()
-  // The submit button stays disabled, so the already-created listing cannot be
-  // submitted a second time.
-  const button = screen.getByRole('button', { name: 'Create listing' }) as HTMLButtonElement
+  // The submit button stays disabled (still showing the in-flight label), so the
+  // already-created listing cannot be submitted a second time.
+  const button = screen.getByRole('button', { name: 'Creating…' }) as HTMLButtonElement
   expect(button.disabled).toBe(true)
 })

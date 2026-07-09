@@ -123,32 +123,43 @@ function ProfilePage() {
     setRawResponseText(formatApiResult(result.ok, result.status, result.data))
   }
 
+  const inputClasses = 'w-full px-4 py-2.5 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-150'
+  const labelClasses = 'block text-sm font-medium text-text mb-1.5'
+
   if (memberId === null) {
     return (
-      <section>
-        <h1>Profile</h1>
-        <p>
-          Please <Link to="/login">log in</Link> to view your profile.
-        </p>
-      </section>
+      <div className="max-w-lg mx-auto">
+        <div className="bg-surface rounded-xl border border-border p-8 shadow-sm">
+          <h1 className="text-2xl font-bold text-text mb-4">Profile</h1>
+          <p className="text-text-muted">
+            Please <Link to="/login" className="font-medium text-primary-600 hover:text-primary-700">log in</Link> to view your profile.
+          </p>
+        </div>
+      </div>
     )
   }
 
   if (loading) {
     return (
-      <section>
-        <h1>Profile</h1>
-        <p>Loading&hellip;</p>
-      </section>
+      <div className="max-w-lg mx-auto">
+        <div className="bg-surface rounded-xl border border-border p-8 shadow-sm">
+          <h1 className="text-2xl font-bold text-text mb-4">Profile</h1>
+          <p className="text-text-muted">Loading&hellip;</p>
+        </div>
+      </div>
     )
   }
 
   if (pageError !== '') {
     return (
-      <section>
-        <h1>Profile</h1>
-        <p role="alert">{pageError}</p>
-      </section>
+      <div className="max-w-lg mx-auto">
+        <div className="bg-surface rounded-xl border border-border p-8 shadow-sm">
+          <h1 className="text-2xl font-bold text-text mb-4">Profile</h1>
+          <div className="rounded-lg bg-error-bg border border-red-200 px-4 py-3 text-sm text-error" role="alert">
+            {pageError}
+          </div>
+        </div>
+      </div>
     )
   }
 
@@ -158,89 +169,122 @@ function ProfilePage() {
 
   if (editing && canEdit) {
     const errorArea =
-      saveError !== '' ? <p role="alert">{saveError}</p> : <></>
+      saveError !== '' ? (
+        <div className="rounded-lg bg-error-bg border border-red-200 px-4 py-3 text-sm text-error mt-4" role="alert">
+          {saveError}
+        </div>
+      ) : <></>
 
     const rawResponseArea =
       rawResponseText !== '' ? (
-        <pre style={{ border: '1px solid black', padding: '10px', whiteSpace: 'pre-wrap' }}>
+        <pre className="mt-4 text-xs font-mono bg-background border border-border rounded-lg px-4 py-3 whitespace-pre-wrap text-text-muted">
           {rawResponseText}
         </pre>
-      ) : (
-        <></>
-      )
+      ) : <></>
 
     return (
-      <section>
-        <h1>Edit Profile</h1>
-        <form onSubmit={handleSaveSubmit}>
-          <p>
-            <label htmlFor="profile-display-name">Display name</label>{' '}
-            <input
-              id="profile-display-name"
-              type="text"
-              required
-              value={displayName}
-              onChange={(e) => setDisplayName(e.target.value)}
-            />
-          </p>
-          <p>
-            <label htmlFor="profile-contact-preference">Contact preference</label>{' '}
-            <select
-              id="profile-contact-preference"
-              value={contactPreference}
-              onChange={(e) => setContactPreference(e.target.value)}
-            >
-              <option value="">— choose —</option>
-              <option value="email">Email</option>
-              <option value="message">Message</option>
-              <option value="either">Either</option>
-            </select>
-          </p>
-          <p>
-            <label htmlFor="profile-neighborhood">Neighborhood</label>{' '}
-            <input
-              id="profile-neighborhood"
-              type="text"
-              value={neighborhood}
-              onChange={(e) => setNeighborhood(e.target.value)}
-            />
-          </p>
-          <p>
-            <button type="submit">Save</button>{' '}
-            <button type="button" onClick={handleCancelClick}>
-              Cancel
-            </button>
-          </p>
-        </form>
-        {errorArea}
-        {rawResponseArea}
-      </section>
+      <div className="max-w-lg mx-auto">
+        <div className="bg-surface rounded-xl border border-border p-8 shadow-sm">
+          <h1 className="text-2xl font-bold text-text mb-6">Edit Profile</h1>
+          <form onSubmit={handleSaveSubmit} className="space-y-5">
+            <div>
+              <label htmlFor="profile-display-name" className={labelClasses}>Display name</label>
+              <input
+                id="profile-display-name"
+                type="text"
+                required
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                className={inputClasses}
+              />
+            </div>
+            <div>
+              <label htmlFor="profile-contact-preference" className={labelClasses}>Contact preference</label>
+              <select
+                id="profile-contact-preference"
+                value={contactPreference}
+                onChange={(e) => setContactPreference(e.target.value)}
+                className={inputClasses}
+              >
+                <option value="">— choose —</option>
+                <option value="email">Email</option>
+                <option value="message">Message</option>
+                <option value="either">Either</option>
+              </select>
+            </div>
+            <div>
+              <label htmlFor="profile-neighborhood" className={labelClasses}>Neighborhood</label>
+              <input
+                id="profile-neighborhood"
+                type="text"
+                value={neighborhood}
+                onChange={(e) => setNeighborhood(e.target.value)}
+                className={inputClasses}
+              />
+            </div>
+            <div className="flex items-center gap-3 pt-2">
+              <button
+                type="submit"
+                className="px-6 py-2.5 text-sm font-semibold text-text-inverse bg-primary-600 rounded-lg hover:bg-primary-700 shadow-sm transition-all duration-150"
+              >
+                Save
+              </button>
+              <button
+                type="button"
+                onClick={handleCancelClick}
+                className="px-6 py-2.5 text-sm font-medium text-text-muted border border-border rounded-lg hover:bg-background-alt transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+          {errorArea}
+          {rawResponseArea}
+        </div>
+      </div>
     )
   }
 
   return (
-    <section>
-      <h1>Profile</h1>
-      <p>
-        <strong>Name:</strong> {member.name}
-      </p>
-      <p>
-        <strong>Email:</strong> {member.email}
-      </p>
-      <p>
-        <strong>Display name:</strong> {member.profile?.display_name ?? '—'}
-      </p>
-      <p>
-        <strong>Contact preference:</strong> {member.profile?.contact_preference ?? '—'}
-      </p>
-      <p>
-        <strong>Neighborhood:</strong> {member.profile?.neighborhood ?? '—'}
-      </p>
-      <p>
-        <strong>Member since:</strong> {new Date(member.created_at).toLocaleDateString()}
-      </p>
-      {canEdit && <button onClick={handleEditClick}>Edit profile</button>}
-    </section>
+    <div className="max-w-lg mx-auto">
+      <div className="bg-surface rounded-xl border border-border p-8 shadow-sm">
+        <h1 className="text-2xl font-bold text-text mb-6">Profile</h1>
+        <dl className="space-y-4">
+          <div>
+            <dt className="text-xs font-medium text-text-muted uppercase tracking-wide">Name</dt>
+            <dd className="mt-1 text-sm text-text">{member.name}</dd>
+          </div>
+          <div>
+            <dt className="text-xs font-medium text-text-muted uppercase tracking-wide">Email</dt>
+            <dd className="mt-1 text-sm text-text">{member.email}</dd>
+          </div>
+          <div className="border-t border-border pt-4">
+            <dt className="text-xs font-medium text-text-muted uppercase tracking-wide">Display name</dt>
+            <dd className="mt-1 text-sm text-text">{member.profile?.display_name ?? '—'}</dd>
+          </div>
+          <div>
+            <dt className="text-xs font-medium text-text-muted uppercase tracking-wide">Contact preference</dt>
+            <dd className="mt-1 text-sm text-text">{member.profile?.contact_preference ?? '—'}</dd>
+          </div>
+          <div>
+            <dt className="text-xs font-medium text-text-muted uppercase tracking-wide">Neighborhood</dt>
+            <dd className="mt-1 text-sm text-text">{member.profile?.neighborhood ?? '—'}</dd>
+          </div>
+          <div className="border-t border-border pt-4">
+            <dt className="text-xs font-medium text-text-muted uppercase tracking-wide">Member since</dt>
+            <dd className="mt-1 text-sm text-text">{new Date(member.created_at).toLocaleDateString()}</dd>
+          </div>
+        </dl>
+        {canEdit && (
+          <button
+            onClick={handleEditClick}
+            className="mt-6 inline-flex items-center px-6 py-2.5 text-sm font-semibold text-text-inverse bg-primary-600 rounded-lg hover:bg-primary-700 shadow-sm transition-all duration-150"
+          >
+            Edit profile
+          </button>
+        )}
+      </div>
+    </div>
   )
 }
 
