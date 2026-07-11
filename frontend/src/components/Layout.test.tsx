@@ -80,14 +80,36 @@ test('shows the logged-out nav when no member is stored', () => {
 
 test('shows the logged-in nav when a member is stored', () => {
   window.localStorage.setItem('memberId', 'member-123')
+  window.localStorage.setItem('memberName', 'Bob Baker')
   renderLayoutAt('/dashboard')
 
   expect(screen.getByText('Surplus')).toBeTruthy()
   expect(screen.getAllByRole('link', { name: 'Dashboard' }).length).toBeGreaterThanOrEqual(1)
+  expect(screen.getAllByRole('link', { name: 'Incoming Requests' }).length).toBeGreaterThanOrEqual(1)
   expect(screen.getAllByRole('link', { name: 'Log out' }).length).toBeGreaterThanOrEqual(1)
+
+  // There is no Profile nav item; the member's name is the profile link.
+  expect(screen.queryByRole('link', { name: 'Profile' })).toBeNull()
+  const nameLinks = screen.getAllByRole('link', { name: 'Bob Baker' })
+  expect(nameLinks[0].getAttribute('href')).toBe('/profile')
 
   expect(screen.queryByRole('link', { name: 'Log in' })).toBeNull()
   expect(screen.queryByRole('link', { name: 'Register' })).toBeNull()
+})
+
+test('the nav link for the current page is highlighted with aria-current', () => {
+  window.localStorage.setItem('memberId', 'member-123')
+  renderLayoutAt('/dashboard')
+
+  // The Dashboard links (desktop and mobile share the path) carry
+  // aria-current="page" and the active background; the other links do not.
+  const dashboardLinks = screen.getAllByRole('link', { name: 'Dashboard' })
+  for (let index = 0; index < dashboardLinks.length; index = index + 1) {
+    expect(dashboardLinks[index].getAttribute('aria-current')).toBe('page')
+    expect(dashboardLinks[index].className).toContain('bg-primary-50')
+  }
+  const browseLinks = screen.getAllByRole('link', { name: 'Browse' })
+  expect(browseLinks[0].getAttribute('aria-current')).toBeNull()
 })
 
 test('logging out clears credentials, fires the event, and shows the logged-out nav', async () => {

@@ -19,8 +19,9 @@ from sqlalchemy.orm import Session
 from app.db import get_db_session
 from app.dependencies import get_current_member
 from app.models.listing import Listing
+from app.models.listing_photo import ListingPhoto
 from app.models.member import Member
-from app.schemas.listing import CreateListingRequest, ListingResponse
+from app.schemas.listing import CreateListingRequest, ListingPhotoRef, ListingResponse
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,24 @@ def normalize_tags(raw_tags):
             continue
         normalized_tags.append(trimmed_tag)
     return normalized_tags
+
+
+def load_photo_refs(session, listing_id):
+    rows = session.scalars(
+        select(ListingPhoto)
+        .where(ListingPhoto.listing_id == listing_id)
+        .order_by(ListingPhoto.position)
+    ).all()
+    refs = []
+    for row in rows:
+        refs.append(
+            ListingPhotoRef(
+                id=str(row.id),
+                content_type=row.content_type,
+                position=row.position,
+            )
+        )
+    return refs
 
 
 @router.post("/listings", status_code=201)
@@ -216,6 +235,40 @@ def browse_listings(
     # unhandled error, matching the other listing routes.
     try:
         rows = session.scalars(statement).all()
+        listing_ids = []
+        for row in rows:
+            listing_ids.append(row.id)
+        photos_by_listing = {}
+        if listing_ids:
+            photo_rows = session.scalars(
+                select(ListingPhoto)
+                .where(ListingPhoto.listing_id.in_(listing_ids))
+                .order_by(ListingPhoto.position)
+            ).all()
+            for photo_row in photo_rows:
+                key = photo_row.listing_id
+                if key not in photos_by_listing:
+                    photos_by_listing[key] = []
+                photos_by_listing[key].append(
+                    ListingPhotoRef(
+                        id=str(photo_row.id),
+                        content_type=photo_row.content_type,
+                        position=photo_row.position,
+                    )
+                )
+        # Load every owner's name in one query, so each card can show who
+        # posted the listing. Same batching as the photos above.
+        owner_ids = []
+        for row in rows:
+            if row.owner_id not in owner_ids:
+                owner_ids.append(row.owner_id)
+        owner_names_by_id = {}
+        if owner_ids:
+            owner_rows = session.scalars(
+                select(Member).where(Member.id.in_(owner_ids))
+            ).all()
+            for owner_row in owner_rows:
+                owner_names_by_id[owner_row.id] = owner_row.name
     except Exception as error:
         logger.error("Browsing listings failed: %s", error)
         raise HTTPException(
@@ -248,6 +301,7 @@ def browse_listings(
         category_value = row.category
         if category_value is None:
             category_value = ""
+        photos = photos_by_listing.get(row.id, [])
         results.append(
             ListingResponse(
                 id=str(row.id),
@@ -263,6 +317,8 @@ def browse_listings(
                 pickup_end=pickup_end,
                 status=row.status,
                 created_at=row.created_at,
+                owner_name=owner_names_by_id.get(row.owner_id, ""),
+                photos=photos,
             )
         )
     return results
@@ -309,6 +365,27 @@ def get_my_listings(
     # unhandled error, matching the other listing routes.
     try:
         rows = session.scalars(statement).all()
+        listing_ids = []
+        for row in rows:
+            listing_ids.append(row.id)
+        photos_by_listing = {}
+        if listing_ids:
+            photo_rows = session.scalars(
+                select(ListingPhoto)
+                .where(ListingPhoto.listing_id.in_(listing_ids))
+                .order_by(ListingPhoto.position)
+            ).all()
+            for photo_row in photo_rows:
+                key = photo_row.listing_id
+                if key not in photos_by_listing:
+                    photos_by_listing[key] = []
+                photos_by_listing[key].append(
+                    ListingPhotoRef(
+                        id=str(photo_row.id),
+                        content_type=photo_row.content_type,
+                        position=photo_row.position,
+                    )
+                )
     except Exception as error:
         logger.error("Loading your listings failed: %s", error)
         raise HTTPException(
@@ -347,6 +424,7 @@ def get_my_listings(
         deactivated_by_value = None
         if row.deactivated_by is not None:
             deactivated_by_value = str(row.deactivated_by)
+        photos = photos_by_listing.get(row.id, [])
         results.append(
             ListingResponse(
                 id=str(row.id),
@@ -363,6 +441,7 @@ def get_my_listings(
                 status=row.status,
                 created_at=row.created_at,
                 deactivated_by=deactivated_by_value,
+                photos=photos,
             )
         )
     return results
@@ -459,6 +538,19 @@ def get_listing(
     except Exception as error:
         logger.error("Reading the listing owner failed: %s", error)
 
+    try:
+        photos = load_photo_refs(session, row.id)
+    except Exception as error:
+        logger.error("Reading listing photos failed: %s", error)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Could not read the listing right now. "
+                "Make sure the database is running and migrated: "
+                "npm run db:up, then npm run db:migrate, then npm run db:seed."
+            ),
+        )
+
     # Build the response from the stored row: the ids as strings (same as the
     # create response), the coerced text, the tag lists, the two pickup times
     # pulled from the range above, and the status and created_at.
@@ -477,6 +569,7 @@ def get_listing(
         status=row.status,
         created_at=row.created_at,
         owner_name=owner_name,
+        photos=photos,
     )
 
 
@@ -582,6 +675,18 @@ def edit_listing(
             ),
         )
 
+    try:
+        photos = load_photo_refs(session, listing_id_out)
+    except Exception as error:
+        logger.error("Reading listing photos after edit failed: %s", error)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Could not read the listing right now. "
+                "Make sure the database is running and migrated."
+            ),
+        )
+
     return ListingResponse(
         id=str(listing_id_out),
         owner_id=str(owner_id_out),
@@ -596,6 +701,7 @@ def edit_listing(
         pickup_end=payload.pickup_end,
         status=status_out,
         created_at=created_at_out,
+        photos=photos,
     )
 
 

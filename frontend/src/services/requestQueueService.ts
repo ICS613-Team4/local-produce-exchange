@@ -2,6 +2,8 @@
 // listing queues; with a listing id it returns just that one listing's queue
 // after the backend checks the caller owns it.
 
+import type { ListingPhotoRef } from './listingService'
+
 export const requestQueueTimeoutMilliseconds = 3000
 
 // The result shape every call returns, the same ok / status / data / errorMessage
@@ -71,6 +73,12 @@ export type ListingAllRequestsGroup = {
   listing_title: string
   remaining_quantity: number
   requests: AllRequestItem[]
+  // When the listing was posted. Optional so stubbed shapes without the field
+  // keep type-checking.
+  created_at?: string | null
+  // The listing's photos; the first one is the cover. Optional so stubbed
+  // shapes without the field keep type-checking.
+  photos?: ListingPhotoRef[]
 }
 
 // The all-requests response: one group per active listing the caller owns,
@@ -92,14 +100,20 @@ export type MyRequestItem = {
   approved_at: string | null
   picked_up_at: string | null
   denied_at: string | null
+  cancelled_at?: string | null
+  // The requested listing's photos; the first one is the cover. Optional so
+  // stubbed shapes without the field keep type-checking.
+  photos?: ListingPhotoRef[]
 }
 
-// The my-requests response: the caller's requests split into three sections,
-// each newest-first.
+// The my-requests response: the caller's requests split into four sections,
+// each newest-first. withdrawn is optional so stubbed shapes without the
+// field keep type-checking; the page treats a missing list as empty.
 export type MyRequestsResponse = {
   pending: MyRequestItem[]
   approved: MyRequestItem[]
   denied: MyRequestItem[]
+  withdrawn?: MyRequestItem[]
 }
 
 export async function sendGetRequestQueuesRequest(

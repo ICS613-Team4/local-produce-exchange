@@ -6,7 +6,17 @@ import os
 
 from fastapi import FastAPI
 
-from app.routers import auth, claim, health, invite, listing, members, sample_endpoint, thread
+from app.routers import (
+    auth,
+    claim,
+    health,
+    invite,
+    listing,
+    listing_photo,
+    members,
+    sample_endpoint,
+    thread,
+)
 
 
 def get_log_level():
@@ -42,6 +52,7 @@ app.include_router(claim.router, prefix="/api")
 app.include_router(health.router, prefix="/api")
 app.include_router(invite.router, prefix="/api")
 app.include_router(listing.router, prefix="/api")
+app.include_router(listing_photo.router, prefix="/api")
 app.include_router(members.router, prefix="/api")
 app.include_router(sample_endpoint.router, prefix="/api")
 app.include_router(thread.router, prefix="/api")

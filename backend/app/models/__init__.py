@@ -5,7 +5,17 @@
 from app.models.base import Base
 from app.models.claim import Claim
 from app.models.listing import Listing
+from app.models.listing_photo import ListingPhoto
 from app.models.member import InviteToken, Member, MemberProfile
 from app.models.sample_data import SampleData
 
-__all__ = ["Base", "Claim", "InviteToken", "Listing", "Member", "MemberProfile", "SampleData"]
+__all__ = [
+    "Base",
+    "Claim",
+    "InviteToken",
+    "Listing",
+    "ListingPhoto",
+    "Member",
+    "MemberProfile",
+    "SampleData",
+]

@@ -19,6 +19,7 @@ from app.db import get_db_session
 from app.dependencies import get_current_member
 from app.main import app
 from app.models.listing import Listing
+from app.models.listing_photo import ListingPhoto
 from app.models.member import Member
 from app.routers.listing import browse_listings
 
@@ -162,6 +163,30 @@ def test_browse_returns_newest_first(db_session):
     assert len(results) == 2
     assert results[0].title == "Newer"
     assert results[1].title == "Older"
+
+
+def test_browse_carries_the_owner_name_and_photos(db_session):
+    # Each browse row names its owner (so the card can show who posted it) and
+    # carries the listing's photos ordered by position.
+    member = insert_member(db_session, "active")
+    listing = insert_listing(db_session, member, title="Photographed")
+    db_session.add(
+        ListingPhoto(
+            listing_id=listing.id,
+            content_type="image/png",
+            image_bytes=b"png-bytes",
+            position=0,
+        )
+    )
+    db_session.commit()
+
+    results = browse_listings(current_member=member, session=db_session)
+
+    assert len(results) == 1
+    assert results[0].owner_name == "Viewer"
+    assert len(results[0].photos) == 1
+    assert results[0].photos[0].content_type == "image/png"
+    assert results[0].photos[0].position == 0
 
 
 def test_browse_order_is_deterministic_when_timestamps_tie(db_session):

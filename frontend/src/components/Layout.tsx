@@ -4,11 +4,11 @@ import { Link, Outlet, useLocation } from 'react-router'
 import { authStateChangedEventName, sendLogoutRequest } from '../services/authService'
 
 function Layout() {
-  // Subscribe to the current location. We do not read its value; calling this
-  // hook is what makes the nav re-render on every route change, and that
-  // re-render re-reads the stored login below. A login writes localStorage and
-  // then navigates, so without this line the nav would not flip after a login.
-  useLocation()
+  // Subscribe to the current location. Calling this hook makes the nav
+  // re-render on every route change, which re-reads the stored login below (a
+  // login writes localStorage and then navigates). The pathname is also read
+  // to highlight the nav link of the page the member is on.
+  const location = useLocation()
 
   // A page that clears credentials without changing the route (a stale 401) fires
   // this same-tab event. The listener below bumps this counter, which forces a
@@ -61,9 +61,38 @@ function Layout() {
     setMobileMenuOpen(false)
   }
 
-  // Build the nav links.
+  // Build the nav links. The link whose path matches the current page gets
+  // the highlighted (active) style and aria-current="page", so the member can
+  // see which global nav page they are on.
   const navLinkClasses = 'text-sm font-medium text-text hover:text-primary-600 transition-colors duration-150 px-3 py-2 rounded-md hover:bg-primary-50'
+  const navLinkActiveClasses = 'text-sm font-semibold text-primary-700 bg-primary-50 transition-colors duration-150 px-3 py-2 rounded-md'
   const mobileNavLinkClasses = 'block text-base font-medium text-text hover:text-primary-600 hover:bg-primary-50 px-4 py-3 rounded-lg transition-colors duration-150'
+  const mobileNavLinkActiveClasses = 'block text-base font-semibold text-primary-700 bg-primary-50 px-4 py-3 rounded-lg transition-colors duration-150'
+
+  function isCurrentPage(path: string) {
+    return location.pathname === path
+  }
+
+  function getNavLinkClasses(path: string) {
+    if (isCurrentPage(path)) {
+      return navLinkActiveClasses
+    }
+    return navLinkClasses
+  }
+
+  function getMobileNavLinkClasses(path: string) {
+    if (isCurrentPage(path)) {
+      return mobileNavLinkActiveClasses
+    }
+    return mobileNavLinkClasses
+  }
+
+  function getAriaCurrent(path: string): 'page' | undefined {
+    if (isCurrentPage(path)) {
+      return 'page'
+    }
+    return undefined
+  }
 
   let desktopNavItems
   let mobileNavItems
@@ -71,37 +100,36 @@ function Layout() {
   if (isLoggedIn) {
     desktopNavItems = (
       <>
-        <Link to="/dashboard" className={navLinkClasses} onClick={closeMobileMenu}>Dashboard</Link>
-        <Link to="/browse" className={navLinkClasses} onClick={closeMobileMenu}>Browse</Link>
-        <Link to="/my-listings" className={navLinkClasses} onClick={closeMobileMenu}>My Listings</Link>
-        <Link to="/my-requests" className={navLinkClasses} onClick={closeMobileMenu}>My Requests</Link>
-        <Link to="/profile" className={navLinkClasses} onClick={closeMobileMenu}>Profile</Link>
+        <Link to="/dashboard" className={getNavLinkClasses('/dashboard')} aria-current={getAriaCurrent('/dashboard')} onClick={closeMobileMenu}>Dashboard</Link>
+        <Link to="/browse" className={getNavLinkClasses('/browse')} aria-current={getAriaCurrent('/browse')} onClick={closeMobileMenu}>Browse</Link>
+        <Link to="/my-listings" className={getNavLinkClasses('/my-listings')} aria-current={getAriaCurrent('/my-listings')} onClick={closeMobileMenu}>My Listings</Link>
+        <Link to="/my-requests" className={getNavLinkClasses('/my-requests')} aria-current={getAriaCurrent('/my-requests')} onClick={closeMobileMenu}>My Requests</Link>
+        <Link to="/requests" className={getNavLinkClasses('/requests')} aria-current={getAriaCurrent('/requests')} onClick={closeMobileMenu}>Incoming Requests</Link>
       </>
     )
     mobileNavItems = (
       <>
-        <Link to="/dashboard" className={mobileNavLinkClasses} onClick={closeMobileMenu}>Dashboard</Link>
-        <Link to="/browse" className={mobileNavLinkClasses} onClick={closeMobileMenu}>Browse</Link>
-        <Link to="/my-listings" className={mobileNavLinkClasses} onClick={closeMobileMenu}>My Listings</Link>
-        <Link to="/my-requests" className={mobileNavLinkClasses} onClick={closeMobileMenu}>My Requests</Link>
-        <Link to="/requests" className={mobileNavLinkClasses} onClick={closeMobileMenu}>Request Queues</Link>
-        <Link to="/profile" className={mobileNavLinkClasses} onClick={closeMobileMenu}>Profile</Link>
-        <Link to="/invite" className={mobileNavLinkClasses} onClick={closeMobileMenu}>Invite</Link>
+        <Link to="/dashboard" className={getMobileNavLinkClasses('/dashboard')} aria-current={getAriaCurrent('/dashboard')} onClick={closeMobileMenu}>Dashboard</Link>
+        <Link to="/browse" className={getMobileNavLinkClasses('/browse')} aria-current={getAriaCurrent('/browse')} onClick={closeMobileMenu}>Browse</Link>
+        <Link to="/my-listings" className={getMobileNavLinkClasses('/my-listings')} aria-current={getAriaCurrent('/my-listings')} onClick={closeMobileMenu}>My Listings</Link>
+        <Link to="/my-requests" className={getMobileNavLinkClasses('/my-requests')} aria-current={getAriaCurrent('/my-requests')} onClick={closeMobileMenu}>My Requests</Link>
+        <Link to="/requests" className={getMobileNavLinkClasses('/requests')} aria-current={getAriaCurrent('/requests')} onClick={closeMobileMenu}>Incoming Requests</Link>
+        <Link to="/invite" className={getMobileNavLinkClasses('/invite')} aria-current={getAriaCurrent('/invite')} onClick={closeMobileMenu}>Invite</Link>
       </>
     )
   } else {
     desktopNavItems = (
       <>
-        <Link to="/browse" className={navLinkClasses}>Browse</Link>
-        <Link to="/about" className={navLinkClasses}>About</Link>
+        <Link to="/browse" className={getNavLinkClasses('/browse')} aria-current={getAriaCurrent('/browse')}>Browse</Link>
+        <Link to="/about" className={getNavLinkClasses('/about')} aria-current={getAriaCurrent('/about')}>About</Link>
       </>
     )
     mobileNavItems = (
       <>
-        <Link to="/browse" className={mobileNavLinkClasses} onClick={closeMobileMenu}>Browse</Link>
-        <Link to="/about" className={mobileNavLinkClasses} onClick={closeMobileMenu}>About</Link>
-        <Link to="/login" className={mobileNavLinkClasses} onClick={closeMobileMenu}>Log in</Link>
-        <Link to="/register" className={mobileNavLinkClasses} onClick={closeMobileMenu}>Register</Link>
+        <Link to="/browse" className={getMobileNavLinkClasses('/browse')} aria-current={getAriaCurrent('/browse')} onClick={closeMobileMenu}>Browse</Link>
+        <Link to="/about" className={getMobileNavLinkClasses('/about')} aria-current={getAriaCurrent('/about')} onClick={closeMobileMenu}>About</Link>
+        <Link to="/login" className={getMobileNavLinkClasses('/login')} aria-current={getAriaCurrent('/login')} onClick={closeMobileMenu}>Log in</Link>
+        <Link to="/register" className={getMobileNavLinkClasses('/register')} aria-current={getAriaCurrent('/register')} onClick={closeMobileMenu}>Register</Link>
       </>
     )
   }
@@ -129,9 +157,19 @@ function Layout() {
             <div className="hidden md:flex items-center gap-3">
               {isLoggedIn ? (
                 <>
-                  <span className="text-xs text-text-muted">
+                  {/* The member's name doubles as the link to their profile
+                      page, replacing a separate Profile nav item. */}
+                  <Link
+                    to="/profile"
+                    aria-current={getAriaCurrent('/profile')}
+                    className={
+                      isCurrentPage('/profile')
+                        ? 'text-xs font-semibold text-primary-700 bg-primary-50 px-3 py-2 rounded-md transition-colors duration-150'
+                        : 'text-xs text-text-muted hover:text-primary-600 px-3 py-2 rounded-md hover:bg-primary-50 transition-colors duration-150'
+                    }
+                  >
                     {memberName || 'Logged in'}
-                  </span>
+                  </Link>
                   <Link
                     to="/"
                     onClick={handleLogout}
@@ -188,7 +226,14 @@ function Layout() {
               {isLoggedIn ? (
                 <div className="space-y-3">
                   <p className="text-sm text-text-muted px-4">
-                    Signed in as <span className="font-medium text-text">{memberName || 'member'}</span>
+                    Signed in as{' '}
+                    <Link
+                      to="/profile"
+                      onClick={closeMobileMenu}
+                      className="font-medium text-text hover:text-primary-600 transition-colors"
+                    >
+                      {memberName || 'member'}
+                    </Link>
                   </p>
                   <Link
                     to="/"

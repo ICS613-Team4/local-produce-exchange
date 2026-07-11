@@ -14,6 +14,7 @@ from sqlalchemy.exc import OperationalError
 from app.main import app
 from app.models.claim import Claim
 from app.models.listing import Listing
+from app.models.listing_photo import ListingPhoto
 from app.models.member import Member
 from app.routers.claim import get_my_requests
 
@@ -64,6 +65,7 @@ def insert_claim(
     approved_quantity=None,
     approved_at=None,
     denied_at=None,
+    cancelled_at=None,
 ):
     if requested_at is None:
         requested_at = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
@@ -76,6 +78,7 @@ def insert_claim(
         requested_at=requested_at,
         approved_at=approved_at,
         denied_at=denied_at,
+        cancelled_at=cancelled_at,
     )
     session.add(claim)
     session.commit()
@@ -134,6 +137,87 @@ def test_my_requests_splits_into_pending_approved_denied(db_session):
     assert response.denied[0].requested_quantity == 4
     assert response.denied[0].denied_at is not None
     assert response.denied[0].status == "denied"
+
+
+def test_my_requests_withdrawn_section_is_newest_first(db_session):
+    # Two withdrawn (cancelled) requests land in the withdrawn section, newest
+    # cancellation first, and carry their cancelled_at.
+    caller = insert_member(db_session, email="cara@example.com", name="Cara")
+    poster = insert_member(db_session, email="poster@example.com", name="Poster")
+    listing_older = insert_listing(db_session, poster, title="Apples")
+    listing_newer = insert_listing(db_session, poster, title="Bananas")
+
+    insert_claim(
+        db_session,
+        listing_older,
+        caller,
+        status="cancelled",
+        cancelled_at=datetime(2026, 7, 2, 9, 0, tzinfo=timezone.utc),
+    )
+    insert_claim(
+        db_session,
+        listing_newer,
+        caller,
+        status="cancelled",
+        cancelled_at=datetime(2026, 7, 3, 9, 0, tzinfo=timezone.utc),
+    )
+
+    response = get_my_requests(caller, db_session)
+
+    assert response.pending == []
+    assert len(response.withdrawn) == 2
+    assert response.withdrawn[0].listing_title == "Bananas"
+    assert response.withdrawn[1].listing_title == "Apples"
+    assert response.withdrawn[0].cancelled_at is not None
+    assert response.withdrawn[0].status == "cancelled"
+
+
+def test_my_requests_carries_the_listing_photos(db_session):
+    # A request on a listing with photos returns them ordered by position, so
+    # the page can show the cover photo. A request on a photo-less listing
+    # returns an empty list.
+    caller = insert_member(db_session, email="cara@example.com", name="Cara")
+    poster = insert_member(db_session, email="poster@example.com", name="Poster")
+    listing_with_photos = insert_listing(db_session, poster, title="Apples")
+    listing_without_photos = insert_listing(db_session, poster, title="Bananas")
+
+    second_photo = ListingPhoto(
+        listing_id=listing_with_photos.id,
+        content_type="image/webp",
+        image_bytes=b"webp-bytes",
+        position=1,
+    )
+    first_photo = ListingPhoto(
+        listing_id=listing_with_photos.id,
+        content_type="image/png",
+        image_bytes=b"png-bytes",
+        position=0,
+    )
+    db_session.add(second_photo)
+    db_session.add(first_photo)
+    db_session.commit()
+
+    insert_claim(db_session, listing_with_photos, caller, requested_quantity=1)
+    insert_claim(
+        db_session,
+        listing_without_photos,
+        caller,
+        requested_quantity=2,
+        requested_at=datetime(2026, 7, 1, 13, 0, tzinfo=timezone.utc),
+    )
+
+    response = get_my_requests(caller, db_session)
+
+    assert len(response.pending) == 2
+    # Newest first, so the photo-less Bananas request comes before Apples.
+    assert response.pending[0].listing_title == "Bananas"
+    assert response.pending[0].photos == []
+    assert response.pending[1].listing_title == "Apples"
+    assert len(response.pending[1].photos) == 2
+    assert response.pending[1].photos[0].id == str(first_photo.id)
+    assert response.pending[1].photos[0].content_type == "image/png"
+    assert response.pending[1].photos[0].position == 0
+    assert response.pending[1].photos[1].id == str(second_photo.id)
 
 
 def test_my_requests_pending_is_newest_first(db_session):
@@ -303,6 +387,89 @@ def test_my_requests_returns_503_on_listing_read_error():
         status="active",
     )
     session = ListingReadFailsSession([ListingReadFails()])
+
+    with pytest.raises(HTTPException) as raised_error:
+        get_my_requests(member, session)
+
+    assert raised_error.value.status_code == 503
+
+
+# A claim whose listing relationship holds None, the shape left behind when a
+# listing row was hard-deleted by hand. The build skips it.
+class ClaimWithMissingListing:
+    def __init__(self):
+        self.id = uuid.uuid4()
+        self.requested_quantity = 1
+        self.requested_at = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+        self.status = "requested"
+        self.listing = None
+
+
+def test_my_requests_skips_a_claim_whose_listing_is_missing():
+    member = Member(
+        id=uuid.uuid4(),
+        name="Cara",
+        email="cara@example.com",
+        password_hash="not-a-real-hash",
+        status="active",
+    )
+    session = ListingReadFailsSession([ClaimWithMissingListing()])
+
+    response = get_my_requests(member, session)
+
+    assert response.pending == []
+    assert response.approved == []
+    assert response.denied == []
+
+
+class PhotoReadFailsSession:
+    # The four claim reads (pending, approved, denied, withdrawn) return the
+    # claim list; the photos read that follows (the fifth scalars call) raises,
+    # which must surface as a 503.
+    def __init__(self, claims):
+        self.claims = claims
+        self.read_count = 0
+
+    def scalars(self, *args, **kwargs):
+        self.read_count = self.read_count + 1
+        if self.read_count <= 4:
+            return ScalarsListStub(self.claims)
+        raise OperationalError("statement", {}, Exception("photo load failed"))
+
+    def close(self, *args, **kwargs):
+        pass
+
+
+class FakeListingForClaim:
+    def __init__(self):
+        self.id = uuid.uuid4()
+        self.title = "Apples"
+        self.owner = None
+
+
+class ClaimWithListing:
+    def __init__(self):
+        self.id = uuid.uuid4()
+        self.requested_quantity = 1
+        self.requested_at = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+        self.status = "requested"
+        self.approved_quantity = None
+        self.approved_at = None
+        self.picked_up_at = None
+        self.denied_at = None
+        self.cancelled_at = None
+        self.listing = FakeListingForClaim()
+
+
+def test_my_requests_returns_503_on_a_photo_read_error():
+    member = Member(
+        id=uuid.uuid4(),
+        name="Cara",
+        email="cara@example.com",
+        password_hash="not-a-real-hash",
+        status="active",
+    )
+    session = PhotoReadFailsSession([ClaimWithListing()])
 
     with pytest.raises(HTTPException) as raised_error:
         get_my_requests(member, session)

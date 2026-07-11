@@ -352,6 +352,114 @@ def test_edit_listing_returns_503_on_database_error(broken_session):
     assert raised_error.value.status_code == 503
 
 
+class PhotoReadFailsAfterCommitSession:
+    # A session stand-in for the edit route: the first read returns the
+    # listing, the commit succeeds, and the photos read after the commit
+    # raises, which must surface as a 503.
+    def __init__(self, listing):
+        self.listing = listing
+        self.read_count = 0
+
+    def scalars(self, *args, **kwargs):
+        self.read_count = self.read_count + 1
+        if self.read_count == 1:
+            return PhotoReadResultStub([self.listing])
+        raise Exception("database is down")
+
+    def commit(self):
+        return None
+
+    def rollback(self):
+        return None
+
+
+class PhotoReadResultStub:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def first(self):
+        if self.rows:
+            return self.rows[0]
+        return None
+
+    def all(self):
+        return self.rows
+
+
+class CommitFailsSession:
+    # A session stand-in for the edit route: the read returns the listing and
+    # the commit raises, which must roll back and surface as a 503.
+    def __init__(self, listing):
+        self.listing = listing
+        self.rolled_back = False
+
+    def scalars(self, *args, **kwargs):
+        return PhotoReadResultStub([self.listing])
+
+    def commit(self):
+        raise Exception("database is down")
+
+    def rollback(self):
+        self.rolled_back = True
+
+
+def test_edit_listing_returns_503_and_rolls_back_on_a_commit_error():
+    member = Member(
+        id=uuid.uuid4(),
+        name="Poster",
+        email="poster@example.com",
+        password_hash="not-a-real-hash",
+        status="active",
+    )
+    listing = Listing(
+        id=uuid.uuid4(),
+        owner_id=member.id,
+        title="Fresh Kale",
+        description="Crisp greens.",
+        category="Greens",
+        dietary_tags=[],
+        allergen_tags=[],
+        total_quantity=8,
+        remaining_quantity=8,
+        status="active",
+    )
+    session = CommitFailsSession(listing)
+
+    with pytest.raises(HTTPException) as raised_error:
+        edit_listing(str(listing.id), make_request(), member, session)
+
+    assert raised_error.value.status_code == 503
+    assert session.rolled_back is True
+
+
+def test_edit_listing_returns_503_when_the_photo_read_fails():
+    member = Member(
+        id=uuid.uuid4(),
+        name="Poster",
+        email="poster@example.com",
+        password_hash="not-a-real-hash",
+        status="active",
+    )
+    listing = Listing(
+        id=uuid.uuid4(),
+        owner_id=member.id,
+        title="Fresh Kale",
+        description="Crisp greens.",
+        category="Greens",
+        dietary_tags=[],
+        allergen_tags=[],
+        total_quantity=8,
+        remaining_quantity=8,
+        status="active",
+    )
+    session = PhotoReadFailsAfterCommitSession(listing)
+
+    with pytest.raises(HTTPException) as raised_error:
+        edit_listing(str(listing.id), make_request(), member, session)
+
+    assert raised_error.value.status_code == 503
+
+
 def test_edit_listing_route_is_wired_with_put_method():
     from fastapi.routing import APIRoute
 

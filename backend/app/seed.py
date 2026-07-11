@@ -11,6 +11,7 @@
 
 import sys
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import Range
@@ -18,6 +19,7 @@ from sqlalchemy.dialects.postgresql import Range
 from app.db import SessionLocal
 from app.models.claim import Claim
 from app.models.listing import Listing
+from app.models.listing_photo import ListingPhoto
 from app.models.member import InviteToken, Member, MemberProfile
 from app.models.sample_data import SampleData
 from app.security import hash_invite_token
@@ -32,6 +34,19 @@ _HASHES = [
 
 # Plaintext for the pending demo invite token - shown once at seed time.
 _PENDING_TOKEN_PLAINTEXT = "demo-invite-pending-abc123"
+
+_SEED_PHOTOS_DIR = Path(__file__).parent / "seed_photos"
+
+_SEED_PHOTO_ROWS = [
+    ("bob@example.com", "Fresh Manoa Lettuce", "manoa-lettuce.webp"),
+    ("carol@example.com", "Apple Bananas", "apple-bananas.webp"),
+    ("dave@example.com", "Backyard Meyer Lemons", "meyer-lemons.webp"),
+    ("bob@example.com", "Kabocha Squash", "kabocha-squash.webp"),
+    ("carol@example.com", "Homemade Banana Bread", "banana-bread.webp"),
+    ("alice@example.com", "Williams Avocados", "williams-avocados.webp"),
+    ("dave@example.com", "Farm Eggs", "farm-eggs.webp"),
+    ("carol@example.com", "Thai Basil", "thai-basil.webp"),
+]
 
 
 def table_is_empty(session, model):
@@ -300,6 +315,59 @@ def find_listing_by_owner_and_title(session, owner, title):
     return listing
 
 
+def listing_has_photos(session, listing_id):
+    statement = select(ListingPhoto).where(ListingPhoto.listing_id == listing_id)
+    first_row = session.scalars(statement).first()
+    if first_row is None:
+        return False
+    return True
+
+
+def seed_listing_photos(session):
+    inserted_count = 0
+    for owner_email, listing_title, filename in _SEED_PHOTO_ROWS:
+        owner = find_member_by_email(session, owner_email)
+        if owner is None:
+            print(
+                "Seed member "
+                + owner_email
+                + " is missing, so its listing photo was skipped."
+            )
+            continue
+
+        listing = find_listing_by_owner_and_title(session, owner, listing_title)
+        if listing is None:
+            print(
+                "Demo listing "
+                + listing_title
+                + " is missing, so its photo was skipped."
+            )
+            continue
+        if listing_has_photos(session, listing.id):
+            continue
+
+        photo_path = _SEED_PHOTOS_DIR / filename
+        if not photo_path.is_file():
+            print("Seed photo file " + filename + " is missing, so it was skipped.")
+            continue
+
+        image_bytes = photo_path.read_bytes()
+        session.add(
+            ListingPhoto(
+                listing_id=listing.id,
+                content_type="image/webp",
+                image_bytes=image_bytes,
+                position=0,
+            )
+        )
+        inserted_count = inserted_count + 1
+
+    if inserted_count == 0:
+        print("Listing photos already present. Skipping listing photos.")
+    else:
+        print("Inserted " + str(inserted_count) + " listing photos.")
+
+
 def seed_claims(session):
     # A few demo pending requests so the request-queue page, the dashboard
     # widget, and the listing detail control have visible content. Guarded by the
@@ -390,13 +458,14 @@ def seed_database():
     session = SessionLocal()
     try:
         # Order matters: members come before profiles, invite tokens, and
-        # listings, because those three point back at members. Claims come last
-        # because they point at both listings and members.
+        # listings, because those three point back at members. Photos come after
+        # listings, and claims come last because they point at listings and members.
         seed_sample_data(session)
         seed_members(session)
         seed_profiles(session)
         seed_invite_tokens(session)
         seed_listings(session)
+        seed_listing_photos(session)
         seed_claims(session)
         session.commit()
     finally:

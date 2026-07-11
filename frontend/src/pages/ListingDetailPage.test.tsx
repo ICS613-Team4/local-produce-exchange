@@ -104,6 +104,7 @@ function makeActiveListing() {
     status: 'active',
     created_at: '2026-06-19T00:00:00.000Z',
     owner_name: 'Olivia Owner',
+    photos: [] as Array<{ id: string; content_type: string; position: number }>,
   }
   return listing
 }
@@ -188,10 +189,58 @@ test('shows the listing details for an active listing', async () => {
   )
   expect(screen.getByText(expectedPickupStart + ' — ' + expectedPickupEnd)).toBeTruthy()
   // The posted line names the owner and shows the date in the viewer's zone.
+  // It renders twice: under the title and at the bottom of the listing.
   const expectedPosted = new Date('2026-06-19T00:00:00.000Z').toLocaleString(undefined, timeZoneOptions)
-  expect(screen.getByText('Posted by Olivia Owner on ' + expectedPosted)).toBeTruthy()
+  expect(screen.getAllByText('Posted by Olivia Owner on ' + expectedPosted).length).toBe(2)
   // A plain-words note tells the user the times are in their own local zone.
   expect(screen.getByText(/All times are shown in your local time zone/)).toBeTruthy()
+})
+
+test('renders listing photos from the public photo endpoint', async () => {
+  setLoggedIn()
+  const listing = makeActiveListing()
+  listing.photos = [
+    { id: 'photo-123', content_type: 'image/png', position: 0 },
+  ]
+  stubListingFetch(() => makeFakeResponse(true, 200, listing))
+
+  renderDetailPage()
+
+  const image = await screen.findByRole('img', { name: 'Photo of Backyard Lemons' })
+  expect(image.getAttribute('src')).toBe('/api/photos/photo-123')
+})
+
+test('renders the first photo as the cover and the rest as smaller tiles', async () => {
+  setLoggedIn()
+  const listing = makeActiveListing()
+  listing.photos = [
+    { id: 'photo-cover', content_type: 'image/png', position: 0 },
+    { id: 'photo-extra-1', content_type: 'image/png', position: 1 },
+    { id: 'photo-extra-2', content_type: 'image/png', position: 2 },
+  ]
+  stubListingFetch(() => makeFakeResponse(true, 200, listing))
+
+  renderDetailPage()
+
+  const images = await screen.findAllByRole('img', { name: 'Photo of Backyard Lemons' })
+  expect(images.length).toBe(3)
+  // The first photo is the large cover image; the others are smaller tiles.
+  expect(images[0].getAttribute('src')).toBe('/api/photos/photo-cover')
+  expect(images[0].className).toContain('aspect-video')
+  expect(images[1].getAttribute('src')).toBe('/api/photos/photo-extra-1')
+  expect(images[1].className).toContain('aspect-square')
+  expect(images[2].getAttribute('src')).toBe('/api/photos/photo-extra-2')
+  expect(images[2].className).toContain('aspect-square')
+})
+
+test('renders no listing photo image when the photo list is empty', async () => {
+  setLoggedIn()
+  stubListingFetch(() => makeFakeResponse(true, 200, makeActiveListing()))
+
+  renderDetailPage()
+
+  expect(await screen.findByText('Backyard Lemons')).toBeTruthy()
+  expect(screen.queryByRole('img', { name: 'Photo of Backyard Lemons' })).toBeNull()
 })
 
 test('a stale-session 401 clears the credentials and fires the auth event', async () => {
@@ -974,6 +1023,8 @@ test('shows the request form to a non-owner with no prior request', async () => 
   expect(quantityInput.getAttribute('type')).toBe('number')
   expect(quantityInput.getAttribute('min')).toBe('1')
   expect(quantityInput.getAttribute('max')).toBe('4')
+  // The plain-text hint names the same maximum next to the input.
+  expect(screen.getByText('(max: 4)')).toBeTruthy()
   expect(quantityInput.getAttribute('step')).toBe('1')
   expect(quantityInput.hasAttribute('required')).toBe(true)
 })

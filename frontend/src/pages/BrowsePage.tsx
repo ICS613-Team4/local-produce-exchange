@@ -225,7 +225,25 @@ function BrowsePage() {
         }
         const pickupStartText = formatTimestamp(listing.pickup_start)
         const pickupEndText = formatTimestamp(listing.pickup_end)
-        const postedText = formatTimestamp(listing.created_at)
+        // The footer names who posted the listing on one line and the posted
+        // time on the line below it. When the backend sent no owner name, the
+        // first line is just "Posted".
+        let postedByLine = 'Posted'
+        if (typeof listing.owner_name === 'string' && listing.owner_name !== '') {
+          postedByLine = 'Posted by ' + listing.owner_name
+        }
+        const postedAtText = formatTimestamp(listing.created_at)
+        let coverPhotoArea = null
+        if (listing.photos !== undefined && listing.photos.length > 0) {
+          coverPhotoArea = (
+            <img
+              src={'/api/photos/' + listing.photos[0].id}
+              alt={listing.title}
+              loading="lazy"
+              className="w-full aspect-video object-cover rounded-lg border border-border mb-4"
+            />
+          )
+        }
         listingCards.push(
           <li key={listing.id}>
             {/* The grid stretches every cell in a row to the same height, so the
@@ -233,6 +251,7 @@ function BrowsePage() {
                 posted-on footer pushed to the bottom (mt-auto). That keeps all
                 cards in a row equal height at every screen size. */}
             <article className="h-full flex flex-col bg-surface rounded-xl border border-border p-6 shadow-sm hover:shadow-md transition-shadow duration-200">
+              {coverPhotoArea}
               <div className="flex items-start justify-between mb-3">
                 <h2 className="text-lg font-semibold text-text">
                   <Link to={'/listings/' + listing.id} className="hover:text-primary-600 transition-colors">
@@ -255,7 +274,8 @@ function BrowsePage() {
                 <p className="text-xs">{timeZoneNote}</p>
               </div>
               <div className="mt-auto pt-3 border-t border-border">
-                <p className="text-xs text-text-muted">Posted {postedText}</p>
+                <p className="text-xs text-text-muted">{postedByLine}</p>
+                <p className="text-xs text-text-muted mt-0.5">{postedAtText}</p>
               </div>
             </article>
           </li>,

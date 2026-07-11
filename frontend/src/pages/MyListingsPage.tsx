@@ -229,18 +229,38 @@ function MyListingsPage() {
       )
     }
 
+    // The listing's first photo renders as a small square thumbnail on the
+    // left of the row, the way seller-dashboard lists show items. A listing
+    // with no photos renders no image and the text fills the row.
+    let thumbnailArea = null
+    if (listing.photos !== undefined && listing.photos.length > 0) {
+      thumbnailArea = (
+        <img
+          src={'/api/photos/' + listing.photos[0].id}
+          alt={listing.title}
+          loading="lazy"
+          className="w-20 h-20 sm:w-24 sm:h-24 object-cover rounded-lg border border-border shrink-0"
+        />
+      )
+    }
+
     return (
       <li key={listing.id} className="bg-surface rounded-xl border border-border p-5 shadow-sm">
-        <div className="flex items-start justify-between">
-          <div>
-            {titleNode}
-            <p className="text-xs text-text-muted mt-1">Posted {postedText}</p>
+        <div className="flex items-start gap-4">
+          {thumbnailArea}
+          <div className="flex-1 min-w-0">
+            <div className="flex items-start justify-between">
+              <div>
+                {titleNode}
+                <p className="text-xs text-text-muted mt-1">Posted {postedText}</p>
+              </div>
+              <span className={'inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium shrink-0 ml-3 ' + badgeClasses}>
+                {statusLabel}
+              </span>
+            </div>
+            {controls}
           </div>
-          <span className={'inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium shrink-0 ml-3 ' + badgeClasses}>
-            {statusLabel}
-          </span>
         </div>
-        {controls}
       </li>
     )
   }
@@ -284,8 +304,11 @@ function MyListingsPage() {
       for (let index = 0; index < listings.length; index = index + 1) {
         rows.push(buildListingRow(listings[index]))
       }
+      // The time-zone note shows above and below the list, so it is visible
+      // without scrolling and again next to the last timestamps on the page.
       contentArea = (
         <>
+          <p className="text-xs text-text-muted mb-4">{timeZoneNote}</p>
           <ul className="space-y-4">{rows}</ul>
           <p className="text-xs text-text-muted mt-4">{timeZoneNote}</p>
         </>
@@ -319,7 +342,7 @@ function MyListingsPage() {
   return (
     <section>
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-3xl font-bold text-text">My Listings</h1>
+        <h1 className="text-3xl font-bold text-text">Listings You Own</h1>
         <Link
           to="/listings/create"
           className="inline-flex items-center px-5 py-2.5 text-sm font-semibold text-text-inverse bg-primary-600 rounded-lg hover:bg-primary-700 shadow-sm transition-all duration-150"

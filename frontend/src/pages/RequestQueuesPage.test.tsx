@@ -52,6 +52,7 @@ function makeAllRequestsBody(): AllRequestsResponse {
         listing_id: 'lemons',
         listing_title: 'Backyard Meyer Lemons',
         remaining_quantity: 24,
+        created_at: '2026-06-19T00:00:00.000Z',
         requests: [
           {
             id: 'c1',
@@ -170,17 +171,55 @@ test('renders the group with every request status in the backend order', async (
 
   expect(await screen.findByText('Backyard Meyer Lemons')).toBeTruthy()
   expect(screen.getByText(/24 remaining/)).toBeTruthy()
+  // The listing's posted-on line renders under the title, in the viewer's zone.
+  const timeZoneOptions = { timeZoneName: 'short' as const }
+  const postedExpected = new Date('2026-06-19T00:00:00.000Z').toLocaleString(undefined, timeZoneOptions)
+  expect(screen.getByText('Posted ' + postedExpected)).toBeTruthy()
   expect(screen.getByText('Bob Baker')).toBeTruthy()
   expect(screen.getByText('Carol Chen')).toBeTruthy()
-  // Bob's pending status and Carol's approved outcome both show.
+  // Bob's pending status and Carol's approved badge (with the approved
+  // quantity) both show.
   expect(screen.getByText('Requested')).toBeTruthy()
-  expect(screen.getByText(/Approved: 2 on/)).toBeTruthy()
+  expect(screen.getByText('Approved: 2')).toBeTruthy()
 
   // Bob's row comes before Carol's, the order the backend returned.
   const bobRow = screen.getByText('Bob Baker')
   const carolRow = screen.getByText('Carol Chen')
   const relativePosition = bobRow.compareDocumentPosition(carolRow)
   expect(relativePosition & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
+})
+
+test("a group shows its listing's first photo as a thumbnail", async () => {
+  setLoggedIn()
+  const body = makeAllRequestsBody() as AllRequestsResponse & {
+    groups: Array<{ photos?: Array<{ id: string; content_type: string; position: number }> }>
+  }
+  body.groups[0].photos = [
+    { id: 'photo-first', content_type: 'image/png', position: 0 },
+    { id: 'photo-second', content_type: 'image/png', position: 1 },
+  ]
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, body)
+  })
+
+  renderRequestsPage('/requests')
+
+  const image = await screen.findByRole('img', { name: 'Backyard Meyer Lemons' })
+  // Only the first photo shows, even when the listing has more than one.
+  expect(image.getAttribute('src')).toBe('/api/photos/photo-first')
+  expect(screen.getAllByRole('img').length).toBe(1)
+})
+
+test('a group without photos shows no thumbnail image', async () => {
+  setLoggedIn()
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, makeAllRequestsBody())
+  })
+
+  renderRequestsPage('/requests')
+
+  expect(await screen.findByText('Backyard Meyer Lemons')).toBeTruthy()
+  expect(screen.queryByRole('img')).toBeNull()
 })
 
 test('shows the exchange thread link only on approved requests', async () => {
@@ -233,11 +272,10 @@ test('a picked-up request shows both outcome lines and the Contact the Recipient
 
   renderRequestsPage('/requests')
 
-  // Both outcome lines survive: the original approval and the pickup.
-  expect(await screen.findByText(/Approved: 2 on/)).toBeTruthy()
+  // The badge carries the status and the approved quantity (not a literal
+  // "Picked_up"), and the pickup time renders as its own line.
+  expect(await screen.findByText('Picked up: 2')).toBeTruthy()
   expect(screen.getByText(/Picked up on/)).toBeTruthy()
-  // The badge special-cases the status text (not a literal "Picked_up").
-  expect(screen.getByText('Picked up')).toBeTruthy()
   const recipientLink = screen.getByRole('link', { name: 'Contact the Recipient' })
   expect(recipientLink.getAttribute('href')).toContain('/exchange-thread?claim=c3')
   // A finished exchange offers no Approve or Deny.
@@ -339,7 +377,7 @@ test('a non-actionable request shows its status read-only with no buttons', asyn
   renderRequestsPage('/requests')
 
   expect(await screen.findByText('Carol Chen')).toBeTruthy()
-  expect(screen.getByText(/Approved: 2 on/)).toBeTruthy()
+  expect(screen.getByText('Approved: 2')).toBeTruthy()
   expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
   expect(screen.queryByRole('button', { name: 'Deny' })).toBeNull()
 })

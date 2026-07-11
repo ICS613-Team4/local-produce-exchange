@@ -113,6 +113,7 @@ def test_get_listing_returns_full_details_for_an_active_listing(db_session):
     # The owner's display name rides along so the page can show "Posted by".
     # The helper above owns this listing, and its name is "Viewer".
     assert response.owner_name == "Viewer"
+    assert response.photos == []
 
 
 # --- not found: unknown id, malformed id ---
@@ -247,6 +248,67 @@ def test_get_listing_returns_503_on_database_error(broken_session):
 
     with pytest.raises(HTTPException) as raised_error:
         get_listing(some_id, member, broken_session)
+
+    assert raised_error.value.status_code == 503
+
+
+class PhotoReadFailsSession:
+    # A session stand-in whose first read returns the listing and every later
+    # read raises. The owner read swallows its error by design, so the raise
+    # that matters is the photos read, which must become a 503.
+    def __init__(self, listing):
+        self.listing = listing
+        self.read_count = 0
+
+    def scalars(self, *args, **kwargs):
+        self.read_count = self.read_count + 1
+        if self.read_count == 1:
+            return PhotoReadResultStub([self.listing])
+        raise Exception("database is down")
+
+
+class PhotoReadResultStub:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def first(self):
+        if self.rows:
+            return self.rows[0]
+        return None
+
+    def all(self):
+        return self.rows
+
+
+def test_get_listing_returns_503_when_the_photo_read_fails():
+    # The listing loads, the owner read fails quietly (the name just stays
+    # empty), and the photos read then fails, which must surface as a 503.
+    member = Member(
+        id=uuid.uuid4(),
+        name="Viewer",
+        email="viewer@example.com",
+        password_hash="not-a-real-hash",
+        status="active",
+    )
+    start = datetime(2026, 7, 1, 9, 0, tzinfo=timezone.utc)
+    end = datetime(2026, 7, 1, 11, 0, tzinfo=timezone.utc)
+    listing = Listing(
+        id=uuid.uuid4(),
+        owner_id=member.id,
+        title="Fresh Tomatoes",
+        description="Ripe red tomatoes.",
+        category="Vegetables",
+        dietary_tags=[],
+        allergen_tags=[],
+        total_quantity=5,
+        remaining_quantity=5,
+        pickup_window=Range(start, end, bounds="[)"),
+        status="active",
+    )
+    session = PhotoReadFailsSession(listing)
+
+    with pytest.raises(HTTPException) as raised_error:
+        get_listing(str(listing.id), member, session)
 
     assert raised_error.value.status_code == 503
 

@@ -20,8 +20,10 @@ from app.db import get_db_session
 from app.dependencies import get_current_member
 from app.models.claim import Claim
 from app.models.listing import Listing
+from app.models.listing_photo import ListingPhoto
 from app.models.member import Member
 from app.models.thread import Message, MessageThread
+from app.schemas.listing import ListingPhotoRef
 from app.schemas.thread import MessageResponse, SendMessagePayload, ThreadResponse
 
 logger = logging.getLogger(__name__)
@@ -161,7 +163,7 @@ def get_thread_for_claim(
     acting_member: Member,
     session: Session,
 ) -> ThreadResponse:
-    _load_claim_and_check_party(claim_id, acting_member, session)
+    claim, listing = _load_claim_and_check_party(claim_id, acting_member, session)
     thread = _get_or_create_thread(claim_id, session)
 
     try:
@@ -172,11 +174,75 @@ def get_thread_for_claim(
         raise HTTPException(status_code=503, detail="Could not load the thread right now.")
 
     messages = _load_messages(thread.id, session)
+
+    # The two parties' names, so the page can show who posted the listing and
+    # who requested the items. A lookup failure or a missing member just
+    # leaves that name empty, the same as the listing detail response.
+    owner_name = ""
+    try:
+        owner_row = session.scalars(
+            select(Member).where(Member.id == listing.owner_id)
+        ).first()
+        if owner_row is not None:
+            owner_name = owner_row.name
+    except Exception as error:
+        logger.error("Thread: loading the listing owner failed: %s", error)
+    claimant_name = ""
+    try:
+        claimant_row = session.scalars(
+            select(Member).where(Member.id == claim.claimant_id)
+        ).first()
+        if claimant_row is not None:
+            claimant_name = claimant_row.name
+    except Exception as error:
+        logger.error("Thread: loading the claimant failed: %s", error)
+
+    # The listing's photos, ordered for display, so the page can show the
+    # cover photo.
+    try:
+        photo_rows = session.scalars(
+            select(ListingPhoto)
+            .where(ListingPhoto.listing_id == listing.id)
+            .order_by(ListingPhoto.position)
+        ).all()
+    except Exception as error:
+        logger.error("Thread: loading listing photos failed: %s", error)
+        raise HTTPException(status_code=503, detail="Could not load the exchange right now.")
+    photos = []
+    for photo_row in photo_rows:
+        photos.append(
+            ListingPhotoRef(
+                id=str(photo_row.id),
+                content_type=photo_row.content_type,
+                position=photo_row.position,
+            )
+        )
+
+    # The pickup window, read with the same None guards the listing routes
+    # use; a malformed range just leaves both ends unset.
+    pickup_start = None
+    pickup_end = None
+    if listing.pickup_window is not None:
+        pickup_start = listing.pickup_window.lower
+        pickup_end = listing.pickup_window.upper
+
     return ThreadResponse(
         id=str(thread.id),
         claim_id=str(thread.claim_id),
         created_at=thread.created_at,
         messages=messages,
+        listing_id=str(listing.id),
+        listing_title=listing.title,
+        owner_id=str(listing.owner_id),
+        claimant_id=str(claim.claimant_id),
+        owner_name=owner_name,
+        claimant_name=claimant_name,
+        listing_created_at=listing.created_at,
+        pickup_start=pickup_start,
+        pickup_end=pickup_end,
+        requested_quantity=claim.requested_quantity,
+        approved_quantity=claim.approved_quantity,
+        photos=photos,
     )
 
 

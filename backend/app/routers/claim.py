@@ -16,6 +16,7 @@ from app.db import get_db_session
 from app.dependencies import get_current_member
 from app.models.claim import Claim
 from app.models.listing import Listing
+from app.models.listing_photo import ListingPhoto
 from app.models.member import Member
 from app.schemas.claim import (
     AllRequestItem,
@@ -29,6 +30,7 @@ from app.schemas.claim import (
     QueueClaimItem,
     RequestQueuesResponse,
 )
+from app.schemas.listing import ListingPhotoRef
 
 logger = logging.getLogger(__name__)
 
@@ -580,6 +582,41 @@ def get_all_requests(
 
         listings_to_process.append(one_listing)
 
+    # Load every listed listing's photos in one query and group them by listing
+    # id, so each group can show the listing's cover photo. One extra query for
+    # the page, not one per listing, the same batching the browse response uses.
+    photo_listing_ids = []
+    for listing_row in listings_to_process:
+        photo_listing_ids.append(listing_row.id)
+    photos_by_listing = {}
+    if photo_listing_ids:
+        try:
+            photo_rows = session.scalars(
+                select(ListingPhoto)
+                .where(ListingPhoto.listing_id.in_(photo_listing_ids))
+                .order_by(ListingPhoto.position)
+            ).all()
+        except Exception as error:
+            logger.error("Loading listing photos for the queues failed: %s", error)
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Could not read your requests right now. "
+                    "Make sure the database is running and migrated."
+                ),
+            )
+        for photo_row in photo_rows:
+            key = photo_row.listing_id
+            if key not in photos_by_listing:
+                photos_by_listing[key] = []
+            photos_by_listing[key].append(
+                ListingPhotoRef(
+                    id=str(photo_row.id),
+                    content_type=photo_row.content_type,
+                    position=photo_row.position,
+                )
+            )
+
     # For each active listing, load ALL its claims oldest-first and build a group.
     # Unlike the pending endpoint, a listing with no claims is kept as an empty
     # group so the page can show its listing-level empty note.
@@ -634,18 +671,22 @@ def get_all_requests(
                 listing_title=listing_row.title,
                 remaining_quantity=listing_row.remaining_quantity,
                 requests=request_items,
+                created_at=listing_row.created_at,
+                photos=photos_by_listing.get(listing_row.id, []),
             )
         )
 
     return AllRequestsResponse(groups=groups)
 
 
-def build_my_request_items(claims):
+def build_my_request_items(session, claims):
     # Turn a list of the caller's claim rows into MyRequestItem rows for the
     # my-requests page. Reads each claim's listing through the relationship for
     # the title. A claim whose listing is missing is skipped. A database error
     # while reading the listing becomes a 503, like the other reads.
-    items = []
+
+    # First pass: pair each claim with its listing, skipping missing listings.
+    claim_listing_pairs = []
     for claim_row in claims:
         try:
             listing_row = claim_row.listing
@@ -660,6 +701,46 @@ def build_my_request_items(claims):
             )
         if listing_row is None:
             continue
+        claim_listing_pairs.append((claim_row, listing_row))
+
+    # Load every listed listing's photos in one query and group them by listing
+    # id, so the page can show each request's cover photo. One extra query per
+    # section, not one per row, the same batching the browse response uses.
+    listing_ids = []
+    for claim_row, listing_row in claim_listing_pairs:
+        if listing_row.id not in listing_ids:
+            listing_ids.append(listing_row.id)
+    photos_by_listing = {}
+    if listing_ids:
+        try:
+            photo_rows = session.scalars(
+                select(ListingPhoto)
+                .where(ListingPhoto.listing_id.in_(listing_ids))
+                .order_by(ListingPhoto.position)
+            ).all()
+        except Exception as error:
+            logger.error("Loading requested listing photos failed: %s", error)
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Could not read your requests right now. "
+                    "Make sure the database is running and migrated."
+                ),
+            )
+        for photo_row in photo_rows:
+            key = photo_row.listing_id
+            if key not in photos_by_listing:
+                photos_by_listing[key] = []
+            photos_by_listing[key].append(
+                ListingPhotoRef(
+                    id=str(photo_row.id),
+                    content_type=photo_row.content_type,
+                    position=photo_row.position,
+                )
+            )
+
+    items = []
+    for claim_row, listing_row in claim_listing_pairs:
         # The listing's owner is who the caller requested from (the provider), so
         # the my-requests page can show their name. The owner foreign key is
         # required, but guard a missing owner row with an empty name rather than
@@ -680,6 +761,8 @@ def build_my_request_items(claims):
                 approved_at=claim_row.approved_at,
                 picked_up_at=claim_row.picked_up_at,
                 denied_at=claim_row.denied_at,
+                cancelled_at=claim_row.cancelled_at,
+                photos=photos_by_listing.get(listing_row.id, []),
             )
         )
     return items
@@ -690,11 +773,12 @@ def get_my_requests(
     current_member: Member = Depends(get_current_member),
     session: Session = Depends(get_db_session),
 ) -> MyRequestsResponse:
-    # The caller's own requests, split into three sections for the my-requests
-    # page: pending (still waiting), approved, and denied. Each section is newest
-    # first, by the time the request entered that state, with the claim id as a
-    # tiebreaker so the order is stable and repeatable. A member has at most one
-    # request per listing, so each request stands on its own.
+    # The caller's own requests, split into four sections for the my-requests
+    # page: pending (still waiting), approved, denied, and withdrawn. Each
+    # section is newest first, by the time the request entered that state, with
+    # the claim id as a tiebreaker so the order is stable and repeatable. A
+    # member has at most one request per listing, so each request stands on its
+    # own.
 
     # Active-member gate, same rule and messages as get_request_queues.
     if current_member.status != "active":
@@ -732,6 +816,12 @@ def get_my_requests(
             .where(Claim.status == "denied")
             .order_by(Claim.denied_at.desc(), Claim.id.desc())
         ).all()
+        withdrawn_claims = session.scalars(
+            select(Claim)
+            .where(Claim.claimant_id == member_id)
+            .where(Claim.status == "cancelled")
+            .order_by(Claim.cancelled_at.desc(), Claim.id.desc())
+        ).all()
     except Exception as error:
         logger.error("Loading the caller's requests failed: %s", error)
         raise HTTPException(
@@ -742,14 +832,16 @@ def get_my_requests(
             ),
         )
 
-    pending_items = build_my_request_items(pending_claims)
-    approved_items = build_my_request_items(approved_claims)
-    denied_items = build_my_request_items(denied_claims)
+    pending_items = build_my_request_items(session, pending_claims)
+    approved_items = build_my_request_items(session, approved_claims)
+    denied_items = build_my_request_items(session, denied_claims)
+    withdrawn_items = build_my_request_items(session, withdrawn_claims)
 
     return MyRequestsResponse(
         pending=pending_items,
         approved=approved_items,
         denied=denied_items,
+        withdrawn=withdrawn_items,
     )
 
 

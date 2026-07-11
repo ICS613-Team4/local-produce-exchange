@@ -142,118 +142,131 @@ function MyRequestsPage() {
   function buildRequestRow(item: MyRequestItem) {
     const badgeClasses = getStatusBadge(item.status)
 
-    // Prefix the produce title with the provider's first name — the owner the
-    // caller requested from (for example "Dave - Backyard Meyer Lemons"). When no
-    // owner name came back, fall back to the bare title so the row still reads
-    // cleanly.
-    let produceLabel = item.listing_title
+    // The produce title, with the provider named after it in smaller muted
+    // text (for example "Backyard Meyer Lemons from Dave"), so the row shows
+    // who posted the listing without changing the title itself. When no owner
+    // name came back, only the title shows.
+    let titleNode = <>{item.listing_title}</>
     if (item.owner_name !== '') {
       const ownerFirstName = item.owner_name.split(' ')[0]
-      produceLabel = ownerFirstName + ' - ' + item.listing_title
+      titleNode = (
+        <>
+          {item.listing_title}
+          <span className="text-xs font-normal text-text-muted"> from {ownerFirstName}</span>
+        </>
+      )
     }
 
+    // The requested listing's cover photo (its first photo) as a square
+    // thumbnail on the left of the row, the same size the my-listings rows
+    // use. A photo-less listing renders no image.
+    let thumbnailArea = null
+    if (item.photos !== undefined && item.photos.length > 0) {
+      thumbnailArea = (
+        <img
+          src={'/api/photos/' + item.photos[0].id}
+          alt={item.listing_title}
+          loading="lazy"
+          className="w-20 h-20 sm:w-24 sm:h-24 object-cover rounded-lg border border-border shrink-0"
+        />
+      )
+    }
+
+    // The per-status pieces: the badge label, the muted detail line, and the
+    // controls row that sits under the text, the same arrangement the
+    // my-listings rows use (badge top-right, buttons below).
+    let badgeLabel
+    let detailLine
+    let controlsArea = null
     if (item.status === 'approved') {
+      badgeLabel = 'Approved'
       let approvedQuantity = 0
       if (item.approved_quantity !== null) { approvedQuantity = item.approved_quantity }
       let approvedAtText = ''
       if (item.approved_at !== null) {
         approvedAtText = formatTimestamp(item.approved_at)
       }
+      detailLine = <>You were approved for: {approvedQuantity} on {approvedAtText}</>
       // Stub link to the (not-built) Exchange Thread feature, the same one the
       // listing detail page shows on an approved request. Next to it, the recipient
       // can confirm they picked the item up; only that row's button greys while its
       // request is in flight.
       const exchangeThreadTarget = '/exchange-thread?claim=' + item.id
       const isThisRowConfirming = confirmingPickupClaimId === item.id
-      return (
-        <li key={item.id} className="flex items-center justify-between py-3 border-b border-border last:border-0">
-          <div className="min-w-0">
-            <p className="text-sm font-medium text-text">{produceLabel}</p>
-            <p className="text-xs text-text-muted mt-0.5">
-              You were approved for: {approvedQuantity} on {approvedAtText}
-            </p>
-          </div>
-          <div className="flex items-center gap-2 shrink-0 ml-3">
-            <span className={'inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ' + badgeClasses}>
-              Approved
-            </span>
-            <Link to={exchangeThreadTarget} className="text-xs font-medium text-primary-600 hover:text-primary-700">
-              Arrange the Exchange
-            </Link>
-            <button
-              type="button"
-              disabled={isThisRowConfirming}
-              onClick={() => handleConfirmPickup(item.id)}
-              className="inline-flex items-center px-3 py-1 text-xs font-medium text-primary-600 border border-primary-200 rounded-md hover:bg-primary-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Confirm the Pickup
-            </button>
-          </div>
-        </li>
+      controlsArea = (
+        <div className="flex flex-wrap items-center gap-2 mt-3">
+          <Link
+            to={exchangeThreadTarget}
+            className="inline-flex items-center px-3 py-1.5 text-xs font-medium text-primary-600 border border-primary-200 rounded-md hover:bg-primary-50 transition-colors"
+          >
+            Arrange the Exchange
+          </Link>
+          <button
+            type="button"
+            disabled={isThisRowConfirming}
+            onClick={() => handleConfirmPickup(item.id)}
+            className="inline-flex items-center px-3 py-1.5 text-xs font-medium text-primary-600 border border-primary-200 rounded-md hover:bg-primary-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Confirm the Pickup
+          </button>
+        </div>
       )
-    }
-    if (item.status === 'picked_up') {
+    } else if (item.status === 'picked_up') {
+      badgeLabel = 'Picked up'
       const approvedQuantity = item.approved_quantity ?? item.requested_quantity
       let pickedUpAtText = ''
       if (item.picked_up_at !== null) {
         pickedUpAtText = formatTimestamp(item.picked_up_at)
       }
-      return (
-        <li key={item.id} className="flex items-center justify-between py-3 border-b border-border last:border-0">
-          <div className="min-w-0">
-            <p className="text-sm font-medium text-text">{produceLabel}</p>
-            <p className="text-xs text-text-muted mt-0.5">
-              You confirmed pickup for {approvedQuantity} on {pickedUpAtText}
-            </p>
-          </div>
-          <span className={'inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium shrink-0 ml-3 ' + badgeClasses}>
-            Picked up
-          </span>
-        </li>
-      )
-    }
-
-    if (item.status === 'denied') {
+      detailLine = <>You confirmed pickup for {approvedQuantity} on {pickedUpAtText}</>
+    } else if (item.status === 'denied') {
+      badgeLabel = 'Denied'
       let deniedAtText = ''
       if (item.denied_at !== null) { deniedAtText = formatTimestamp(item.denied_at) }
-      return (
-        <li key={item.id} className="flex items-center justify-between py-3 border-b border-border last:border-0">
-          <div className="min-w-0">
-            <p className="text-sm font-medium text-text">{produceLabel}</p>
-            <p className="text-xs text-text-muted mt-0.5">
-              Your request for {item.requested_quantity} was denied on: {deniedAtText}
-            </p>
-          </div>
-          <span className={'inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium shrink-0 ml-3 ' + badgeClasses}>
-            Denied
-          </span>
-        </li>
-      )
-    }
-
-    // Pending
-    const requestedAtText = formatTimestamp(item.requested_at)
-    const isThisRowPending = withdrawingClaimId === item.id
-    return (
-      <li key={item.id} className="flex items-center justify-between py-3 border-b border-border last:border-0">
-        <div className="min-w-0">
-          <p className="text-sm font-medium text-text">{produceLabel}</p>
-          <p className="text-xs text-text-muted mt-0.5">
-            You requested {item.requested_quantity} on {requestedAtText}
-          </p>
-        </div>
-        <div className="flex items-center gap-2 shrink-0 ml-3">
-          <span className={'inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ' + badgeClasses}>
-            Pending
-          </span>
+      detailLine = <>Your request for {item.requested_quantity} was denied on: {deniedAtText}</>
+    } else if (item.status === 'cancelled') {
+      badgeLabel = 'Withdrawn'
+      let cancelledAtText = ''
+      if (item.cancelled_at !== undefined && item.cancelled_at !== null) {
+        cancelledAtText = formatTimestamp(item.cancelled_at)
+      }
+      detailLine = <>You withdrew this request on {cancelledAtText}</>
+    } else {
+      // Pending
+      badgeLabel = 'Pending'
+      const requestedAtText = formatTimestamp(item.requested_at)
+      detailLine = <>You requested {item.requested_quantity} on {requestedAtText}</>
+      const isThisRowPending = withdrawingClaimId === item.id
+      controlsArea = (
+        <div className="flex flex-wrap items-center gap-2 mt-3">
           <button
             type="button"
             disabled={isThisRowPending}
             onClick={() => handleWithdraw(item.id)}
-            className="inline-flex items-center px-3 py-1 text-xs font-medium text-text-muted border border-border rounded-md hover:bg-background-alt hover:text-text transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="inline-flex items-center px-3 py-1.5 text-xs font-medium text-text-muted border border-border rounded-md hover:bg-background-alt hover:text-text transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Withdraw
           </button>
+        </div>
+      )
+    }
+
+    return (
+      <li key={item.id} className="py-3 border-b border-border last:border-0">
+        <div className="flex items-start gap-4">
+          {thumbnailArea}
+          <div className="flex-1 min-w-0">
+            <div className="flex items-start justify-between">
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-text">{titleNode}</p>
+                <p className="text-xs text-text-muted mt-0.5">{detailLine}</p>
+              </div>
+              <span className={'inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium shrink-0 ml-3 ' + badgeClasses}>
+                {badgeLabel}
+              </span>
+            </div>
+            {controlsArea}
+          </div>
         </div>
       </li>
     )
@@ -297,15 +310,25 @@ function MyRequestsPage() {
     )
   } else if (result.ok) {
     const responseData = result.data as MyRequestsResponse
+    // An older cached response may lack the withdrawn list; treat it as empty.
+    let withdrawnItems = responseData.withdrawn
+    if (withdrawnItems === undefined) {
+      withdrawnItems = []
+    }
     const pendingSection = buildSection('Pending', responseData.pending, 'You have no pending requests.')
     const approvedSection = buildSection('Approved', responseData.approved, 'You have no approved requests.')
     const deniedSection = buildSection('Denied', responseData.denied, 'You have no denied requests.')
+    const withdrawnSection = buildSection('Withdrawn', withdrawnItems, 'You have no withdrawn requests.')
+    // The time-zone note shows above and below the sections, so it is visible
+    // without scrolling and again next to the last timestamps on the page.
     contentArea = (
       <>
+        <p className="text-xs text-text-muted mb-4">{timeZoneNote}</p>
         <div className="space-y-6">
           {pendingSection}
           {approvedSection}
           {deniedSection}
+          {withdrawnSection}
         </div>
         <p className="text-xs text-text-muted mt-4">{timeZoneNote}</p>
       </>
@@ -325,7 +348,7 @@ function MyRequestsPage() {
 
   return (
     <section>
-      <h1 className="text-3xl font-bold text-text mb-6">Requests you have made</h1>
+      <h1 className="text-3xl font-bold text-text mb-6">Requests You Have Made</h1>
       {contentArea}
     </section>
   )

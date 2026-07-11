@@ -156,7 +156,7 @@ test('wires the /requests route inside RequireAuth for a logged-in member', asyn
 
   // The requests page heading renders, which only happens if App registered the
   // route inside the RequireAuth group and let a logged-in member through.
-  expect(await screen.findByRole('heading', { name: 'Requests from other members' })).toBeTruthy()
+  expect(await screen.findByRole('heading', { name: 'Requests From Other Members' })).toBeTruthy()
 })
 
 test('guards the /requests route, showing the log-in message when logged out', () => {
@@ -165,7 +165,7 @@ test('guards the /requests route, showing the log-in message when logged out', (
   window.history.pushState({}, '', '/requests')
   render(<App />)
 
-  expect(screen.queryByRole('heading', { name: 'Requests from other members' })).toBeNull()
+  expect(screen.queryByRole('heading', { name: 'Requests From Other Members' })).toBeNull()
   const loginLink = screen.getByRole('link', { name: 'log in' })
   expect(loginLink.getAttribute('href')).toBe('/login')
 })
@@ -185,14 +185,14 @@ test('wires the /my-requests route inside RequireAuth for a logged-in member', a
 
   // The outgoing-requests page heading renders, which only happens if App
   // registered the route inside RequireAuth and let a logged-in member through.
-  expect(await screen.findByRole('heading', { name: 'Requests you have made' })).toBeTruthy()
+  expect(await screen.findByRole('heading', { name: 'Requests You Have Made' })).toBeTruthy()
 })
 
 test('guards the /my-requests route, showing the log-in message when logged out', () => {
   window.history.pushState({}, '', '/my-requests')
   render(<App />)
 
-  expect(screen.queryByRole('heading', { name: 'Requests you have made' })).toBeNull()
+  expect(screen.queryByRole('heading', { name: 'Requests You Have Made' })).toBeNull()
   const loginLink = screen.getByRole('link', { name: 'log in' })
   expect(loginLink.getAttribute('href')).toBe('/login')
 })
@@ -212,14 +212,14 @@ test('wires the /my-listings route inside RequireAuth for a logged-in member', a
 
   // The my-listings page heading renders, which only happens if App registered
   // the route inside RequireAuth and let a logged-in member through.
-  expect(await screen.findByRole('heading', { name: 'My Listings' })).toBeTruthy()
+  expect(await screen.findByRole('heading', { name: 'Listings You Own' })).toBeTruthy()
 })
 
 test('guards the /my-listings route, showing the log-in message when logged out', () => {
   window.history.pushState({}, '', '/my-listings')
   render(<App />)
 
-  expect(screen.queryByRole('heading', { name: 'My Listings' })).toBeNull()
+  expect(screen.queryByRole('heading', { name: 'Listings You Own' })).toBeNull()
   const loginLink = screen.getByRole('link', { name: 'log in' })
   expect(loginLink.getAttribute('href')).toBe('/login')
 })

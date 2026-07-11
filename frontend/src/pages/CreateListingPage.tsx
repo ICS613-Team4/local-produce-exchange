@@ -1,7 +1,10 @@
 import { useState } from 'react'
-import { Navigate, useNavigate } from 'react-router'
+import { Link, Navigate, useNavigate } from 'react-router'
 
-import { sendCreateListingRequest } from '../services/listingService'
+import {
+  sendCreateListingRequest,
+  sendUploadListingPhotoRequest,
+} from '../services/listingService'
 
 function CreateListingPage() {
   const navigate = useNavigate()
@@ -18,9 +21,11 @@ function CreateListingPage() {
   const [allergenTags, setAllergenTags] = useState('')
   const [pickupStart, setPickupStart] = useState('')
   const [pickupEnd, setPickupEnd] = useState('')
+  const [selectedPhotos, setSelectedPhotos] = useState<File[]>([])
 
   // Holds the message shown in the error area. Empty means no error.
   const [errorMessage, setErrorMessage] = useState('')
+  const [createdListingId, setCreatedListingId] = useState('')
 
   // Blocks a second submit while the first request is still in flight, so a
   // fast double-click cannot create two listings.
@@ -58,6 +63,16 @@ function CreateListingPage() {
     setPickupEnd(event.target.value)
   }
 
+  function handlePhotosChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const files = []
+    if (event.target.files !== null) {
+      for (let index = 0; index < event.target.files.length; index = index + 1) {
+        files.push(event.target.files[index])
+      }
+    }
+    setSelectedPhotos(files)
+  }
+
   // Splits a comma-separated tag string into a trimmed array with no blanks.
   function splitTags(rawValue: string) {
     const pieces = rawValue.split(',')
@@ -74,6 +89,8 @@ function CreateListingPage() {
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setIsSubmitting(true)
+    setErrorMessage('')
+    setCreatedListingId('')
 
     // The datetime-local inputs hold a local wall-clock string with no
     // timezone. Convert each to a timezone-aware ISO string so it matches the
@@ -110,6 +127,39 @@ function CreateListingPage() {
       }
 
       if (newListingId !== '') {
+        const photoFailures = []
+        for (let index = 0; index < selectedPhotos.length; index = index + 1) {
+          const photo = selectedPhotos[index]
+          const photoResult = await sendUploadListingPhotoRequest(
+            newListingId,
+            memberId,
+            photo,
+          )
+          if (!photoResult.ok) {
+            let reason = photoResult.errorMessage
+            if (reason === '' && typeof photoResult.data === 'object' && photoResult.data !== null) {
+              const dataObject = photoResult.data as { detail?: unknown }
+              if (typeof dataObject.detail === 'string') {
+                reason = dataObject.detail
+              }
+            }
+            if (reason === '') {
+              reason = 'HTTP ' + photoResult.status
+            }
+            photoFailures.push(photo.name + ': ' + reason)
+          }
+        }
+
+        if (photoFailures.length > 0) {
+          setCreatedListingId(newListingId)
+          setErrorMessage(
+            'Your listing was created. Some photos were not added: ' +
+              photoFailures.join('; ') +
+              '.',
+          )
+          return
+        }
+
         navigate('/listings/' + newListingId)
         return
       }
@@ -179,11 +229,23 @@ function CreateListingPage() {
     errorArea = (
       <div className="rounded-lg bg-error-bg border border-red-200 px-4 py-3 text-sm text-error mt-4" role="alert">
         {errorMessage}
+        {createdListingId !== '' && (
+          <Link
+            to={'/listings/' + createdListingId}
+            className="block mt-2 font-medium text-primary-700 hover:text-primary-800"
+          >
+            View your listing
+          </Link>
+        )}
       </div>
     )
   }
 
   const inputClasses = 'w-full px-4 py-2.5 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-150'
+  // The file input styles its native "Choose File" button through Tailwind's
+  // file: variant, so it looks like the site's primary buttons instead of the
+  // browser's unstyled default.
+  const fileInputClasses = 'w-full p-2 text-sm text-text-muted bg-background border border-border rounded-lg cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-150 file:mr-4 file:px-4 file:py-2 file:rounded-lg file:border-0 file:bg-primary-600 file:text-text-inverse file:text-sm file:font-semibold file:cursor-pointer hover:file:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed'
   const labelClasses = 'block text-sm font-medium text-text mb-1.5'
 
   return (
@@ -292,6 +354,20 @@ function CreateListingPage() {
                 className={inputClasses}
               />
             </div>
+          </div>
+          <div>
+            <label htmlFor="listing-photos" className={labelClasses}>Photos (optional)</label>
+            <input
+              id="listing-photos"
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              multiple
+              onChange={handlePhotosChange}
+              className={fileInputClasses}
+            />
+            <p className="text-xs text-text-muted mt-1">
+              Up to 3 JPEG, PNG, or WebP images. Each image may be up to 2 MB.
+            </p>
           </div>
           <div className="pt-2">
             <button

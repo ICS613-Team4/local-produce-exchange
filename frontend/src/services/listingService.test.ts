@@ -1,13 +1,16 @@
 import { afterEach, expect, test, vi } from 'vitest'
 
 import {
+  listingPhotoUploadTimeoutMilliseconds,
   listingTimeoutMilliseconds,
   sendBrowseListingsRequest,
   sendCreateListingRequest,
   sendDeactivateListingRequest,
+  sendDeleteListingPhotoRequest,
   sendGetListingRequest,
   sendGetMyListingsRequest,
   sendUpdateListingRequest,
+  sendUploadListingPhotoRequest,
 } from './listingService'
 
 type FakeResponse = {
@@ -587,6 +590,178 @@ test('my listings returns a request failure message when fetch rejects', async (
   })
 
   const result = await sendGetMyListingsRequest('member-123')
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(0)
+  expect(result.errorMessage).toBe('Request failed: TypeError: Failed to fetch')
+})
+
+// --- US-30: listing photo upload and removal ---
+
+test('uploads a photo as form data without setting the content type header', async () => {
+  const responseBody = {
+    id: 'photo-row-id',
+    content_type: 'image/png',
+    position: 0,
+  }
+  let requestUrl = ''
+  let requestOptions: RequestInit = {}
+  vi.stubGlobal('fetch', async (url: string | URL | Request, options: RequestInit | undefined) => {
+    requestUrl = String(url)
+    if (options !== undefined) {
+      requestOptions = options
+    }
+    return makeFakeResponse(true, 201, JSON.stringify(responseBody))
+  })
+  const file = new File(['image bytes'], 'lettuce.png', { type: 'image/png' })
+
+  const result = await sendUploadListingPhotoRequest(
+    'listing-row-id',
+    'member-123',
+    file,
+  )
+
+  expect(result.ok).toBe(true)
+  expect(result.status).toBe(201)
+  expect(result.data).toEqual(responseBody)
+  expect(requestUrl).toBe('/api/listings/listing-row-id/photos')
+  expect(requestOptions.method).toBe('POST')
+  expect(JSON.stringify(requestOptions.headers)).toContain('X-Member-Id')
+  expect(JSON.stringify(requestOptions.headers)).not.toContain('Content-Type')
+  expect(requestOptions.body).toBeInstanceOf(FormData)
+  const sentForm = requestOptions.body as FormData
+  expect(sentForm.get('file')).toBe(file)
+  expect(requestOptions.signal).toBeTruthy()
+})
+
+test('returns the backend error when a photo upload is rejected', async () => {
+  const responseBody = { detail: 'That file type is not allowed.' }
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(false, 422, JSON.stringify(responseBody))
+  })
+  const file = new File(['text'], 'notes.txt', { type: 'text/plain' })
+
+  const result = await sendUploadListingPhotoRequest('listing-id', 'member-id', file)
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(422)
+  expect(result.data).toEqual(responseBody)
+})
+
+test('keeps a plain text photo upload error body', async () => {
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(false, 502, 'Bad Gateway')
+  })
+  const file = new File(['image bytes'], 'lettuce.png', { type: 'image/png' })
+
+  const result = await sendUploadListingPhotoRequest('listing-id', 'member-id', file)
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(502)
+  expect(result.data).toBe('Bad Gateway')
+})
+
+test('returns the longer timeout message when a photo upload times out', async () => {
+  vi.stubGlobal('fetch', async () => {
+    throw new DOMException('The operation timed out.', 'TimeoutError')
+  })
+  const file = new File(['image bytes'], 'lettuce.png', { type: 'image/png' })
+
+  const result = await sendUploadListingPhotoRequest('listing-id', 'member-id', file)
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(0)
+  expect(result.errorMessage).toBe(
+    'Timeout: no answer from the backend after ' +
+      listingPhotoUploadTimeoutMilliseconds +
+      ' ms.',
+  )
+})
+
+test('returns a request failure when a photo upload fetch rejects', async () => {
+  vi.stubGlobal('fetch', async () => {
+    throw new TypeError('Failed to fetch')
+  })
+  const file = new File(['image bytes'], 'lettuce.png', { type: 'image/png' })
+
+  const result = await sendUploadListingPhotoRequest('listing-id', 'member-id', file)
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(0)
+  expect(result.errorMessage).toBe('Request failed: TypeError: Failed to fetch')
+})
+
+test('deletes a photo with the member id header', async () => {
+  let requestUrl = ''
+  let requestOptions: RequestInit = {}
+  vi.stubGlobal('fetch', async (url: string | URL | Request, options: RequestInit | undefined) => {
+    requestUrl = String(url)
+    if (options !== undefined) {
+      requestOptions = options
+    }
+    return makeFakeResponse(true, 204, '')
+  })
+
+  const result = await sendDeleteListingPhotoRequest(
+    'listing-row-id',
+    'member-123',
+    'photo-row-id',
+  )
+
+  expect(result.ok).toBe(true)
+  expect(result.status).toBe(204)
+  expect(result.data).toBe('')
+  expect(requestUrl).toBe('/api/listings/listing-row-id/photos/photo-row-id')
+  expect(requestOptions.method).toBe('DELETE')
+  expect(JSON.stringify(requestOptions.headers)).toContain('member-123')
+  expect(requestOptions.signal).toBeTruthy()
+})
+
+test('returns the backend error when a photo removal is denied', async () => {
+  const responseBody = { detail: 'You can only change photos on your own listing.' }
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(false, 403, JSON.stringify(responseBody))
+  })
+
+  const result = await sendDeleteListingPhotoRequest('listing-id', 'member-id', 'photo-id')
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(403)
+  expect(result.data).toEqual(responseBody)
+})
+
+test('keeps a plain text photo removal error body', async () => {
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(false, 502, 'Bad Gateway')
+  })
+
+  const result = await sendDeleteListingPhotoRequest('listing-id', 'member-id', 'photo-id')
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(502)
+  expect(result.data).toBe('Bad Gateway')
+})
+
+test('returns a timeout message when a photo removal times out', async () => {
+  vi.stubGlobal('fetch', async () => {
+    throw new DOMException('The operation timed out.', 'TimeoutError')
+  })
+
+  const result = await sendDeleteListingPhotoRequest('listing-id', 'member-id', 'photo-id')
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(0)
+  expect(result.errorMessage).toBe(
+    'Timeout: no answer from the backend after ' + listingTimeoutMilliseconds + ' ms.',
+  )
+})
+
+test('returns a request failure when a photo removal fetch rejects', async () => {
+  vi.stubGlobal('fetch', async () => {
+    throw new TypeError('Failed to fetch')
+  })
+
+  const result = await sendDeleteListingPhotoRequest('listing-id', 'member-id', 'photo-id')
 
   expect(result.ok).toBe(false)
   expect(result.status).toBe(0)
