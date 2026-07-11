@@ -336,6 +336,55 @@ export async function sendDeactivateListingRequest(
   }
 }
 
+export async function sendReactivateListingRequest(
+  listingId: string,
+  memberId: string,
+): Promise<ListingResult> {
+  // The reactivate endpoint flips an owner-deactivated listing back to active.
+  // It takes no request body, and success is a 204 with an empty body.
+  try {
+    const response = await fetch('/api/listings/' + listingId + '/reactivate', {
+      method: 'POST',
+      headers: {
+        'X-Member-Id': memberId,
+      },
+      signal: AbortSignal.timeout(listingTimeoutMilliseconds),
+    })
+
+    const responseText = await response.text()
+    let data: unknown = ''
+    if (responseText !== '') {
+      try {
+        data = JSON.parse(responseText)
+      } catch {
+        data = responseText
+      }
+    }
+
+    return {
+      ok: response.ok,
+      status: response.status,
+      data: data,
+      errorMessage: '',
+    }
+  } catch (caughtError) {
+    let errorMessage: string
+    if (caughtError instanceof DOMException && caughtError.name === 'TimeoutError') {
+      errorMessage =
+        'Timeout: no answer from the backend after ' + listingTimeoutMilliseconds + ' ms.'
+    } else {
+      errorMessage = 'Request failed: ' + String(caughtError)
+    }
+
+    return {
+      ok: false,
+      status: 0,
+      data: '',
+      errorMessage: errorMessage,
+    }
+  }
+}
+
 export async function sendBrowseListingsRequest(
   memberId: string,
   filters: BrowseListingFilters,

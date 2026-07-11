@@ -9,6 +9,7 @@ import {
   sendDeleteListingPhotoRequest,
   sendGetListingRequest,
   sendGetMyListingsRequest,
+  sendReactivateListingRequest,
   sendUpdateListingRequest,
   sendUploadListingPhotoRequest,
 } from './listingService'
@@ -390,6 +391,88 @@ test('returns a request failure message when the deactivate request rejects', as
   })
 
   const result = await sendDeactivateListingRequest('listing-row-id', 'member-123')
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(0)
+  expect(result.errorMessage).toBe('Request failed: TypeError: Failed to fetch')
+})
+
+// --- US-31: sendReactivateListingRequest reactivates one listing ---
+
+test('posts to the reactivate URL with the member id header and no body', async () => {
+  let requestUrl = ''
+  let requestOptions: RequestInit = {}
+  vi.stubGlobal('fetch', async (url: string | URL | Request, options: RequestInit | undefined) => {
+    requestUrl = String(url)
+    if (options !== undefined) {
+      requestOptions = options
+    }
+    return makeFakeResponse(true, 204, '')
+  })
+
+  const result = await sendReactivateListingRequest('listing-row-id', 'member-123')
+
+  expect(result.ok).toBe(true)
+  expect(result.status).toBe(204)
+  expect(result.data).toBe('')
+  expect(result.errorMessage).toBe('')
+  expect(requestUrl).toBe('/api/listings/listing-row-id/reactivate')
+  expect(requestOptions.method).toBe('POST')
+  expect(JSON.stringify(requestOptions.headers)).toContain('X-Member-Id')
+  expect(JSON.stringify(requestOptions.headers)).toContain('member-123')
+  expect(requestOptions.signal).toBeTruthy()
+  expect(requestOptions.body).toBeUndefined()
+})
+
+test('maps a reactivate HTTP error response into the result object', async () => {
+  const responseBody = {
+    detail: 'An administrator deactivated this listing, so you cannot reactivate it.',
+  }
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(false, 403, JSON.stringify(responseBody))
+  })
+
+  const result = await sendReactivateListingRequest('listing-row-id', 'member-123')
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(403)
+  expect(JSON.stringify(result.data)).toBe(JSON.stringify(responseBody))
+  expect(result.errorMessage).toBe('')
+})
+
+test('keeps a plain text body on a reactivate request', async () => {
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(false, 502, 'Bad Gateway')
+  })
+
+  const result = await sendReactivateListingRequest('listing-row-id', 'member-123')
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(502)
+  expect(result.data).toBe('Bad Gateway')
+  expect(result.errorMessage).toBe('')
+})
+
+test('returns a timeout message when the reactivate request times out', async () => {
+  vi.stubGlobal('fetch', async () => {
+    throw new DOMException('The operation timed out.', 'TimeoutError')
+  })
+
+  const result = await sendReactivateListingRequest('listing-row-id', 'member-123')
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(0)
+  expect(result.errorMessage).toBe(
+    'Timeout: no answer from the backend after ' + listingTimeoutMilliseconds + ' ms.',
+  )
+})
+
+test('returns a request failure message when the reactivate request rejects', async () => {
+  vi.stubGlobal('fetch', async () => {
+    throw new TypeError('Failed to fetch')
+  })
+
+  const result = await sendReactivateListingRequest('listing-row-id', 'member-123')
 
   expect(result.ok).toBe(false)
   expect(result.status).toBe(0)
