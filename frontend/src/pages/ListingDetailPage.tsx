@@ -144,7 +144,7 @@ function ListingDetailPage() {
 
     // Ask before doing it. On cancel, release the guard (only if this click still
     // owns it) and stop.
-    const confirmed = window.confirm('Deactivate this listing? No new requests can be made on it.')
+    const confirmed = window.confirm('Deactivate this listing? No new requests can be made on it, and its pending requests are cancelled. Exchanges already approved or picked up carry on.')
     if (confirmed === false) {
       if (isDeactivatingRef.current === requestKey) {
         isDeactivatingRef.current = ''

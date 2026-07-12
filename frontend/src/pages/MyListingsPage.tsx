@@ -118,7 +118,7 @@ function MyListingsPage() {
     }
     deactivateInFlightRef.current = requestKey
 
-    const confirmed = window.confirm('Deactivate this listing? No new requests can be made on it.')
+    const confirmed = window.confirm('Deactivate this listing? No new requests can be made on it, and its pending requests are cancelled. Exchanges already approved or picked up carry on.')
     if (confirmed === false) {
       if (deactivateInFlightRef.current === requestKey) {
         deactivateInFlightRef.current = ''
