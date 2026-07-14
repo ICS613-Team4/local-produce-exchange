@@ -7,10 +7,12 @@ from datetime import datetime, timezone
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import Range
 from sqlalchemy.exc import OperationalError
 
 from app.main import app
+from app.models.claim import Claim
 from app.models.listing import Listing
 from app.models.member import Member
 from app.routers.listing import deactivate_listing
@@ -117,6 +119,96 @@ def test_deactivate_listing_marks_it_deactivated_and_changes_nothing_else(db_ses
     assert after_snapshot["deactivated_by"] is None
 
 
+def insert_claim(session, listing, claimant, status="requested"):
+    # A claim in the given lifecycle state. The timestamps that state implies
+    # are set so the row looks like the live flow produced it.
+    now = datetime.now(timezone.utc)
+    approved_quantity = None
+    approved_at = None
+    picked_up_at = None
+    completed_at = None
+    denied_at = None
+    if status in ("approved", "picked_up", "completed"):
+        approved_quantity = 1
+        approved_at = now
+    if status in ("picked_up", "completed"):
+        picked_up_at = now
+    if status == "completed":
+        completed_at = now
+    if status == "denied":
+        denied_at = now
+    claim = Claim(
+        listing_id=listing.id,
+        claimant_id=claimant.id,
+        requested_quantity=1,
+        approved_quantity=approved_quantity,
+        status=status,
+        requested_at=now,
+        approved_at=approved_at,
+        picked_up_at=picked_up_at,
+        completed_at=completed_at,
+        denied_at=denied_at,
+    )
+    session.add(claim)
+    session.commit()
+    return claim
+
+
+def test_deactivate_listing_cancels_pending_claims_only(db_session):
+    # Deactivating cancels the still-pending requests (so recipients are not
+    # left waiting on a listing that can no longer be approved) and leaves
+    # every other claim state alone: approved, picked-up, and completed
+    # exchanges carry on.
+    owner = insert_member(db_session, "active")
+    ann = insert_member(db_session, "active", "ann@example.com")
+    ben = insert_member(db_session, "active", "ben@example.com")
+    cara = insert_member(db_session, "active", "cara@example.com")
+    dana = insert_member(db_session, "active", "dana@example.com")
+    listing = insert_listing(db_session, owner)
+    pending_claim = insert_claim(db_session, listing, ann, status="requested")
+    approved_claim = insert_claim(db_session, listing, ben, status="approved")
+    picked_up_claim = insert_claim(db_session, listing, cara, status="picked_up")
+    completed_claim = insert_claim(db_session, listing, dana, status="completed")
+
+    deactivate_listing(str(listing.id), owner, db_session)
+
+    db_session.expire_all()
+    saved_pending = db_session.scalars(
+        select(Claim).where(Claim.id == pending_claim.id)
+    ).first()
+    assert saved_pending.status == "cancelled"
+    assert saved_pending.cancelled_at is not None
+    saved_approved = db_session.scalars(
+        select(Claim).where(Claim.id == approved_claim.id)
+    ).first()
+    assert saved_approved.status == "approved"
+    assert saved_approved.cancelled_at is None
+    saved_picked_up = db_session.scalars(
+        select(Claim).where(Claim.id == picked_up_claim.id)
+    ).first()
+    assert saved_picked_up.status == "picked_up"
+    saved_completed = db_session.scalars(
+        select(Claim).where(Claim.id == completed_claim.id)
+    ).first()
+    assert saved_completed.status == "completed"
+
+
+def test_deactivate_listing_cancellation_moves_no_quantity(db_session):
+    # Quantity only leaves a listing at approval, so cancelling never-approved
+    # pending claims returns nothing: the remaining quantity stays put.
+    owner = insert_member(db_session, "active")
+    ann = insert_member(db_session, "active", "ann@example.com")
+    listing = insert_listing(db_session, owner, remaining_quantity=3)
+    insert_claim(db_session, listing, ann, status="requested")
+
+    deactivate_listing(str(listing.id), owner, db_session)
+
+    db_session.expire_all()
+    saved_listing = db_session.get(Listing, listing.id)
+    assert saved_listing.remaining_quantity == 3
+    assert saved_listing.status == "deactivated"
+
+
 def test_deactivate_listing_denies_a_non_owner_and_leaves_the_row_unchanged(db_session):
     # Scenario 2: a member who does not own the listing is denied, and the
     # listing stays active.
@@ -218,16 +310,20 @@ def test_deactivate_listing_returns_503_on_read_database_error(broken_session):
     assert raised_error.value.status_code == 503
 
 
-# A tiny stand-in session whose read succeeds but whose commit fails, so the
+# A tiny stand-in session whose reads succeed but whose commit fails, so the
 # test reaches the commit try/except that the read-failure test never gets to.
-# The read returns a real, active Listing owned by the acting member, so the
-# handler passes the ownership and status gates and then tries to commit.
+# The listing read returns a real, active Listing owned by the acting member,
+# so the handler passes the ownership and status gates; the pending-claims read
+# returns an empty list; then the commit raises.
 class ScalarsResultStub:
     def __init__(self, listing):
         self.listing = listing
 
     def first(self):
         return self.listing
+
+    def all(self):
+        return []
 
 
 class CommitFailsSession:

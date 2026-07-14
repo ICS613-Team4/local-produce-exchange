@@ -64,6 +64,7 @@ function makeAllRequestsBody(): AllRequestsResponse {
             requested_at: '2026-07-01T09:00:00.000Z',
             approved_at: null,
             picked_up_at: null,
+            completed_at: null,
             denied_at: null,
             can_decide: true,
             can_deny: true,
@@ -78,6 +79,7 @@ function makeAllRequestsBody(): AllRequestsResponse {
             requested_at: '2026-07-01T10:00:00.000Z',
             approved_at: '2026-07-02T10:00:00.000Z',
             picked_up_at: null,
+            completed_at: null,
             denied_at: null,
             can_decide: false,
             can_deny: false,
@@ -109,6 +111,7 @@ function makeOneGroupBody(listingId: string, title: string) {
             requested_at: '2026-07-01T09:00:00.000Z',
             approved_at: null,
             picked_up_at: null,
+            completed_at: null,
             denied_at: null,
             can_decide: false,
             can_deny: false,
@@ -130,6 +133,39 @@ function makePendingResponse() {
     resolve: resolveResponse,
   }
   return pendingResponse
+}
+
+function makePickedUpBody(): AllRequestsResponse {
+  const body = makeAllRequestsBody()
+  const pickedUpRequest = body.groups[0].requests[1]
+  pickedUpRequest.id = 'c3'
+  pickedUpRequest.status = 'picked_up'
+  pickedUpRequest.picked_up_at = '2026-07-03T09:00:00.000Z'
+  body.groups[0].requests = [pickedUpRequest]
+  return body
+}
+
+function makeCompletedBody(): AllRequestsResponse {
+  const body = makePickedUpBody()
+  const completedRequest = body.groups[0].requests[0]
+  completedRequest.status = 'completed'
+  completedRequest.completed_at = '2026-07-04T09:00:00.000Z'
+  return body
+}
+
+function makeApprovedOnlyBody(): AllRequestsResponse {
+  const body = makeAllRequestsBody()
+  const approvedRequest = body.groups[0].requests[1]
+  body.groups[0].requests = [approvedRequest]
+  return body
+}
+
+function makeCancelledBody(): AllRequestsResponse {
+  const body = makeApprovedOnlyBody()
+  const cancelledRequest = body.groups[0].requests[0]
+  cancelledRequest.status = 'cancelled'
+  cancelledRequest.cancelled_at = '2026-07-04T09:00:00.000Z'
+  return body
 }
 
 function setLoggedIn() {
@@ -181,6 +217,7 @@ test('renders the group with every request status in the backend order', async (
   // quantity) both show.
   expect(screen.getByText('Requested')).toBeTruthy()
   expect(screen.getByText('Approved: 2')).toBeTruthy()
+  expect(screen.queryByRole('button', { name: 'Mark exchange complete' })).toBeNull()
 
   // Bob's row comes before Carol's, the order the backend returned.
   const bobRow = screen.getByText('Bob Baker')
@@ -241,33 +278,8 @@ test('shows the exchange thread link only on approved requests', async () => {
 
 test('a picked-up request shows both outcome lines and the Contact the Recipient link', async () => {
   setLoggedIn()
-  const body = {
-    groups: [
-      {
-        listing_id: 'lemons',
-        listing_title: 'Backyard Meyer Lemons',
-        remaining_quantity: 24,
-        requests: [
-          {
-            id: 'c3',
-            claimant_id: 'carol',
-            claimant_name: 'Carol Chen',
-            requested_quantity: 2,
-            approved_quantity: 2,
-            status: 'picked_up',
-            requested_at: '2026-07-01T10:00:00.000Z',
-            approved_at: '2026-07-02T10:00:00.000Z',
-            picked_up_at: '2026-07-03T09:00:00.000Z',
-            denied_at: null,
-            can_decide: false,
-            can_deny: false,
-          },
-        ],
-      },
-    ],
-  }
   vi.stubGlobal('fetch', async () => {
-    return makeFakeResponse(true, 200, body)
+    return makeFakeResponse(true, 200, makePickedUpBody())
   })
 
   renderRequestsPage('/requests')
@@ -276,11 +288,274 @@ test('a picked-up request shows both outcome lines and the Contact the Recipient
   // "Picked_up"), and the pickup time renders as its own line.
   expect(await screen.findByText('Picked up: 2')).toBeTruthy()
   expect(screen.getByText(/Picked up on/)).toBeTruthy()
+  expect(screen.getByRole('button', { name: 'Mark exchange complete' })).toBeTruthy()
   const recipientLink = screen.getByRole('link', { name: 'Contact the Recipient' })
   expect(recipientLink.getAttribute('href')).toContain('/exchange-thread?claim=c3')
-  // A finished exchange offers no Approve or Deny.
+  // A finished exchange offers no Approve or Deny, and the review button
+  // belongs to completed rows only.
   expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
   expect(screen.queryByRole('button', { name: 'Deny' })).toBeNull()
+  expect(screen.queryByRole('button', { name: /Leave a Review/ })).toBeNull()
+})
+
+test('a completed request shows its full outcome and no complete button', async () => {
+  setLoggedIn()
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, makeCompletedBody())
+  })
+
+  renderRequestsPage('/requests')
+
+  expect(await screen.findByText('Completed')).toBeTruthy()
+  expect(screen.getByText(/Approved: 2 on/)).toBeTruthy()
+  expect(screen.getByText(/Picked up on/)).toBeTruthy()
+  expect(screen.getByText(/Completed on/)).toBeTruthy()
+  expect(screen.queryByRole('button', { name: 'Mark exchange complete' })).toBeNull()
+  // The completed row's one control is the placeholder review button naming
+  // the recipient (the fixture's claimant is Carol Chen).
+  expect(screen.getByRole('button', { name: 'Leave a Review for Carol' })).toBeTruthy()
+})
+
+test('the review button on a completed request explains it arrives with US-20', async () => {
+  setLoggedIn()
+  let alertMessage = ''
+  vi.stubGlobal('alert', (message: string) => {
+    alertMessage = message
+  })
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, makeCompletedBody())
+  })
+
+  renderRequestsPage('/requests')
+
+  const reviewButton = await screen.findByRole('button', { name: 'Leave a Review for Carol' })
+  fireEvent.click(reviewButton)
+
+  expect(alertMessage).toContain('US-20')
+})
+
+test('an approved request shows the Cancel the Exchange button next to the thread link', async () => {
+  setLoggedIn()
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, makeApprovedOnlyBody())
+  })
+
+  renderRequestsPage('/requests')
+
+  expect(await screen.findByRole('button', { name: 'Cancel the Exchange' })).toBeTruthy()
+  expect(screen.getByRole('link', { name: 'Arrange the Exchange' })).toBeTruthy()
+})
+
+test('non-approved requests show no Cancel the Exchange button', async () => {
+  setLoggedIn()
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, makePickedUpBody())
+  })
+
+  renderRequestsPage('/requests')
+
+  await screen.findByText('Picked up: 2')
+  expect(screen.queryByRole('button', { name: 'Cancel the Exchange' })).toBeNull()
+})
+
+test('cancelling an approved exchange sends a PATCH and reloads the cancelled row', async () => {
+  setLoggedIn()
+  vi.stubGlobal('confirm', () => {
+    return true
+  })
+  let getCalls = 0
+  let cancelUrl = ''
+  vi.stubGlobal('fetch', async (url: string | URL | Request, options: RequestInit | undefined) => {
+    let method = 'GET'
+    if (options !== undefined && options.method !== undefined) {
+      method = String(options.method)
+    }
+    if (method === 'PATCH') {
+      cancelUrl = String(url)
+      return makeFakeResponse(true, 200, {
+        id: 'c2',
+        status: 'cancelled',
+        cancelled_at: '2026-07-04T09:00:00.000Z',
+      })
+    }
+    getCalls = getCalls + 1
+    if (getCalls === 1) {
+      return makeFakeResponse(true, 200, makeApprovedOnlyBody())
+    }
+    return makeFakeResponse(true, 200, makeCancelledBody())
+  })
+
+  renderRequestsPage('/requests')
+
+  const cancelButton = await screen.findByRole('button', { name: 'Cancel the Exchange' })
+  fireEvent.click(cancelButton)
+
+  await waitFor(() => {
+    expect(screen.getByText(/Cancelled on/)).toBeTruthy()
+  })
+  expect(cancelUrl).toBe('/api/claims/c2/cancel')
+  expect(getCalls).toBe(2)
+  expect(screen.getByText('Cancelled')).toBeTruthy()
+  expect(screen.queryByRole('button', { name: 'Cancel the Exchange' })).toBeNull()
+})
+
+test('declining the cancel confirm sends no PATCH and keeps the button', async () => {
+  setLoggedIn()
+  vi.stubGlobal('confirm', () => {
+    return false
+  })
+  let patchCount = 0
+  vi.stubGlobal('fetch', async (_url: string | URL | Request, options: RequestInit | undefined) => {
+    if (options !== undefined && options.method === 'PATCH') {
+      patchCount = patchCount + 1
+    }
+    return makeFakeResponse(true, 200, makeApprovedOnlyBody())
+  })
+
+  renderRequestsPage('/requests')
+
+  const cancelButton = await screen.findByRole('button', { name: 'Cancel the Exchange' })
+  fireEvent.click(cancelButton)
+  await waitForStateUpdates()
+
+  expect(patchCount).toBe(0)
+  expect(screen.getByRole('button', { name: 'Cancel the Exchange' })).toBeTruthy()
+})
+
+test('a failed exchange cancel shows the server detail and keeps the button', async () => {
+  setLoggedIn()
+  vi.stubGlobal('confirm', () => {
+    return true
+  })
+  let alertMessage = ''
+  vi.stubGlobal('alert', (message: string) => {
+    alertMessage = message
+  })
+  vi.stubGlobal('fetch', async (_url: string | URL | Request, options: RequestInit | undefined) => {
+    if (options !== undefined && options.method === 'PATCH') {
+      return makeFakeResponse(false, 409, {
+        detail: 'This exchange is not approved, so it cannot be cancelled.',
+      })
+    }
+    return makeFakeResponse(true, 200, makeApprovedOnlyBody())
+  })
+
+  renderRequestsPage('/requests')
+
+  const cancelButton = await screen.findByRole('button', { name: 'Cancel the Exchange' })
+  fireEvent.click(cancelButton)
+  await waitForStateUpdates()
+
+  expect(alertMessage).toContain('not approved')
+  expect(screen.getByRole('button', { name: 'Cancel the Exchange' })).toBeTruthy()
+})
+
+test('a deactivated listing group is marked in its heading', async () => {
+  setLoggedIn()
+  const body = makePickedUpBody()
+  body.groups[0].listing_status = 'deactivated'
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, body)
+  })
+
+  renderRequestsPage('/requests')
+
+  expect(
+    await screen.findByRole('heading', { level: 2, name: 'Backyard Meyer Lemons (deactivated)' }),
+  ).toBeTruthy()
+  // The in-flight exchange on the deactivated listing keeps its complete button.
+  expect(screen.getByRole('button', { name: 'Mark exchange complete' })).toBeTruthy()
+})
+
+test('marking an exchange complete sends a PATCH and reloads the completed row', async () => {
+  setLoggedIn()
+  vi.stubGlobal('confirm', () => {
+    return true
+  })
+  let getCalls = 0
+  let completeUrl = ''
+  vi.stubGlobal('fetch', async (url: string | URL | Request, options: RequestInit | undefined) => {
+    let method = 'GET'
+    if (options !== undefined && options.method !== undefined) {
+      method = String(options.method)
+    }
+    if (method === 'PATCH') {
+      completeUrl = String(url)
+      return makeFakeResponse(true, 200, {
+        id: 'c3',
+        status: 'completed',
+        completed_at: '2026-07-04T09:00:00.000Z',
+      })
+    }
+    getCalls = getCalls + 1
+    if (getCalls === 1) {
+      return makeFakeResponse(true, 200, makePickedUpBody())
+    }
+    return makeFakeResponse(true, 200, makeCompletedBody())
+  })
+
+  renderRequestsPage('/requests')
+
+  const completeButton = await screen.findByRole('button', { name: 'Mark exchange complete' })
+  fireEvent.click(completeButton)
+
+  await waitFor(() => {
+    expect(screen.getByText(/Completed on/)).toBeTruthy()
+  })
+  expect(completeUrl).toBe('/api/claims/c3/complete')
+  expect(getCalls).toBe(2)
+  expect(screen.queryByRole('button', { name: 'Mark exchange complete' })).toBeNull()
+})
+
+test('cancelling exchange completion sends no PATCH and keeps the button', async () => {
+  setLoggedIn()
+  vi.stubGlobal('confirm', () => {
+    return false
+  })
+  let patchCount = 0
+  vi.stubGlobal('fetch', async (_url: string | URL | Request, options: RequestInit | undefined) => {
+    if (options !== undefined && options.method === 'PATCH') {
+      patchCount = patchCount + 1
+    }
+    return makeFakeResponse(true, 200, makePickedUpBody())
+  })
+
+  renderRequestsPage('/requests')
+
+  const completeButton = await screen.findByRole('button', { name: 'Mark exchange complete' })
+  fireEvent.click(completeButton)
+  await waitForStateUpdates()
+
+  expect(patchCount).toBe(0)
+  expect(screen.getByRole('button', { name: 'Mark exchange complete' })).toBeTruthy()
+})
+
+test('a failed exchange completion shows the server detail and keeps the button', async () => {
+  setLoggedIn()
+  vi.stubGlobal('confirm', () => {
+    return true
+  })
+  let alertMessage = ''
+  vi.stubGlobal('alert', (message: string) => {
+    alertMessage = message
+  })
+  vi.stubGlobal('fetch', async (_url: string | URL | Request, options: RequestInit | undefined) => {
+    if (options !== undefined && options.method === 'PATCH') {
+      return makeFakeResponse(false, 409, {
+        detail: 'This exchange is not picked up, so it cannot be completed.',
+      })
+    }
+    return makeFakeResponse(true, 200, makePickedUpBody())
+  })
+
+  renderRequestsPage('/requests')
+
+  const completeButton = await screen.findByRole('button', { name: 'Mark exchange complete' })
+  fireEvent.click(completeButton)
+  await waitForStateUpdates()
+
+  expect(alertMessage).toContain('not picked up')
+  expect(screen.getByRole('button', { name: 'Mark exchange complete' })).toBeTruthy()
 })
 
 test('an actionable request shows Approve/Deny and a click reloads with the new status', async () => {
@@ -702,4 +977,5 @@ test('shows a denied status outcome for a denied request', async () => {
   renderRequestsPage('/requests')
 
   expect(await screen.findByText(/Denied on/)).toBeTruthy()
+  expect(screen.queryByRole('button', { name: 'Mark exchange complete' })).toBeNull()
 })

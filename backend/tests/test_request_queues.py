@@ -729,19 +729,71 @@ def test_all_requests_includes_every_status(db_session, claim_status):
     assert response.groups[0].requests[0].status == claim_status
 
 
-def test_all_requests_excludes_deactivated_listing(db_session):
-    # A deactivated listing is dropped entirely, even if it has requests.
+def test_all_requests_carries_pickup_and_completion_timestamps(db_session):
+    owner = insert_member(db_session, email="owner@example.com")
+    cara = insert_member(db_session, email="cara@example.com", name="Cara")
+    listing = insert_listing(db_session, owner, title="Lemons")
+    picked_up_claim = insert_claim(db_session, listing, cara, status="picked_up")
+    completed_claim = insert_claim(
+        db_session,
+        listing,
+        cara,
+        status="completed",
+        requested_at=datetime(2026, 7, 1, 13, 0, tzinfo=timezone.utc),
+    )
+    picked_up_at = datetime(2026, 7, 2, 9, 0, tzinfo=timezone.utc)
+    completed_picked_up_at = datetime(2026, 7, 2, 10, 0, tzinfo=timezone.utc)
+    completed_at = datetime(2026, 7, 2, 11, 0, tzinfo=timezone.utc)
+    picked_up_claim.picked_up_at = picked_up_at
+    completed_claim.picked_up_at = completed_picked_up_at
+    completed_claim.completed_at = completed_at
+    db_session.commit()
+
+    response = get_all_requests(None, owner, db_session)
+
+    requests_by_status = {}
+    for request in response.groups[0].requests:
+        requests_by_status[request.status] = request
+    assert requests_by_status["picked_up"].picked_up_at == picked_up_at
+    assert requests_by_status["picked_up"].completed_at is None
+    assert requests_by_status["completed"].picked_up_at == completed_picked_up_at
+    assert requests_by_status["completed"].completed_at == completed_at
+
+
+def test_all_requests_keeps_deactivated_listing_with_requests(db_session):
+    # A deactivated listing stays visible while it still has requests, labeled
+    # by its status so the page can mark it "(deactivated)". This is how the
+    # poster finishes exchanges that were in flight at deactivation time.
     owner = insert_member(db_session, email="owner@example.com")
     cara = insert_member(db_session, email="cara@example.com", name="Cara")
     active = insert_listing(db_session, owner, title="Active", status="active")
     deactivated = insert_listing(db_session, owner, title="Down", status="deactivated")
     insert_claim(db_session, active, cara)
-    insert_claim(db_session, deactivated, cara)
+    insert_claim(db_session, deactivated, cara, status="picked_up")
+
+    response = get_all_requests(None, owner, db_session)
+
+    assert len(response.groups) == 2
+    groups_by_title = {}
+    for group in response.groups:
+        groups_by_title[group.listing_title] = group
+    assert groups_by_title["Active"].listing_status == "active"
+    assert groups_by_title["Down"].listing_status == "deactivated"
+    assert groups_by_title["Down"].requests[0].status == "picked_up"
+
+
+def test_all_requests_drops_deactivated_listing_without_requests(db_session):
+    # A deactivated listing with nothing on it disappears; only an ACTIVE
+    # listing is kept as an empty group.
+    owner = insert_member(db_session, email="owner@example.com")
+    insert_listing(db_session, owner, title="Active", status="active")
+    insert_listing(db_session, owner, title="Down", status="deactivated")
 
     response = get_all_requests(None, owner, db_session)
 
     assert len(response.groups) == 1
     assert response.groups[0].listing_title == "Active"
+    assert response.groups[0].requests == []
 
 
 def test_all_requests_excludes_other_members(db_session):
@@ -959,15 +1011,30 @@ def test_all_requests_filtered_unknown_id_returns_no_groups(db_session):
     assert response.groups == []
 
 
-def test_all_requests_filtered_owned_deactivated_returns_no_groups(db_session):
-    # An owned listing that is not active shows nothing here, even though the
-    # caller owns it: this endpoint only shows active listings.
+def test_all_requests_filtered_owned_deactivated_without_requests_returns_no_groups(db_session):
+    # A filtered deactivated listing with no requests shows nothing, the same
+    # drop rule as the unfiltered list.
     owner = insert_member(db_session, email="owner@example.com")
     deactivated = insert_listing(db_session, owner, title="Down", status="deactivated")
 
     response = get_all_requests(str(deactivated.id), owner, db_session)
 
     assert response.groups == []
+
+
+def test_all_requests_filtered_owned_deactivated_with_requests_returns_the_group(db_session):
+    # A filtered deactivated listing that still has requests comes back, so the
+    # poster can reach the in-flight exchanges through the filtered view too.
+    owner = insert_member(db_session, email="owner@example.com")
+    cara = insert_member(db_session, email="cara@example.com", name="Cara")
+    deactivated = insert_listing(db_session, owner, title="Down", status="deactivated")
+    insert_claim(db_session, deactivated, cara, status="approved")
+
+    response = get_all_requests(str(deactivated.id), owner, db_session)
+
+    assert len(response.groups) == 1
+    assert response.groups[0].listing_status == "deactivated"
+    assert response.groups[0].requests[0].status == "approved"
 
 
 def test_all_requests_filtered_foreign_listing_returns_403(db_session):

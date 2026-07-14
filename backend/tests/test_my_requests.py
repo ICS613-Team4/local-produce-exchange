@@ -1,5 +1,6 @@
-# Tests for the my-requests endpoint: the caller's own requests, split into three
-# sections (pending, approved, denied), each newest-first with an id tiebreaker.
+# Tests for the my-requests endpoint: the caller's own requests, split into five
+# sections (pending, approved, completed, denied, withdrawn), each newest-first
+# with an id tiebreaker.
 # Run from the project root with:
 # uv run --locked --all-groups --directory backend pytest tests/test_my_requests.py -v
 
@@ -64,6 +65,8 @@ def insert_claim(
     requested_at=None,
     approved_quantity=None,
     approved_at=None,
+    picked_up_at=None,
+    completed_at=None,
     denied_at=None,
     cancelled_at=None,
 ):
@@ -77,6 +80,8 @@ def insert_claim(
         status=status,
         requested_at=requested_at,
         approved_at=approved_at,
+        picked_up_at=picked_up_at,
+        completed_at=completed_at,
         denied_at=denied_at,
         cancelled_at=cancelled_at,
     )
@@ -263,13 +268,14 @@ def test_my_requests_all_sections_empty_when_no_requests(db_session):
 
     assert response.pending == []
     assert response.approved == []
+    assert response.completed == []
     assert response.denied == []
 
 
 @pytest.mark.parametrize("other_status", ["completed", "cancelled"])
-def test_my_requests_excludes_other_statuses(db_session, other_status):
-    # Only pending, approved, and denied have sections. A claim in any other state
-    # (completed, withdrawn) shows in none of them. A picked-up claim is the
+def test_my_requests_keeps_statuses_out_of_the_first_three_sections(db_session, other_status):
+    # A completed or withdrawn claim never leaks into the pending, approved, or
+    # denied sections; each has its own section. A picked-up claim is the
     # exception: it stays in the approved section, covered by its own test below.
     caller = insert_member(db_session, email="cara@example.com", name="Cara")
     poster = insert_member(db_session, email="poster@example.com", name="Poster")
@@ -281,6 +287,66 @@ def test_my_requests_excludes_other_statuses(db_session, other_status):
     assert response.pending == []
     assert response.approved == []
     assert response.denied == []
+
+
+def test_my_requests_completed_section_carries_the_exchange(db_session):
+    # A completed exchange lands in the completed section with its lifecycle
+    # timestamps and the provider's name, so the recipient can still see the
+    # finished exchange after the poster marks it complete.
+    caller = insert_member(db_session, email="cara@example.com", name="Cara")
+    poster = insert_member(db_session, email="poster@example.com", name="Polly Poster")
+    listing = insert_listing(db_session, poster, title="Lemons")
+    completed_at = datetime(2026, 7, 3, 10, 0, tzinfo=timezone.utc)
+    insert_claim(
+        db_session,
+        listing,
+        caller,
+        requested_quantity=4,
+        status="completed",
+        approved_quantity=3,
+        approved_at=datetime(2026, 7, 2, 10, 0, tzinfo=timezone.utc),
+        picked_up_at=datetime(2026, 7, 3, 9, 0, tzinfo=timezone.utc),
+        completed_at=completed_at,
+    )
+
+    response = get_my_requests(caller, db_session)
+
+    assert response.pending == []
+    assert response.approved == []
+    assert len(response.completed) == 1
+    assert response.completed[0].status == "completed"
+    assert response.completed[0].listing_title == "Lemons"
+    assert response.completed[0].owner_name == "Polly Poster"
+    assert response.completed[0].approved_quantity == 3
+    assert response.completed[0].completed_at == completed_at
+
+
+def test_my_requests_completed_section_is_newest_first(db_session):
+    # Two completed exchanges come out newest completion first.
+    caller = insert_member(db_session, email="cara@example.com", name="Cara")
+    poster = insert_member(db_session, email="poster@example.com", name="Poster")
+    listing_older = insert_listing(db_session, poster, title="Apples")
+    listing_newer = insert_listing(db_session, poster, title="Bananas")
+    insert_claim(
+        db_session,
+        listing_older,
+        caller,
+        status="completed",
+        completed_at=datetime(2026, 7, 2, 9, 0, tzinfo=timezone.utc),
+    )
+    insert_claim(
+        db_session,
+        listing_newer,
+        caller,
+        status="completed",
+        completed_at=datetime(2026, 7, 3, 9, 0, tzinfo=timezone.utc),
+    )
+
+    response = get_my_requests(caller, db_session)
+
+    assert len(response.completed) == 2
+    assert response.completed[0].listing_title == "Bananas"
+    assert response.completed[1].listing_title == "Apples"
 
 
 def test_my_requests_keeps_picked_up_in_approved(db_session):
@@ -423,16 +489,16 @@ def test_my_requests_skips_a_claim_whose_listing_is_missing():
 
 
 class PhotoReadFailsSession:
-    # The four claim reads (pending, approved, denied, withdrawn) return the
-    # claim list; the photos read that follows (the fifth scalars call) raises,
-    # which must surface as a 503.
+    # The five claim reads (pending, approved, completed, denied, withdrawn)
+    # return the claim list; the photos read that follows (the sixth scalars
+    # call) raises, which must surface as a 503.
     def __init__(self, claims):
         self.claims = claims
         self.read_count = 0
 
     def scalars(self, *args, **kwargs):
         self.read_count = self.read_count + 1
-        if self.read_count <= 4:
+        if self.read_count <= 5:
             return ScalarsListStub(self.claims)
         raise OperationalError("statement", {}, Exception("photo load failed"))
 
@@ -456,6 +522,7 @@ class ClaimWithListing:
         self.approved_quantity = None
         self.approved_at = None
         self.picked_up_at = None
+        self.completed_at = None
         self.denied_at = None
         self.cancelled_at = None
         self.listing = FakeListingForClaim()

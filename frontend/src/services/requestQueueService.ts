@@ -60,7 +60,10 @@ export type AllRequestItem = {
   requested_at: string
   approved_at: string | null
   picked_up_at: string | null
+  completed_at: string | null
   denied_at: string | null
+  // Optional so stubbed shapes without the field keep type-checking.
+  cancelled_at?: string | null
   can_decide: boolean
   can_deny: boolean
 }
@@ -71,6 +74,10 @@ export type AllRequestItem = {
 export type ListingAllRequestsGroup = {
   listing_id: string
   listing_title: string
+  // "active" or "deactivated"; a deactivated listing still shows while it has
+  // requests. Optional so stubbed shapes without the field keep type-checking;
+  // a missing value reads as active.
+  listing_status?: string
   remaining_quantity: number
   requests: AllRequestItem[]
   // When the listing was posted. Optional so stubbed shapes without the field
@@ -99,6 +106,7 @@ export type MyRequestItem = {
   requested_at: string
   approved_at: string | null
   picked_up_at: string | null
+  completed_at?: string | null
   denied_at: string | null
   cancelled_at?: string | null
   // The requested listing's photos; the first one is the cover. Optional so
@@ -106,12 +114,14 @@ export type MyRequestItem = {
   photos?: ListingPhotoRef[]
 }
 
-// The my-requests response: the caller's requests split into four sections,
-// each newest-first. withdrawn is optional so stubbed shapes without the
-// field keep type-checking; the page treats a missing list as empty.
+// The my-requests response: the caller's requests split into five sections,
+// each newest-first. completed and withdrawn are optional so stubbed shapes
+// without the fields keep type-checking; the page treats a missing list as
+// empty.
 export type MyRequestsResponse = {
   pending: MyRequestItem[]
   approved: MyRequestItem[]
+  completed?: MyRequestItem[]
   denied: MyRequestItem[]
   withdrawn?: MyRequestItem[]
 }
@@ -427,6 +437,107 @@ export async function sendConfirmPickupRequest(
   claimId: string,
 ): Promise<RequestQueuesResult> {
   const url = '/api/claims/' + claimId + '/pickup'
+
+  try {
+    const response = await fetch(url, {
+      method: 'PATCH',
+      headers: {
+        'X-Member-Id': memberId,
+      },
+      signal: AbortSignal.timeout(requestQueueTimeoutMilliseconds),
+    })
+
+    const responseText = await response.text()
+    let data: unknown = ''
+    if (responseText !== '') {
+      try {
+        data = JSON.parse(responseText)
+      } catch {
+        data = responseText
+      }
+    }
+
+    return {
+      ok: response.ok,
+      status: response.status,
+      data: data,
+      errorMessage: '',
+    }
+  } catch (caughtError) {
+    let errorMessage: string
+    if (caughtError instanceof DOMException && caughtError.name === 'TimeoutError') {
+      errorMessage =
+        'Timeout: no answer from the backend after ' + requestQueueTimeoutMilliseconds + ' ms.'
+    } else {
+      errorMessage = 'Request failed: ' + String(caughtError)
+    }
+
+    return {
+      ok: false,
+      status: 0,
+      data: '',
+      errorMessage: errorMessage,
+    }
+  }
+}
+
+export async function sendCancelExchangeRequest(
+  memberId: string,
+  claimId: string,
+): Promise<RequestQueuesResult> {
+  // The poster calls off an exchange they already approved (before pickup).
+  // PATCH with no body; the backend checks the caller owns the listing, sets
+  // the claim to "cancelled", and returns the reserved quantity to the listing.
+  const url = '/api/claims/' + claimId + '/cancel'
+
+  try {
+    const response = await fetch(url, {
+      method: 'PATCH',
+      headers: {
+        'X-Member-Id': memberId,
+      },
+      signal: AbortSignal.timeout(requestQueueTimeoutMilliseconds),
+    })
+
+    const responseText = await response.text()
+    let data: unknown = ''
+    if (responseText !== '') {
+      try {
+        data = JSON.parse(responseText)
+      } catch {
+        data = responseText
+      }
+    }
+
+    return {
+      ok: response.ok,
+      status: response.status,
+      data: data,
+      errorMessage: '',
+    }
+  } catch (caughtError) {
+    let errorMessage: string
+    if (caughtError instanceof DOMException && caughtError.name === 'TimeoutError') {
+      errorMessage =
+        'Timeout: no answer from the backend after ' + requestQueueTimeoutMilliseconds + ' ms.'
+    } else {
+      errorMessage = 'Request failed: ' + String(caughtError)
+    }
+
+    return {
+      ok: false,
+      status: 0,
+      data: '',
+      errorMessage: errorMessage,
+    }
+  }
+}
+
+export async function sendCompleteExchangeRequest(
+  memberId: string,
+  claimId: string,
+): Promise<RequestQueuesResult> {
+  const url = '/api/claims/' + claimId + '/complete'
 
   try {
     const response = await fetch(url, {

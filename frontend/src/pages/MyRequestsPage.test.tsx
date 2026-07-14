@@ -118,12 +118,14 @@ test('renders Pending, Approved, and Denied sections with their requests', async
 
   renderMyRequestsPage()
 
-  // The three section headings, in order.
+  // The five section headings, in order.
   expect(await screen.findByRole('heading', { level: 2, name: 'Pending' })).toBeTruthy()
   const headings = screen.getAllByRole('heading', { level: 2 })
   expect(headings[0].textContent).toBe('Pending')
   expect(headings[1].textContent).toBe('Approved')
-  expect(headings[2].textContent).toBe('Denied')
+  expect(headings[2].textContent).toBe('Completed')
+  expect(headings[3].textContent).toBe('Denied')
+  expect(headings[4].textContent).toBe('Withdrawn')
 
   // Each request shows in the right section with the right wording. The styled
   // row is a bold title, the provider's first name in its own muted span
@@ -144,7 +146,7 @@ test('renders Pending, Approved, and Denied sections with their requests', async
   expect(timeZoneNotes.length).toBe(2)
 })
 
-test('shows the Exchange Thread link only on approved requests', async () => {
+test('an approved request shows its thread link while pending and denied do not', async () => {
   setLoggedIn()
   vi.stubGlobal('fetch', async () => {
     return makeFakeResponse(true, 200, makeMyRequestsBody())
@@ -160,6 +162,134 @@ test('shows the Exchange Thread link only on approved requests', async () => {
   // The link sits on the approved row (the same list item as the Bananas title).
   const approvedRow = screen.getByText('Bananas').closest('li')
   expect(approvedRow?.querySelector('a')).toBeTruthy()
+  const pendingRow = screen.getByText('Apples').closest('li')
+  const deniedRow = screen.getByText('Cherries').closest('li')
+  expect(pendingRow?.querySelector('a')).toBeNull()
+  expect(deniedRow?.querySelector('a')).toBeNull()
+})
+
+test('a picked-up request shows a Contact the Poster thread link', async () => {
+  setLoggedIn()
+  const body = {
+    pending: [],
+    approved: [
+      {
+        id: 'picked-up-1',
+        listing_id: 'l2',
+        listing_title: 'Bananas',
+        owner_name: 'Bob Baker',
+        requested_quantity: 5,
+        approved_quantity: 2,
+        status: 'picked_up',
+        requested_at: '2026-07-01T08:00:00.000Z',
+        approved_at: '2026-07-02T10:00:00.000Z',
+        picked_up_at: '2026-07-03T09:00:00.000Z',
+        denied_at: null,
+      },
+    ],
+    denied: [],
+  }
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, body)
+  })
+
+  renderMyRequestsPage()
+
+  const threadLink = await screen.findByRole('link', { name: 'Contact the Poster' })
+  expect(threadLink.getAttribute('href')).toBe('/exchange-thread?claim=picked-up-1')
+})
+
+test('a completed exchange shows in the Completed section with no thread link', async () => {
+  setLoggedIn()
+  const body = {
+    pending: [],
+    approved: [],
+    completed: [
+      {
+        id: 'completed-1',
+        listing_id: 'l2',
+        listing_title: 'Bananas',
+        owner_name: 'Bob Baker',
+        requested_quantity: 5,
+        approved_quantity: 2,
+        status: 'completed',
+        requested_at: '2026-07-01T08:00:00.000Z',
+        approved_at: '2026-07-02T10:00:00.000Z',
+        picked_up_at: '2026-07-03T09:00:00.000Z',
+        completed_at: '2026-07-04T09:00:00.000Z',
+        denied_at: null,
+      },
+    ],
+    denied: [],
+  }
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, body)
+  })
+
+  renderMyRequestsPage()
+
+  // The row sits under the Completed heading with the completed badge and the
+  // completion line, and offers no thread link (matching the poster side,
+  // where a completed row also loses its link). Its one control is the
+  // placeholder review button naming the poster.
+  expect(await screen.findByRole('heading', { level: 2, name: 'Completed' })).toBeTruthy()
+  const completedRow = screen.getByText('Bananas').closest('li')
+  expect(completedRow?.textContent).toContain('Completed')
+  expect(screen.getByText(/Your exchange for 2 was completed on/)).toBeTruthy()
+  expect(completedRow?.querySelector('a')).toBeNull()
+  expect(screen.getByRole('button', { name: 'Leave a Review for Bob' })).toBeTruthy()
+})
+
+test('the review button on a completed exchange explains it arrives with US-20', async () => {
+  setLoggedIn()
+  let alertMessage = ''
+  vi.stubGlobal('alert', (message: string) => {
+    alertMessage = message
+  })
+  const body = {
+    pending: [],
+    approved: [],
+    completed: [
+      {
+        id: 'completed-1',
+        listing_id: 'l2',
+        listing_title: 'Bananas',
+        owner_name: 'Bob Baker',
+        requested_quantity: 5,
+        approved_quantity: 2,
+        status: 'completed',
+        requested_at: '2026-07-01T08:00:00.000Z',
+        approved_at: '2026-07-02T10:00:00.000Z',
+        picked_up_at: '2026-07-03T09:00:00.000Z',
+        completed_at: '2026-07-04T09:00:00.000Z',
+        denied_at: null,
+      },
+    ],
+    denied: [],
+  }
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, body)
+  })
+
+  renderMyRequestsPage()
+
+  const reviewButton = await screen.findByRole('button', { name: 'Leave a Review for Bob' })
+  fireEvent.click(reviewButton)
+
+  expect(alertMessage).toContain('US-20')
+})
+
+test('a response without a completed list treats the section as empty', async () => {
+  setLoggedIn()
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, makeMyRequestsBody())
+  })
+
+  renderMyRequestsPage()
+
+  // makeMyRequestsBody has no completed list (an older cached response shape),
+  // so the section renders its empty message instead of failing.
+  expect(await screen.findByText('You have no completed exchanges.')).toBeTruthy()
 })
 
 test('separates the three sections with horizontal rules', async () => {
@@ -185,6 +315,7 @@ test('shows a per-section empty message when a section has no requests', async (
 
   expect(await screen.findByText('You have no pending requests.')).toBeTruthy()
   expect(screen.getByText('You have no approved requests.')).toBeTruthy()
+  expect(screen.getByText('You have no completed exchanges.')).toBeTruthy()
   expect(screen.getByText('You have no denied requests.')).toBeTruthy()
 })
 
@@ -392,11 +523,12 @@ test('clicking Withdraw reloads and the request moves from Pending to Withdrawn'
   expect(withdrawUrl).toContain('/withdraw')
   expect(myRequestsCalls).toBe(2)
   // The withdrawn request now renders in the Withdrawn section with its badge
-  // and the withdrawal date line. "Withdrawn" appears twice: the section
-  // heading and the row badge.
+  // and the cancellation date line (neutral wording, because a cancellation
+  // can also come from the poster or a deactivation). "Withdrawn" appears
+  // twice: the section heading and the row badge.
   expect(screen.getByRole('heading', { level: 2, name: 'Withdrawn' })).toBeTruthy()
   expect(screen.getAllByText('Withdrawn').length).toBe(2)
-  expect(screen.getByText(/You withdrew this request on/)).toBeTruthy()
+  expect(screen.getByText(/This request was cancelled on/)).toBeTruthy()
   expect(screen.getByText('Apples')).toBeTruthy()
 })
 

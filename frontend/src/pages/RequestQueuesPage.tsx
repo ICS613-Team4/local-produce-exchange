@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
 
 import {
+  sendCancelExchangeRequest,
+  sendCompleteExchangeRequest,
   sendDecideClaimRequest,
   sendGetAllRequestsRequest,
 } from '../services/requestQueueService'
@@ -26,6 +28,10 @@ function RequestQueuesPage() {
   const [reloadCounter, setReloadCounter] = useState(0)
   const [decidingClaimId, setDecidingClaimId] = useState('')
   const decisionInFlightRef = useRef('')
+  const [completingClaimId, setCompletingClaimId] = useState('')
+  const completeInFlightRef = useRef('')
+  const [cancellingClaimId, setCancellingClaimId] = useState('')
+  const cancelInFlightRef = useRef('')
 
   async function handleDecision(claimId: string, decision: string) {
     if (decisionInFlightRef.current === claimId) { return }
@@ -56,6 +62,75 @@ function RequestQueuesPage() {
     setReloadCounter((currentValue) => currentValue + 1)
   }
 
+  async function handleComplete(claimId: string) {
+    if (completeInFlightRef.current === claimId) { return }
+    completeInFlightRef.current = claimId
+
+    const confirmed = window.confirm('Mark this exchange complete? This is final.')
+    if (confirmed === false) {
+      if (completeInFlightRef.current === claimId) { completeInFlightRef.current = '' }
+      return
+    }
+
+    setCompletingClaimId(claimId)
+    const completeResult = await sendCompleteExchangeRequest(memberId, claimId)
+    if (completeInFlightRef.current === claimId) { completeInFlightRef.current = '' }
+    setCompletingClaimId('')
+
+    if (completeResult.errorMessage !== '') { window.alert(completeResult.errorMessage); return }
+    if (completeResult.ok === false) {
+      let detailMessage = 'Could not complete the exchange. Please try again.'
+      if (typeof completeResult.data === 'object' && completeResult.data !== null) {
+        const dataObject = completeResult.data as { detail?: unknown }
+        if (typeof dataObject.detail === 'string') { detailMessage = dataObject.detail }
+      }
+      window.alert(detailMessage); return
+    }
+    setReloadCounter((currentValue) => currentValue + 1)
+  }
+
+  // The poster calls off an approved exchange before pickup. Same shape as
+  // handleComplete: a same-tick double-click guard, a confirm, the call, then
+  // a reload on success so the row re-renders as cancelled and the listing's
+  // remaining quantity updates.
+  async function handleCancelExchange(claimId: string) {
+    if (cancelInFlightRef.current === claimId) { return }
+    cancelInFlightRef.current = claimId
+
+    const confirmed = window.confirm(
+      'Cancel this approved exchange? The reserved quantity goes back to the listing. This is final.',
+    )
+    if (confirmed === false) {
+      if (cancelInFlightRef.current === claimId) { cancelInFlightRef.current = '' }
+      return
+    }
+
+    setCancellingClaimId(claimId)
+    const cancelResult = await sendCancelExchangeRequest(memberId, claimId)
+    if (cancelInFlightRef.current === claimId) { cancelInFlightRef.current = '' }
+    setCancellingClaimId('')
+
+    if (cancelResult.errorMessage !== '') { window.alert(cancelResult.errorMessage); return }
+    if (cancelResult.ok === false) {
+      let detailMessage = 'Could not cancel the exchange. Please try again.'
+      if (typeof cancelResult.data === 'object' && cancelResult.data !== null) {
+        const dataObject = cancelResult.data as { detail?: unknown }
+        if (typeof dataObject.detail === 'string') { detailMessage = dataObject.detail }
+      }
+      window.alert(detailMessage); return
+    }
+    setReloadCounter((currentValue) => currentValue + 1)
+  }
+
+  // Placeholder for the review feature (US-20). The button renders on
+  // completed rows now so the flow is visible, but the review form itself is
+  // US-20's to build; until then the click explains that.
+  function handleLeaveReview() {
+    window.alert(
+      'Reviews are not built yet. Leaving a rating and review for a completed exchange arrives with user story US-20.',
+    )
+  }
+
   useEffect(() => {
     latestRequestNumber.current = latestRequestNumber.current + 1
     if (memberId === '') { return }
@@ -77,13 +152,14 @@ function RequestQueuesPage() {
     loadAllRequests()
   }, [memberId, listingFilter, reloadCounter])
 
-  // Map a claim status to its badge colors. picked_up uses the info tokens so
-  // the terminal state reads differently from the green "approved" badge.
+  // Map a claim status to its badge colors. Pickup and completion use distinct
+  // tokens so they read differently from the green approved badge.
   function getStatusBadge(status: string) {
     if (status === 'requested') return 'bg-warning-bg text-warning'
     if (status === 'approved') return 'bg-success-bg text-success'
     if (status === 'denied') return 'bg-error-bg text-error'
     if (status === 'picked_up') return 'bg-info-bg text-info'
+    if (status === 'completed') return 'bg-primary-50 text-primary-700'
     if (status === 'cancelled') return 'bg-background-alt text-text-muted'
     return 'bg-background-alt text-text-muted'
   }
@@ -106,10 +182,8 @@ function RequestQueuesPage() {
     return item.status.charAt(0).toUpperCase() + item.status.slice(1)
   }
 
-  // The status outcome lines for one request, one bullet per line. The badge
-  // already names the status and the approved quantity, so only the details
-  // the badge cannot carry render here: when a pickup was confirmed and when
-  // a denial happened.
+  // The status outcome lines for one request, one bullet per line. A completed
+  // row keeps the approval and pickup history before its completion time.
   function buildStatusOutcomeLines(item: AllRequestItem) {
     if (item.status === 'picked_up') {
       let pickedUpAtText = ''
@@ -118,12 +192,34 @@ function RequestQueuesPage() {
       }
       return ['Picked up on ' + pickedUpAtText]
     }
+    if (item.status === 'completed') {
+      let approvedQuantity = 0
+      if (item.approved_quantity !== null) { approvedQuantity = item.approved_quantity }
+      let approvedAtText = ''
+      if (item.approved_at !== null) { approvedAtText = formatTimestamp(item.approved_at) }
+      let pickedUpAtText = ''
+      if (item.picked_up_at !== null) { pickedUpAtText = formatTimestamp(item.picked_up_at) }
+      let completedAtText = ''
+      if (item.completed_at !== null) { completedAtText = formatTimestamp(item.completed_at) }
+      return [
+        'Approved: ' + approvedQuantity + ' on ' + approvedAtText,
+        'Picked up on ' + pickedUpAtText,
+        'Completed on ' + completedAtText,
+      ]
+    }
     if (item.status === 'denied') {
       let deniedAtText = ''
       if (item.denied_at !== null) {
         deniedAtText = formatTimestamp(item.denied_at)
       }
       return ['Denied on ' + deniedAtText]
+    }
+    if (item.status === 'cancelled') {
+      let cancelledAtText = ''
+      if (item.cancelled_at !== undefined && item.cancelled_at !== null) {
+        cancelledAtText = formatTimestamp(item.cancelled_at)
+      }
+      return ['Cancelled on ' + cancelledAtText]
     }
     return []
   }
@@ -188,6 +284,45 @@ function RequestQueuesPage() {
         </button>
       )
     }
+    let completeButton = null
+    if (item.status === 'picked_up') {
+      const isThisRowCompleting = completingClaimId === item.id
+      completeButton = (
+        <button type="button" disabled={isThisRowCompleting} onClick={() => handleComplete(item.id)}
+          className="inline-flex items-center px-3 py-1 text-xs font-medium text-primary-700 border border-border rounded-md hover:bg-primary-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+          Mark exchange complete
+        </button>
+      )
+    }
+    // The poster's way out of an approved exchange that will not happen. It
+    // sits next to the Arrange the Exchange link and disappears once the
+    // recipient confirms pickup (a picked-up item cannot be called back).
+    let cancelButton = null
+    if (item.status === 'approved') {
+      const isThisRowCancelling = cancellingClaimId === item.id
+      cancelButton = (
+        <button type="button" disabled={isThisRowCancelling} onClick={() => handleCancelExchange(item.id)}
+          className="inline-flex items-center px-3 py-1 text-xs font-medium text-error border border-red-200 rounded-md hover:bg-error-bg transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+          Cancel the Exchange
+        </button>
+      )
+    }
+    // Placeholder for the review feature (US-20): a completed row lets the
+    // poster review the other party, the recipient. The review form itself is
+    // US-20's to build; until then the click explains that.
+    let reviewButton = null
+    if (item.status === 'completed') {
+      let recipientFirstName = 'the recipient'
+      if (item.claimant_name !== '') {
+        recipientFirstName = item.claimant_name.split(' ')[0]
+      }
+      reviewButton = (
+        <button type="button" onClick={() => handleLeaveReview()}
+          className="inline-flex items-center px-3 py-1 text-xs font-medium text-primary-700 border border-border rounded-md hover:bg-primary-50 transition-colors">
+          Leave a Review for {recipientFirstName}
+        </button>
+      )
+    }
 
     return (
       <li key={item.id} className="flex items-center justify-between py-3 border-b border-border last:border-0">
@@ -203,10 +338,13 @@ function RequestQueuesPage() {
           </div>
           <ul className="mt-1">{statusOutcomeItems}</ul>
         </div>
-        {(approveButton || denyButton || threadLink) && (
+        {(approveButton || denyButton || completeButton || cancelButton || reviewButton || threadLink) && (
           <div className="flex items-center gap-2 shrink-0 ml-3">
             {approveButton}
             {denyButton}
+            {completeButton}
+            {cancelButton}
+            {reviewButton}
             {threadLink}
           </div>
         )}
@@ -249,6 +387,12 @@ function RequestQueuesPage() {
         </p>
       )
     }
+    // A deactivated listing still shows while it has exchanges in flight; the
+    // heading marks it the same way the dashboard's incoming queue does.
+    let titleText = group.listing_title
+    if (group.listing_status === 'deactivated') {
+      titleText = group.listing_title + ' (deactivated)'
+    }
     // The thumbnail sits in the header row next to the title; the request
     // rows below span the card's full width, flush left under the photo.
     return (
@@ -257,7 +401,7 @@ function RequestQueuesPage() {
           {thumbnailArea}
           <div className="flex-1 min-w-0 flex items-start justify-between">
             <div className="min-w-0">
-              <h2 className="text-base font-semibold text-text">{group.listing_title}</h2>
+              <h2 className="text-base font-semibold text-text">{titleText}</h2>
               {postedLine}
             </div>
             <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary-50 text-primary-700 shrink-0 ml-3">

@@ -492,13 +492,16 @@ def get_all_requests(
     current_member: Member = Depends(get_current_member),
     session: Session = Depends(get_db_session),
 ) -> AllRequestsResponse:
-    # The poster's full request history across their ACTIVE listings (US-24),
-    # grouped by listing, every status. This is separate from get_request_queues
+    # The poster's full request history across their listings (US-24), grouped
+    # by listing, every status. This is separate from get_request_queues
     # (pending-only) so the dashboard's live queue is unchanged. Two differences
     # from the pending endpoint: it keeps every claim status, not just
     # "requested", and it includes an active listing even when it has no
     # requests (as an empty group), so the page can show a listing-level note.
-    # Deactivated listings are excluded entirely.
+    # A non-active listing is kept only while it still has requests, so the
+    # poster can finish exchanges that were already in flight when the listing
+    # was deactivated; each group carries listing_status so the page can mark
+    # those. A deactivated listing with no requests drops out.
 
     # Active-member gate, same rule and messages as get_request_queues.
     if current_member.status != "active":
@@ -518,19 +521,19 @@ def get_all_requests(
     now = datetime.now(timezone.utc)
 
     # Decide which listings to process. With no listing query value, use all of
-    # the caller's active listings, newest first. With a listing value, use just
-    # that one listing after the ownership and active checks below.
+    # the caller's listings, newest first (non-active ones are dropped below
+    # when they have no requests). With a listing value, use just that one
+    # listing after the ownership check below.
     listings_to_process = []
     if listing is None:
         try:
             owned_listings = session.scalars(
                 select(Listing)
                 .where(Listing.owner_id == member_id)
-                .where(Listing.status == "active")
                 .order_by(Listing.created_at.desc(), Listing.id.desc())
             ).all()
         except Exception as error:
-            logger.error("Loading the caller's active listings failed: %s", error)
+            logger.error("Loading the caller's listings failed: %s", error)
             raise HTTPException(
                 status_code=503,
                 detail=(
@@ -575,11 +578,8 @@ def get_all_requests(
                 detail="You can only view requests for your own listings.",
             )
 
-        # An owned listing that is not active reads as no groups: this endpoint
-        # shows only active listings.
-        if one_listing.status != "active":
-            return AllRequestsResponse(groups=[])
-
+        # A non-active listing is processed like any other here; the loop below
+        # drops it only when it has no requests, the same rule as the full list.
         listings_to_process.append(one_listing)
 
     # Load every listed listing's photos in one query and group them by listing
@@ -617,9 +617,10 @@ def get_all_requests(
                 )
             )
 
-    # For each active listing, load ALL its claims oldest-first and build a group.
-    # Unlike the pending endpoint, a listing with no claims is kept as an empty
-    # group so the page can show its listing-level empty note.
+    # For each listing, load ALL its claims oldest-first and build a group.
+    # Unlike the pending endpoint, an ACTIVE listing with no claims is kept as
+    # an empty group so the page can show its listing-level empty note. A
+    # non-active listing is kept only while it has claims to show.
     groups = []
     for listing_row in listings_to_process:
         try:
@@ -659,16 +660,23 @@ def get_all_requests(
                     requested_at=claim_row.requested_at,
                     approved_at=claim_row.approved_at,
                     picked_up_at=claim_row.picked_up_at,
+                    completed_at=claim_row.completed_at,
                     denied_at=claim_row.denied_at,
+                    cancelled_at=claim_row.cancelled_at,
                     can_decide=can_decide,
                     can_deny=can_deny,
                 )
             )
 
+        # A non-active listing with nothing left to show drops out entirely.
+        if listing_row.status != "active" and len(request_items) == 0:
+            continue
+
         groups.append(
             ListingAllRequestsGroup(
                 listing_id=str(listing_row.id),
                 listing_title=listing_row.title,
+                listing_status=listing_row.status,
                 remaining_quantity=listing_row.remaining_quantity,
                 requests=request_items,
                 created_at=listing_row.created_at,
@@ -760,6 +768,7 @@ def build_my_request_items(session, claims):
                 requested_at=claim_row.requested_at,
                 approved_at=claim_row.approved_at,
                 picked_up_at=claim_row.picked_up_at,
+                completed_at=claim_row.completed_at,
                 denied_at=claim_row.denied_at,
                 cancelled_at=claim_row.cancelled_at,
                 photos=photos_by_listing.get(listing_row.id, []),
@@ -773,10 +782,10 @@ def get_my_requests(
     current_member: Member = Depends(get_current_member),
     session: Session = Depends(get_db_session),
 ) -> MyRequestsResponse:
-    # The caller's own requests, split into four sections for the my-requests
-    # page: pending (still waiting), approved, denied, and withdrawn. Each
-    # section is newest first, by the time the request entered that state, with
-    # the claim id as a tiebreaker so the order is stable and repeatable. A
+    # The caller's own requests, split into five sections for the my-requests
+    # page: pending (still waiting), approved, completed, denied, and withdrawn.
+    # Each section is newest first, by the time the request entered that state,
+    # with the claim id as a tiebreaker so the order is stable and repeatable. A
     # member has at most one request per listing, so each request stands on its
     # own.
 
@@ -795,8 +804,9 @@ def get_my_requests(
     member_id = current_member.id
 
     # Load each section in its own query. Pending sorts by when it was requested,
-    # approved by when it was approved, denied by when it was denied; all newest
-    # first, all with the claim id as the tiebreaker.
+    # approved by when it was approved, completed by when it was completed,
+    # denied by when it was denied; all newest first, all with the claim id as
+    # the tiebreaker.
     try:
         pending_claims = session.scalars(
             select(Claim)
@@ -809,6 +819,12 @@ def get_my_requests(
             .where(Claim.claimant_id == member_id)
             .where(Claim.status.in_(["approved", "picked_up"]))
             .order_by(Claim.approved_at.desc(), Claim.id.desc())
+        ).all()
+        completed_claims = session.scalars(
+            select(Claim)
+            .where(Claim.claimant_id == member_id)
+            .where(Claim.status == "completed")
+            .order_by(Claim.completed_at.desc(), Claim.id.desc())
         ).all()
         denied_claims = session.scalars(
             select(Claim)
@@ -834,12 +850,14 @@ def get_my_requests(
 
     pending_items = build_my_request_items(session, pending_claims)
     approved_items = build_my_request_items(session, approved_claims)
+    completed_items = build_my_request_items(session, completed_claims)
     denied_items = build_my_request_items(session, denied_claims)
     withdrawn_items = build_my_request_items(session, withdrawn_claims)
 
     return MyRequestsResponse(
         pending=pending_items,
         approved=approved_items,
+        completed=completed_items,
         denied=denied_items,
         withdrawn=withdrawn_items,
     )
@@ -1119,6 +1137,245 @@ def confirm_pickup(
     )
 
 
+@router.patch("/claims/{claim_id}/complete")
+def complete_exchange(
+    claim_id: str,
+    current_member: Member = Depends(get_current_member),
+    session: Session = Depends(get_db_session),
+) -> ClaimResponse:
+    # Only an active member may complete an exchange.
+    if current_member.status != "active":
+        if current_member.status == "suspended":
+            raise HTTPException(
+                status_code=403,
+                detail="Your account is suspended, so you cannot complete an exchange.",
+            )
+        raise HTTPException(
+            status_code=403,
+            detail="Your account is not active, so you cannot complete an exchange.",
+        )
+
+    try:
+        claim_uuid = uuid.UUID(claim_id)
+    except (ValueError, AttributeError, TypeError):
+        raise HTTPException(status_code=404, detail="Request not found.")
+
+    # Lock the claim so two completion requests cannot update it at once.
+    try:
+        claim = session.scalars(
+            select(Claim).where(Claim.id == claim_uuid).with_for_update()
+        ).first()
+    except Exception as error:
+        logger.error("Loading claim for completion failed: %s", error)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Could not process the request right now. "
+                "Make sure the database is running and migrated."
+            ),
+        )
+
+    if claim is None:
+        raise HTTPException(status_code=404, detail="Request not found.")
+
+    if claim.status != "picked_up":
+        raise HTTPException(
+            status_code=409,
+            detail="This exchange is not picked up, so it cannot be completed.",
+        )
+
+    # The listing is read without a lock because completion changes no listing fields.
+    try:
+        listing = session.scalars(
+            select(Listing).where(Listing.id == claim.listing_id)
+        ).first()
+    except Exception as error:
+        logger.error("Loading listing for completion failed: %s", error)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Could not process the request right now. "
+                "Make sure the database is running and migrated."
+            ),
+        )
+
+    if listing is None:
+        raise HTTPException(status_code=404, detail="Request not found.")
+
+    if listing.owner_id != current_member.id:
+        raise HTTPException(
+            status_code=403,
+            detail="Only the listing owner can complete the exchange.",
+        )
+
+    now = datetime.now(timezone.utc)
+    claim.status = "completed"
+    claim.completed_at = now
+
+    # NOTIFY SEAM (US-22): notify claim.claimant_id in this transaction when notifications exist.
+
+    claim_id_out = claim.id
+    listing_id_out = claim.listing_id
+    claimant_id_out = claim.claimant_id
+    requested_quantity_out = claim.requested_quantity
+    approved_quantity_out = claim.approved_quantity
+    requested_at_out = claim.requested_at
+    approved_at_out = claim.approved_at
+    picked_up_at_out = claim.picked_up_at
+
+    try:
+        session.commit()
+    except Exception as error:
+        session.rollback()
+        logger.error("Completing an exchange failed: %s", error)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Could not complete the exchange right now. "
+                "Make sure the database is running and migrated."
+            ),
+        )
+
+    return ClaimResponse(
+        id=str(claim_id_out),
+        listing_id=str(listing_id_out),
+        claimant_id=str(claimant_id_out),
+        requested_quantity=requested_quantity_out,
+        approved_quantity=approved_quantity_out,
+        status="completed",
+        requested_at=requested_at_out,
+        approved_at=approved_at_out,
+        picked_up_at=picked_up_at_out,
+        completed_at=now,
+    )
+
+
+@router.patch("/claims/{claim_id}/cancel")
+def cancel_exchange(
+    claim_id: str,
+    current_member: Member = Depends(get_current_member),
+    session: Session = Depends(get_db_session),
+) -> ClaimResponse:
+    # The poster calls off an exchange they already approved, before pickup.
+    # The claim goes to "cancelled" and the quantity that approval reserved
+    # goes back to the listing. Only an APPROVED claim can be cancelled this
+    # way: a pending one is denied instead, and a picked-up or completed one
+    # is already in the recipient's hands.
+
+    # Only an active member may cancel an exchange.
+    if current_member.status != "active":
+        if current_member.status == "suspended":
+            raise HTTPException(
+                status_code=403,
+                detail="Your account is suspended, so you cannot cancel an exchange.",
+            )
+        raise HTTPException(
+            status_code=403,
+            detail="Your account is not active, so you cannot cancel an exchange.",
+        )
+
+    try:
+        claim_uuid = uuid.UUID(claim_id)
+    except (ValueError, AttributeError, TypeError):
+        raise HTTPException(status_code=404, detail="Request not found.")
+
+    # Lock the claim so two cancellations (or a cancellation racing a pickup
+    # confirmation) cannot update it at once.
+    try:
+        claim = session.scalars(
+            select(Claim).where(Claim.id == claim_uuid).with_for_update()
+        ).first()
+    except Exception as error:
+        logger.error("Loading claim for cancellation failed: %s", error)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Could not process the request right now. "
+                "Make sure the database is running and migrated."
+            ),
+        )
+
+    if claim is None:
+        raise HTTPException(status_code=404, detail="Request not found.")
+
+    if claim.status != "approved":
+        raise HTTPException(
+            status_code=409,
+            detail="This exchange is not approved, so it cannot be cancelled.",
+        )
+
+    # Load the listing and lock its row too: the reserved quantity is returned
+    # below, and the lock serializes that read-modify-write against approvals
+    # of other claims on the same listing. Claims are always locked before
+    # listings here, the same fixed order as approve and deny.
+    try:
+        listing = session.scalars(
+            select(Listing).where(Listing.id == claim.listing_id).with_for_update()
+        ).first()
+    except Exception as error:
+        logger.error("Loading listing for cancellation failed: %s", error)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Could not process the request right now. "
+                "Make sure the database is running and migrated."
+            ),
+        )
+
+    if listing is None:
+        raise HTTPException(status_code=404, detail="Request not found.")
+
+    if listing.owner_id != current_member.id:
+        raise HTTPException(
+            status_code=403,
+            detail="Only the listing owner can cancel the exchange.",
+        )
+
+    # Apply the cancellation. The quantity the approval moved off the listing
+    # goes back, so it can be offered to someone else.
+    now = datetime.now(timezone.utc)
+
+    if claim.approved_quantity is not None:
+        listing.remaining_quantity = listing.remaining_quantity + claim.approved_quantity
+    claim.status = "cancelled"
+    claim.cancelled_at = now
+
+    # NOTIFY SEAM (US-22): notify claim.claimant_id in this transaction when notifications exist.
+
+    claim_id_out = claim.id
+    listing_id_out = claim.listing_id
+    claimant_id_out = claim.claimant_id
+    requested_quantity_out = claim.requested_quantity
+    approved_quantity_out = claim.approved_quantity
+    requested_at_out = claim.requested_at
+    approved_at_out = claim.approved_at
+
+    try:
+        session.commit()
+    except Exception as error:
+        session.rollback()
+        logger.error("Cancelling an exchange failed: %s", error)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Could not cancel the exchange right now. "
+                "Make sure the database is running and migrated."
+            ),
+        )
+
+    return ClaimResponse(
+        id=str(claim_id_out),
+        listing_id=str(listing_id_out),
+        claimant_id=str(claimant_id_out),
+        requested_quantity=requested_quantity_out,
+        approved_quantity=approved_quantity_out,
+        status="cancelled",
+        requested_at=requested_at_out,
+        approved_at=approved_at_out,
+        cancelled_at=now,
+    )
+
+
 @router.patch("/claims/{claim_id}/deny")
 def deny_claim(
     claim_id: str,
@@ -1353,4 +1610,3 @@ def withdraw_claim(
         requested_at=requested_at_out,
         cancelled_at=now,
     )
-

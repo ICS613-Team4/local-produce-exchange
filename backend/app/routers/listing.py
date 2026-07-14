@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db_session
 from app.dependencies import get_current_member
+from app.models.claim import Claim
 from app.models.listing import Listing
 from app.models.listing_photo import ListingPhoto
 from app.models.member import Member
@@ -711,10 +712,15 @@ def deactivate_listing(
     current_member: Member = Depends(get_current_member),
     session: Session = Depends(get_db_session),
 ) -> None:
-    # The owner takes their own active listing out of circulation. This endpoint
-    # only flips status to "deactivated"; it never touches deactivated_by, which
-    # stays the admin-only signal (US-27). The checks run in the same order as
-    # edit_listing so the two endpoints behave the same way.
+    # The owner takes their own active listing out of circulation. Deactivation
+    # blocks NEW requests (create_claim treats a non-active listing as not
+    # found) and cancels the still-pending ones below, but exchanges that were
+    # already approved, picked up, or completed carry on: their endpoints do
+    # not check the listing status, and the all-requests page keeps showing a
+    # deactivated listing while it still has requests. This endpoint never
+    # touches deactivated_by, which stays the admin-only signal (US-27). The
+    # checks run in the same order as edit_listing so the two endpoints behave
+    # the same way.
 
     # Active-member gate. A suspended account gets a suspension-specific message;
     # any other non-active status gets the generic one. This runs before the
@@ -764,7 +770,36 @@ def deactivate_listing(
     if row.status != "active":
         raise HTTPException(status_code=404, detail="This listing is unavailable.")
 
-    # The one state change this story owns. Leave deactivated_by null on purpose.
+    # Cancel the listing's still-pending requests in the same transaction, so
+    # the recipients' requests do not sit waiting forever on a listing that can
+    # no longer be approved. Only "requested" claims change; approved, picked
+    # up, completed, denied, and already-cancelled ones are left alone. The
+    # claim rows are locked first (claims before listings, the fixed lock order
+    # the claim router uses), so a concurrent approval of the same claim cannot
+    # interleave with this cancellation. No quantity moves: quantity only
+    # leaves a listing at approval, and these claims were never approved.
+    now = datetime.now(timezone.utc)
+    try:
+        pending_claims = session.scalars(
+            select(Claim)
+            .where(Claim.listing_id == row.id)
+            .where(Claim.status == "requested")
+            .with_for_update()
+        ).all()
+    except Exception as error:
+        logger.error("Loading pending claims for deactivate failed: %s", error)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Could not deactivate the listing right now. "
+                "Make sure the database is running and migrated."
+            ),
+        )
+    for pending_claim in pending_claims:
+        pending_claim.status = "cancelled"
+        pending_claim.cancelled_at = now
+
+    # The listing state change. Leave deactivated_by null on purpose.
     row.status = "deactivated"
 
     try:

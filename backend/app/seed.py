@@ -389,7 +389,15 @@ def seed_claims(session):
     lemons = find_listing_by_owner_and_title(session, dave, "Backyard Meyer Lemons")
     kabocha = find_listing_by_owner_and_title(session, bob, "Kabocha Squash")
     thai_basil = find_listing_by_owner_and_title(session, carol, "Thai Basil")
-    if lemons is None or kabocha is None or thai_basil is None:
+    lettuce = find_listing_by_owner_and_title(session, bob, "Fresh Manoa Lettuce")
+    bananas = find_listing_by_owner_and_title(session, carol, "Apple Bananas")
+    if (
+        lemons is None
+        or kabocha is None
+        or thai_basil is None
+        or lettuce is None
+        or bananas is None
+    ):
         print("Demo listings are missing, so claims were skipped.")
         return
 
@@ -445,13 +453,41 @@ def seed_claims(session):
         approved_quantity=1,
         approved_at=now,
     )
+    carol_on_lettuce = Claim(
+        listing_id=lettuce.id,
+        claimant_id=carol.id,
+        requested_quantity=2,
+        status="completed",
+        requested_at=now - timedelta(minutes=50),
+        approved_quantity=2,
+        approved_at=now - timedelta(minutes=40),
+        picked_up_at=now - timedelta(minutes=30),
+        completed_at=now - timedelta(minutes=20),
+    )
+    bob_on_bananas = Claim(
+        listing_id=bananas.id,
+        claimant_id=bob.id,
+        requested_quantity=3,
+        status="completed",
+        requested_at=now - timedelta(minutes=45),
+        approved_quantity=3,
+        approved_at=now - timedelta(minutes=35),
+        picked_up_at=now - timedelta(minutes=25),
+        completed_at=now - timedelta(minutes=15),
+    )
+
+    # Approval already reduced these quantities in the live workflow.
+    lettuce.remaining_quantity = lettuce.remaining_quantity - 2
+    bananas.remaining_quantity = bananas.remaining_quantity - 3
 
     session.add(bob_on_lemons)
     session.add(carol_on_lemons)
     session.add(dave_on_kabocha)
     session.add(alice_on_basil)
     session.add(alice_on_lemons)
-    print("Inserted 5 demo claims (3 pending, 2 approved).")
+    session.add(carol_on_lettuce)
+    session.add(bob_on_bananas)
+    print("Inserted 7 demo claims (3 pending, 2 approved, 2 completed).")
 
 
 def seed_database():

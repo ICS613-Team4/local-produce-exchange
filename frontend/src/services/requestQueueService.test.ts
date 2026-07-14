@@ -2,6 +2,8 @@ import { afterEach, expect, test, vi } from 'vitest'
 
 import {
   requestQueueTimeoutMilliseconds,
+  sendCancelExchangeRequest,
+  sendCompleteExchangeRequest,
   sendConfirmPickupRequest,
   sendCreateClaimRequest,
   sendDecideClaimRequest,
@@ -463,6 +465,156 @@ test('confirm pickup maps an HTTP error response into the result object', async 
   expect(result.ok).toBe(false)
   expect(result.status).toBe(409)
   expect(JSON.stringify(result.data)).toBe(JSON.stringify(responseBody))
+})
+
+test('cancel sends a PATCH to the cancel path with the member id header', async () => {
+  const responseBody = {
+    id: 'claim-1',
+    status: 'cancelled',
+    cancelled_at: '2026-07-01T14:00:00.000Z',
+  }
+  let requestUrl = ''
+  let requestOptions: RequestInit = {}
+  vi.stubGlobal('fetch', async (url: string | URL | Request, options: RequestInit | undefined) => {
+    requestUrl = String(url)
+    if (options !== undefined) {
+      requestOptions = options
+    }
+    return makeFakeResponse(true, 200, JSON.stringify(responseBody))
+  })
+
+  const result = await sendCancelExchangeRequest('member-123', 'claim-1')
+
+  expect(result.ok).toBe(true)
+  expect(result.status).toBe(200)
+  expect(JSON.stringify(result.data)).toBe(JSON.stringify(responseBody))
+  expect(requestUrl).toBe('/api/claims/claim-1/cancel')
+  expect(requestOptions.method).toBe('PATCH')
+  expect(JSON.stringify(requestOptions.headers)).toContain('X-Member-Id')
+  expect(JSON.stringify(requestOptions.headers)).toContain('member-123')
+  expect(requestOptions.body).toBeUndefined()
+})
+
+test('cancel maps an HTTP error response into the result object', async () => {
+  const responseBody = {
+    detail: 'This exchange is not approved, so it cannot be cancelled.',
+  }
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(false, 409, JSON.stringify(responseBody))
+  })
+
+  const result = await sendCancelExchangeRequest('member-123', 'claim-1')
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(409)
+  expect(JSON.stringify(result.data)).toBe(JSON.stringify(responseBody))
+})
+
+test('cancel returns a timeout message when the request times out', async () => {
+  vi.stubGlobal('fetch', async () => {
+    throw new DOMException('The operation timed out.', 'TimeoutError')
+  })
+
+  const result = await sendCancelExchangeRequest('member-123', 'claim-1')
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(0)
+  expect(result.errorMessage).toBe(
+    'Timeout: no answer from the backend after ' + requestQueueTimeoutMilliseconds + ' ms.',
+  )
+})
+
+test('cancel returns a request failure message when fetch rejects', async () => {
+  vi.stubGlobal('fetch', async () => {
+    throw new Error('network down')
+  })
+
+  const result = await sendCancelExchangeRequest('member-123', 'claim-1')
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(0)
+  expect(result.errorMessage).toContain('network down')
+})
+
+test('complete sends a PATCH to the complete path with the member id header', async () => {
+  const responseBody = {
+    id: 'claim-1',
+    status: 'completed',
+    completed_at: '2026-07-01T14:00:00.000Z',
+  }
+  let requestUrl = ''
+  let requestOptions: RequestInit = {}
+  vi.stubGlobal('fetch', async (url: string | URL | Request, options: RequestInit | undefined) => {
+    requestUrl = String(url)
+    if (options !== undefined) {
+      requestOptions = options
+    }
+    return makeFakeResponse(true, 200, JSON.stringify(responseBody))
+  })
+
+  const result = await sendCompleteExchangeRequest('member-123', 'claim-1')
+
+  expect(result.ok).toBe(true)
+  expect(result.status).toBe(200)
+  expect(JSON.stringify(result.data)).toBe(JSON.stringify(responseBody))
+  expect(requestUrl).toBe('/api/claims/claim-1/complete')
+  expect(requestOptions.method).toBe('PATCH')
+  expect(JSON.stringify(requestOptions.headers)).toContain('X-Member-Id')
+  expect(JSON.stringify(requestOptions.headers)).toContain('member-123')
+  expect(requestOptions.body).toBeUndefined()
+})
+
+test('complete maps an HTTP error response into the result object', async () => {
+  const responseBody = {
+    detail: 'This exchange is not picked up, so it cannot be completed.',
+  }
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(false, 409, JSON.stringify(responseBody))
+  })
+
+  const result = await sendCompleteExchangeRequest('member-123', 'claim-1')
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(409)
+  expect(JSON.stringify(result.data)).toBe(JSON.stringify(responseBody))
+})
+
+test('complete returns a timeout message when the request times out', async () => {
+  vi.stubGlobal('fetch', async () => {
+    throw new DOMException('The operation timed out.', 'TimeoutError')
+  })
+
+  const result = await sendCompleteExchangeRequest('member-123', 'claim-1')
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(0)
+  expect(result.errorMessage).toBe(
+    'Timeout: no answer from the backend after ' + requestQueueTimeoutMilliseconds + ' ms.',
+  )
+})
+
+test('complete keeps a plain text error response body', async () => {
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(false, 502, 'Bad gateway')
+  })
+
+  const result = await sendCompleteExchangeRequest('member-123', 'claim-1')
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(502)
+  expect(result.data).toBe('Bad gateway')
+})
+
+test('complete returns a request failure message when fetch rejects', async () => {
+  vi.stubGlobal('fetch', async () => {
+    throw new Error('network down')
+  })
+
+  const result = await sendCompleteExchangeRequest('member-123', 'claim-1')
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(0)
+  expect(result.errorMessage).toContain('network down')
 })
 
 test('withdraw maps an HTTP error response into the result object', async () => {

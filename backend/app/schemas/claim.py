@@ -1,7 +1,7 @@
 # Pydantic shapes for the claim endpoints.
 #
 # CreateClaimPayload carries the quantity the recipient wants.
-# ClaimResponse is the shape returned by create, approve, deny, and withdraw.
+# ClaimResponse is returned by the create and claim-status update endpoints.
 # The three request-queue shapes below (US-10) describe the poster's view of the
 # pending requests on their listings: one pending row, one listing's group of
 # rows, and the whole response.
@@ -35,6 +35,7 @@ class ClaimResponse(BaseModel):
     requested_at: datetime
     approved_at: Optional[datetime] = None
     picked_up_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
     denied_at: Optional[datetime] = None
     cancelled_at: Optional[datetime] = None
 
@@ -89,6 +90,7 @@ class MyRequestItem(BaseModel):
     requested_at: datetime
     approved_at: Optional[datetime] = None
     picked_up_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
     denied_at: Optional[datetime] = None
     cancelled_at: Optional[datetime] = None
     # The requested listing's photos, ordered for display, so the page can show
@@ -97,12 +99,13 @@ class MyRequestItem(BaseModel):
     photos: list[ListingPhotoRef] = Field(default_factory=list)
 
 
-# The "my requests" response, split into the four sections the page shows. Each
+# The "my requests" response, split into the five sections the page shows. Each
 # list is newest-first with a stable id tiebreaker. An empty list means that
 # section has nothing.
 class MyRequestsResponse(BaseModel):
     pending: list[MyRequestItem]
     approved: list[MyRequestItem]
+    completed: list[MyRequestItem]
     denied: list[MyRequestItem]
     withdrawn: list[MyRequestItem]
 
@@ -122,17 +125,23 @@ class AllRequestItem(BaseModel):
     requested_at: datetime
     approved_at: Optional[datetime] = None
     picked_up_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
     denied_at: Optional[datetime] = None
+    cancelled_at: Optional[datetime] = None
     can_decide: bool
     can_deny: bool
 
 
-# One active listing's full request history: the listing's title and remaining
+# One listing's full request history: the listing's title and remaining
 # quantity, plus every request on it (any status), oldest first. The requests
-# list is empty when the listing has no requests yet.
+# list is empty when an active listing has no requests yet. listing_status is
+# "active" or "deactivated" so the page can mark a deactivated listing that
+# still has exchanges in flight; the default keeps older construction sites
+# working.
 class ListingAllRequestsGroup(BaseModel):
     listing_id: str
     listing_title: str
+    listing_status: str = "active"
     remaining_quantity: int
     requests: list[AllRequestItem]
     # When the listing was posted, so the page can show it under the title.

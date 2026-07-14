@@ -127,13 +127,24 @@ function MyRequestsPage() {
     setReloadCounter((currentValue) => currentValue + 1)
   }
 
-  // Map a claim status to its badge colors. picked_up uses the info tokens so
-  // the terminal state reads differently from the green "approved" badge.
+  // Placeholder for the review feature (US-20). The button renders on
+  // completed rows now so the flow is visible, but the review form itself is
+  // US-20's to build; until then the click explains that.
+  function handleLeaveReview() {
+    window.alert(
+      'Reviews are not built yet. Leaving a rating and review for a completed exchange arrives with user story US-20.',
+    )
+  }
+
+  // Map a claim status to its badge colors. Pickup and completion use distinct
+  // tokens so they read differently from the green approved badge, matching
+  // the poster's all-requests page.
   function getStatusBadge(status: string) {
     if (status === 'requested') return 'bg-warning-bg text-warning'
     if (status === 'approved') return 'bg-success-bg text-success'
     if (status === 'denied') return 'bg-error-bg text-error'
     if (status === 'picked_up') return 'bg-info-bg text-info'
+    if (status === 'completed') return 'bg-primary-50 text-primary-700'
     return 'bg-background-alt text-text-muted'
   }
 
@@ -219,6 +230,44 @@ function MyRequestsPage() {
         pickedUpAtText = formatTimestamp(item.picked_up_at)
       }
       detailLine = <>You confirmed pickup for {approvedQuantity} on {pickedUpAtText}</>
+      const exchangeThreadTarget = '/exchange-thread?claim=' + item.id
+      controlsArea = (
+        <div className="flex flex-wrap items-center gap-2 mt-3">
+          <Link
+            to={exchangeThreadTarget}
+            className="inline-flex items-center px-3 py-1.5 text-xs font-medium text-primary-600 border border-primary-200 rounded-md hover:bg-primary-50 transition-colors"
+          >
+            Contact the Poster
+          </Link>
+        </div>
+      )
+    } else if (item.status === 'completed') {
+      badgeLabel = 'Completed'
+      const approvedQuantity = item.approved_quantity ?? item.requested_quantity
+      let completedAtText = ''
+      if (item.completed_at !== undefined && item.completed_at !== null) {
+        completedAtText = formatTimestamp(item.completed_at)
+      }
+      // A finished exchange: the poster marked it complete after the pickup.
+      // No thread link here, matching the poster's all-requests page, where a
+      // completed row also loses its link. The review button reviews the other
+      // party, the poster; the form itself is US-20's (see handleLeaveReview).
+      detailLine = <>Your exchange for {approvedQuantity} was completed on {completedAtText}</>
+      let posterFirstName = 'the poster'
+      if (item.owner_name !== '') {
+        posterFirstName = item.owner_name.split(' ')[0]
+      }
+      controlsArea = (
+        <div className="flex flex-wrap items-center gap-2 mt-3">
+          <button
+            type="button"
+            onClick={() => handleLeaveReview()}
+            className="inline-flex items-center px-3 py-1.5 text-xs font-medium text-primary-600 border border-primary-200 rounded-md hover:bg-primary-50 transition-colors"
+          >
+            Leave a Review for {posterFirstName}
+          </button>
+        </div>
+      )
     } else if (item.status === 'denied') {
       badgeLabel = 'Denied'
       let deniedAtText = ''
@@ -230,7 +279,10 @@ function MyRequestsPage() {
       if (item.cancelled_at !== undefined && item.cancelled_at !== null) {
         cancelledAtText = formatTimestamp(item.cancelled_at)
       }
-      detailLine = <>You withdrew this request on {cancelledAtText}</>
+      // Neutral wording on purpose: a request lands here when the recipient
+      // withdraws it, when the poster cancels an approved exchange, or when
+      // the listing is deactivated, and the row cannot tell which happened.
+      detailLine = <>This request was cancelled on {cancelledAtText}</>
     } else {
       // Pending
       badgeLabel = 'Pending'
@@ -310,13 +362,19 @@ function MyRequestsPage() {
     )
   } else if (result.ok) {
     const responseData = result.data as MyRequestsResponse
-    // An older cached response may lack the withdrawn list; treat it as empty.
+    // An older cached response may lack the completed or withdrawn lists;
+    // treat a missing list as empty.
+    let completedItems = responseData.completed
+    if (completedItems === undefined) {
+      completedItems = []
+    }
     let withdrawnItems = responseData.withdrawn
     if (withdrawnItems === undefined) {
       withdrawnItems = []
     }
     const pendingSection = buildSection('Pending', responseData.pending, 'You have no pending requests.')
     const approvedSection = buildSection('Approved', responseData.approved, 'You have no approved requests.')
+    const completedSection = buildSection('Completed', completedItems, 'You have no completed exchanges.')
     const deniedSection = buildSection('Denied', responseData.denied, 'You have no denied requests.')
     const withdrawnSection = buildSection('Withdrawn', withdrawnItems, 'You have no withdrawn requests.')
     // The time-zone note shows above and below the sections, so it is visible
@@ -327,6 +385,7 @@ function MyRequestsPage() {
         <div className="space-y-6">
           {pendingSection}
           {approvedSection}
+          {completedSection}
           {deniedSection}
           {withdrawnSection}
         </div>
