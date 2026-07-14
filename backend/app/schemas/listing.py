@@ -40,6 +40,12 @@ class CreateListingRequest(BaseModel):
         return value
 
 
+class ListingPhotoRef(BaseModel):
+    id: str
+    content_type: str
+    position: int
+
+
 class ListingResponse(BaseModel):
     # id and owner_id are UUIDs in the database. The route converts them with
     # str() so the response JSON carries plain strings, matching the auth
@@ -70,3 +76,4 @@ class ListingResponse(BaseModel):
     # Only the GET-details route fills it; the default keeps every other
     # construction site (create, browse, my-listings, edit) working unchanged.
     owner_name: str = ""
+    photos: list[ListingPhotoRef] = Field(default_factory=list)

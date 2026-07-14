@@ -23,6 +23,20 @@ export type ThreadData = {
   claim_id: string
   created_at: string
   messages: MessageData[]
+  // The listing the exchange is about and the claim's quantities, so the page
+  // can show a summary card. Optional so stubbed shapes keep type-checking.
+  listing_id?: string
+  listing_title?: string
+  owner_id?: string
+  claimant_id?: string
+  owner_name?: string
+  claimant_name?: string
+  listing_created_at?: string | null
+  pickup_start?: string | null
+  pickup_end?: string | null
+  requested_quantity?: number | null
+  approved_quantity?: number | null
+  photos?: Array<{ id: string; content_type: string; position: number }>
 }
 
 async function fetchThread(url: string, options: RequestInit): Promise<ThreadResult> {

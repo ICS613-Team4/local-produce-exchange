@@ -14,6 +14,7 @@ from sqlalchemy.dialects.postgresql import Range
 
 from app.models.claim import Claim
 from app.models.listing import Listing
+from app.models.listing_photo import ListingPhoto
 from app.models.member import Member
 from app.routers.thread import (
     get_thread_endpoint,
@@ -86,6 +87,41 @@ def test_get_thread_creates_thread_for_owner(db_session):
 
     assert result.claim_id == str(claim.id)
     assert result.messages == []
+
+
+def test_get_thread_carries_the_listing_and_claim_details(db_session):
+    # The thread response names the listing (title, owner, posted time, pickup
+    # window, photos) and the claim's quantities, so the page can show what
+    # the exchange is about without another fetch.
+    owner = insert_member(db_session, email="owner@example.com", name="Owner")
+    claimant = insert_member(db_session, email="claimant@example.com", name="Claimant")
+    listing = insert_listing(db_session, owner)
+    photo = ListingPhoto(
+        listing_id=listing.id,
+        content_type="image/png",
+        image_bytes=b"png-bytes",
+        position=0,
+    )
+    db_session.add(photo)
+    db_session.commit()
+    claim = insert_claim(db_session, listing, claimant)
+
+    result = get_thread_for_claim(claim.id, claimant, db_session)
+
+    assert result.listing_id == str(listing.id)
+    assert result.listing_title == "Fresh Tomatoes"
+    assert result.owner_id == str(owner.id)
+    assert result.claimant_id == str(claimant.id)
+    assert result.owner_name == "Owner"
+    assert result.claimant_name == "Claimant"
+    assert result.listing_created_at is not None
+    assert result.pickup_start == datetime(2026, 7, 1, 9, 0, tzinfo=timezone.utc)
+    assert result.pickup_end == datetime(2026, 7, 1, 11, 0, tzinfo=timezone.utc)
+    assert result.requested_quantity == 2
+    assert result.approved_quantity == 2
+    assert len(result.photos) == 1
+    assert result.photos[0].id == str(photo.id)
+    assert result.photos[0].content_type == "image/png"
 
 
 def test_get_thread_creates_thread_for_claimant(db_session):

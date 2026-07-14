@@ -46,6 +46,8 @@ function makeListing(id: string, title: string) {
     pickup_end: '2026-07-01T11:00:00.000Z',
     status: 'active',
     created_at: '2026-06-19T00:00:00.000Z',
+    owner_name: 'Olivia Owner',
+    photos: [] as Array<{ id: string; content_type: string; position: number }>,
   }
   return listing
 }
@@ -89,12 +91,13 @@ test('renders the controls and lists the active listings on open', async () => {
   const titleLink = await screen.findByRole('link', { name: 'Backyard Meyer Lemons' })
   expect(titleLink.getAttribute('href')).toBe('/listings/l1')
 
-  // Each card shows the date the listing was posted, in the viewer's local zone.
-  // Build the expected text the same way the page does, so this passes on any
-  // machine's locale or time zone.
+  // Each card names who posted the listing on one line and the posted time on
+  // the next line, in the viewer's local zone. Build the expected time the
+  // same way the page does, so this passes on any machine's locale or zone.
   const timeZoneOptions = { timeZoneName: 'short' as const }
   const postedExpected = new Date('2026-06-19T00:00:00.000Z').toLocaleString(undefined, timeZoneOptions)
-  expect(screen.getByText('Posted ' + postedExpected)).toBeTruthy()
+  expect(screen.getByText('Posted by Olivia Owner')).toBeTruthy()
+  expect(screen.getByText(postedExpected)).toBeTruthy()
 
   // The local time-zone note shows under each card's pickup time.
   expect(screen.getByText(/All times are shown in your local time zone/)).toBeTruthy()
@@ -109,6 +112,22 @@ test('shows the empty message when nothing matches', async () => {
   renderBrowse()
 
   expect(await screen.findByText('No listings match your search.')).toBeTruthy()
+})
+
+test('renders the first listing photo as the card cover', async () => {
+  window.localStorage.setItem('memberId', 'member-123')
+  const listing = makeListing('l1', 'Backyard Meyer Lemons')
+  listing.photos = [
+    { id: 'cover-photo', content_type: 'image/webp', position: 0 },
+  ]
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, [listing])
+  })
+
+  renderBrowse()
+
+  const image = await screen.findByRole('img', { name: 'Backyard Meyer Lemons' })
+  expect(image.getAttribute('src')).toBe('/api/photos/cover-photo')
 })
 
 test('submits the search text, category, and repeated tag params', async () => {

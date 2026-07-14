@@ -126,17 +126,22 @@ test('renders Pending, Approved, and Denied sections with their requests', async
   expect(headings[2].textContent).toBe('Denied')
 
   // Each request shows in the right section with the right wording. The styled
-  // row splits it into a bold title prefixed by the provider's first name and a
-  // muted detail line, so each piece is asserted in its own DOM node.
-  expect(screen.getByText('Carol - Apples')).toBeTruthy()
+  // row is a bold title, the provider's first name in its own muted span
+  // ("from Carol"), and a muted detail line, so each piece is asserted in its
+  // own DOM node.
+  expect(screen.getByText('Apples')).toBeTruthy()
+  expect(screen.getByText('from Carol')).toBeTruthy()
   expect(screen.getByText(/You requested 3 on/)).toBeTruthy()
-  expect(screen.getByText('Bob - Bananas')).toBeTruthy()
+  expect(screen.getByText('Bananas')).toBeTruthy()
+  expect(screen.getByText('from Bob')).toBeTruthy()
   expect(screen.getByText(/You were approved for: 2 on/)).toBeTruthy()
-  expect(screen.getByText('Alice - Cherries')).toBeTruthy()
+  expect(screen.getByText('Cherries')).toBeTruthy()
+  expect(screen.getByText('from Alice')).toBeTruthy()
   expect(screen.getByText(/Your request for 4 was denied on:/)).toBeTruthy()
 
-  // The local time-zone note shows under the sections.
-  expect(screen.getByText(/All times are shown in your local time zone/)).toBeTruthy()
+  // The local time-zone note shows above and below the sections.
+  const timeZoneNotes = screen.getAllByText(/All times are shown in your local time zone/)
+  expect(timeZoneNotes.length).toBe(2)
 })
 
 test('shows the Exchange Thread link only on approved requests', async () => {
@@ -153,7 +158,7 @@ test('shows the Exchange Thread link only on approved requests', async () => {
   expect(threadLinks.length).toBe(1)
   expect(threadLinks[0].getAttribute('href')).toContain('/exchange-thread')
   // The link sits on the approved row (the same list item as the Bananas title).
-  const approvedRow = screen.getByText('Bob - Bananas').closest('li')
+  const approvedRow = screen.getByText('Bananas').closest('li')
   expect(approvedRow?.querySelector('a')).toBeTruthy()
 })
 
@@ -221,12 +226,47 @@ test('renders a section newest-first in the order the backend returns', async ()
 
   renderMyRequestsPage()
 
-  // Row titles carry the provider's first-name prefix.
-  await screen.findByText('Bob - Newer')
+  // Row titles carry the provider's first name after the title.
+  await screen.findByText('Newer')
+  expect(screen.getByText('from Bob')).toBeTruthy()
   // The list items render in the backend's order: Newer before Older.
   const rows = screen.getAllByRole('listitem')
   expect(rows[0].textContent).toContain('Newer')
   expect(rows[1].textContent).toContain('Older')
+})
+
+test("a request row shows the listing's first photo as a thumbnail", async () => {
+  setLoggedIn()
+  const body = makeMyRequestsBody() as ReturnType<typeof makeMyRequestsBody> & {
+    pending: Array<{ photos?: Array<{ id: string; content_type: string; position: number }> }>
+  }
+  body.pending[0].photos = [
+    { id: 'photo-first', content_type: 'image/png', position: 0 },
+    { id: 'photo-second', content_type: 'image/png', position: 1 },
+  ]
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, body)
+  })
+
+  renderMyRequestsPage()
+
+  const image = await screen.findByRole('img', { name: 'Apples' })
+  // Only the first photo shows, even when the listing has more than one, and
+  // the photo-less approved and denied rows render no image.
+  expect(image.getAttribute('src')).toBe('/api/photos/photo-first')
+  expect(screen.getAllByRole('img').length).toBe(1)
+})
+
+test('a request row without photos shows no thumbnail image', async () => {
+  setLoggedIn()
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, makeMyRequestsBody())
+  })
+
+  renderMyRequestsPage()
+
+  expect(await screen.findByText('Apples')).toBeTruthy()
+  expect(screen.queryByRole('img')).toBeNull()
 })
 
 test('a stale-session 401 clears the credentials and fires the auth event', async () => {
@@ -290,15 +330,38 @@ test('a Pending request shows a Withdraw Request button', async () => {
   // The pending row has the button; the approved and denied rows do not.
   const withdrawButtons = screen.getAllByRole('button', { name: 'Withdraw' })
   expect(withdrawButtons.length).toBe(1)
-  const pendingRow = screen.getByText('Carol - Apples').closest('li')
+  const pendingRow = screen.getByText('Apples').closest('li')
   expect(pendingRow?.querySelector('button')).toBeTruthy()
 })
 
-test('clicking Withdraw calls the withdraw endpoint and reloads', async () => {
+test('clicking Withdraw reloads and the request moves from Pending to Withdrawn', async () => {
   setLoggedIn()
   vi.stubGlobal('confirm', () => {
     return true
   })
+  // After the backend saves the withdrawal, the reload returns the same
+  // request in the withdrawn section instead of pending.
+  const withdrawnBody = {
+    pending: [],
+    approved: [],
+    denied: [],
+    withdrawn: [
+      {
+        id: 'p1',
+        listing_id: 'l1',
+        listing_title: 'Apples',
+        owner_name: 'Carol Chen',
+        requested_quantity: 3,
+        approved_quantity: null,
+        status: 'cancelled',
+        requested_at: '2026-07-01T09:00:00.000Z',
+        approved_at: null,
+        denied_at: null,
+        picked_up_at: null,
+        cancelled_at: '2026-07-04T09:00:00.000Z',
+      },
+    ],
+  }
   let myRequestsCalls = 0
   let withdrawUrl = ''
   vi.stubGlobal('fetch', async (url: string | URL | Request, options: RequestInit | undefined) => {
@@ -315,7 +378,7 @@ test('clicking Withdraw calls the withdraw endpoint and reloads', async () => {
     if (myRequestsCalls === 1) {
       return makeFakeResponse(true, 200, makeMyRequestsBody())
     }
-    return makeFakeResponse(true, 200, makeEmptyBody())
+    return makeFakeResponse(true, 200, withdrawnBody)
   })
 
   renderMyRequestsPage()
@@ -328,6 +391,13 @@ test('clicking Withdraw calls the withdraw endpoint and reloads', async () => {
   })
   expect(withdrawUrl).toContain('/withdraw')
   expect(myRequestsCalls).toBe(2)
+  // The withdrawn request now renders in the Withdrawn section with its badge
+  // and the withdrawal date line. "Withdrawn" appears twice: the section
+  // heading and the row badge.
+  expect(screen.getByRole('heading', { level: 2, name: 'Withdrawn' })).toBeTruthy()
+  expect(screen.getAllByText('Withdrawn').length).toBe(2)
+  expect(screen.getByText(/You withdrew this request on/)).toBeTruthy()
+  expect(screen.getByText('Apples')).toBeTruthy()
 })
 
 test('clicking Confirm the Pickup calls the pickup endpoint and shows the picked-up row', async () => {

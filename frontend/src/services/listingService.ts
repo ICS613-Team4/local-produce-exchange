@@ -1,12 +1,19 @@
 // API call for creating a listing.
 
 export const listingTimeoutMilliseconds = 3000
+export const listingPhotoUploadTimeoutMilliseconds = 30000
 
 export type ListingResult = {
   ok: boolean
   status: number
   data: unknown
   errorMessage: string
+}
+
+export type ListingPhotoRef = {
+  id: string
+  content_type: string
+  position: number
 }
 
 // The shape of one listing's details the detail page renders. The backend owns
@@ -36,6 +43,7 @@ export type ListingDetail = {
   // detail page shows "Posted by <name>"); the other listing endpoints send
   // an empty string, so it is optional here for the same reason as above.
   owner_name?: string
+  photos?: ListingPhotoRef[]
 }
 
 // The shape of the listing fields the page builds and sends. The two pickup
@@ -102,6 +110,111 @@ export async function sendCreateListingRequest(
   } catch (caughtError) {
     // Without this catch, a timeout or network failure would print
     // "Uncaught (in promise)" in the console instead of showing on the page.
+    let errorMessage: string
+    if (caughtError instanceof DOMException && caughtError.name === 'TimeoutError') {
+      errorMessage =
+        'Timeout: no answer from the backend after ' + listingTimeoutMilliseconds + ' ms.'
+    } else {
+      errorMessage = 'Request failed: ' + String(caughtError)
+    }
+
+    return {
+      ok: false,
+      status: 0,
+      data: '',
+      errorMessage: errorMessage,
+    }
+  }
+}
+
+export async function sendUploadListingPhotoRequest(
+  listingId: string,
+  memberId: string,
+  file: File,
+): Promise<ListingResult> {
+  const formData = new FormData()
+  formData.append('file', file)
+
+  try {
+    const response = await fetch('/api/listings/' + listingId + '/photos', {
+      method: 'POST',
+      headers: {
+        'X-Member-Id': memberId,
+      },
+      body: formData,
+      signal: AbortSignal.timeout(listingPhotoUploadTimeoutMilliseconds),
+    })
+
+    const responseText = await response.text()
+    let data: unknown = ''
+    if (responseText !== '') {
+      try {
+        data = JSON.parse(responseText)
+      } catch {
+        data = responseText
+      }
+    }
+
+    return {
+      ok: response.ok,
+      status: response.status,
+      data: data,
+      errorMessage: '',
+    }
+  } catch (caughtError) {
+    let errorMessage: string
+    if (caughtError instanceof DOMException && caughtError.name === 'TimeoutError') {
+      errorMessage =
+        'Timeout: no answer from the backend after ' +
+        listingPhotoUploadTimeoutMilliseconds +
+        ' ms.'
+    } else {
+      errorMessage = 'Request failed: ' + String(caughtError)
+    }
+
+    return {
+      ok: false,
+      status: 0,
+      data: '',
+      errorMessage: errorMessage,
+    }
+  }
+}
+
+export async function sendDeleteListingPhotoRequest(
+  listingId: string,
+  memberId: string,
+  photoId: string,
+): Promise<ListingResult> {
+  try {
+    const response = await fetch(
+      '/api/listings/' + listingId + '/photos/' + photoId,
+      {
+        method: 'DELETE',
+        headers: {
+          'X-Member-Id': memberId,
+        },
+        signal: AbortSignal.timeout(listingTimeoutMilliseconds),
+      },
+    )
+
+    const responseText = await response.text()
+    let data: unknown = ''
+    if (responseText !== '') {
+      try {
+        data = JSON.parse(responseText)
+      } catch {
+        data = responseText
+      }
+    }
+
+    return {
+      ok: response.ok,
+      status: response.status,
+      data: data,
+      errorMessage: '',
+    }
+  } catch (caughtError) {
     let errorMessage: string
     if (caughtError instanceof DOMException && caughtError.name === 'TimeoutError') {
       errorMessage =

@@ -1,8 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Link, useParams } from 'react-router'
+import { useNavigate, useParams } from 'react-router'
 
 import { authStateChangedEventName } from '../services/authService'
-import { sendGetListingRequest, sendUpdateListingRequest } from '../services/listingService'
+import {
+  sendDeleteListingPhotoRequest,
+  sendGetListingRequest,
+  sendUpdateListingRequest,
+  sendUploadListingPhotoRequest,
+} from '../services/listingService'
 import type { ListingDetail, ListingResult } from '../services/listingService'
 
 const notLoggedInMessage = 'You need to be logged in to see this page.'
@@ -94,7 +99,10 @@ function hasListingResponseShape(data: unknown) {
 
 function EditListingPage() {
   const latestRequestNumber = useRef(0)
+  const photoActionInFlight = useRef('')
+  const photoInputRef = useRef<HTMLInputElement>(null)
 
+  const navigate = useNavigate()
   const params = useParams()
   const listingId = params.id ?? ''
 
@@ -115,9 +123,11 @@ function EditListingPage() {
   const [pickupStart, setPickupStart] = useState('')
   const [pickupEnd, setPickupEnd] = useState('')
 
-  const [successMessage, setSuccessMessage] = useState('')
   const [errorMessage, setErrorMessage] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [photoError, setPhotoError] = useState('')
+  const [photoReloadCounter, setPhotoReloadCounter] = useState(0)
+  const [isPhotoBusy, setIsPhotoBusy] = useState(false)
 
   const clearStoredLogin = useCallback(() => {
     window.localStorage.removeItem('memberId')
@@ -158,7 +168,6 @@ function EditListingPage() {
         clearStoredLogin()
         return
       }
-      setSuccessMessage('')
       setErrorMessage('')
       setIsSubmitting(false)
       setResult(loadedResult)
@@ -169,50 +178,38 @@ function EditListingPage() {
       }
     }
     loadListing()
-  }, [listingId, memberId, clearStoredLogin, fillFormFromListing])
-
-  function clearStaleSuccessMessage() {
-    setSuccessMessage('')
-  }
+  }, [listingId, memberId, clearStoredLogin, fillFormFromListing, photoReloadCounter])
 
   function handleTitleChange(event: React.ChangeEvent<HTMLInputElement>) {
     setTitle(event.target.value)
-    clearStaleSuccessMessage()
   }
 
   function handleDescriptionChange(event: React.ChangeEvent<HTMLTextAreaElement>) {
     setDescription(event.target.value)
-    clearStaleSuccessMessage()
   }
 
   function handleCategoryChange(event: React.ChangeEvent<HTMLInputElement>) {
     setCategory(event.target.value)
-    clearStaleSuccessMessage()
   }
 
   function handleTotalQuantityChange(event: React.ChangeEvent<HTMLInputElement>) {
     setTotalQuantity(event.target.value)
-    clearStaleSuccessMessage()
   }
 
   function handleDietaryTagsChange(event: React.ChangeEvent<HTMLInputElement>) {
     setDietaryTags(event.target.value)
-    clearStaleSuccessMessage()
   }
 
   function handleAllergenTagsChange(event: React.ChangeEvent<HTMLInputElement>) {
     setAllergenTags(event.target.value)
-    clearStaleSuccessMessage()
   }
 
   function handlePickupStartChange(event: React.ChangeEvent<HTMLInputElement>) {
     setPickupStart(event.target.value)
-    clearStaleSuccessMessage()
   }
 
   function handlePickupEndChange(event: React.ChangeEvent<HTMLInputElement>) {
     setPickupEnd(event.target.value)
-    clearStaleSuccessMessage()
   }
 
   function splitTags(rawValue: string) {
@@ -230,7 +227,6 @@ function EditListingPage() {
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setIsSubmitting(true)
-    setSuccessMessage('')
     setErrorMessage('')
 
     const pickupStartIso = new Date(pickupStart).toISOString()
@@ -251,15 +247,9 @@ function EditListingPage() {
     const savedResult = await sendUpdateListingRequest(listingId, memberId, listingFields)
 
     if (savedResult.ok) {
-      setIsSubmitting(false)
-      setSuccessMessage('Your changes were saved.')
-      setErrorMessage('')
-      if (hasListingResponseShape(savedResult.data)) {
-        const savedListing = savedResult.data as ListingDetail
-        setResult(savedResult)
-        setResultListingId(listingId)
-        fillFormFromListing(savedListing)
-      }
+      // The save landed in the database, so open the listing's detail page
+      // right away. The submit guard stays on while the browser navigates.
+      navigate('/listings/' + listingId)
       return
     }
 
@@ -290,7 +280,95 @@ function EditListingPage() {
     }
   }
 
+  async function handleAddPhoto(event: React.ChangeEvent<HTMLInputElement>) {
+    if (photoActionInFlight.current !== '') {
+      return
+    }
+    if (event.target.files === null || event.target.files.length === 0) {
+      return
+    }
+
+    const file = event.target.files[0]
+    photoActionInFlight.current = 'add'
+    setIsPhotoBusy(true)
+    try {
+      const photoResult = await sendUploadListingPhotoRequest(listingId, memberId, file)
+
+      if (photoResult.ok) {
+        setPhotoError('')
+        if (photoInputRef.current !== null) {
+          photoInputRef.current.value = ''
+        }
+        setPhotoReloadCounter((currentValue) => currentValue + 1)
+      } else if (photoResult.status === 401) {
+        clearStoredLogin()
+      } else if (photoResult.errorMessage !== '') {
+        setPhotoError(photoResult.errorMessage)
+      } else {
+        let detail: unknown = undefined
+        if (typeof photoResult.data === 'object' && photoResult.data !== null) {
+          const dataObject = photoResult.data as { detail?: unknown }
+          detail = dataObject.detail
+        }
+        if (typeof detail === 'string') {
+          setPhotoError(detail)
+        } else {
+          setPhotoError('Could not add the photo (HTTP ' + photoResult.status + ').')
+        }
+      }
+    } finally {
+      photoActionInFlight.current = ''
+      setIsPhotoBusy(false)
+    }
+  }
+
+  async function handleRemovePhoto(photoId: string) {
+    if (photoActionInFlight.current !== '') {
+      return
+    }
+    if (!window.confirm('Remove this photo?')) {
+      return
+    }
+
+    photoActionInFlight.current = photoId
+    setIsPhotoBusy(true)
+    try {
+      const photoResult = await sendDeleteListingPhotoRequest(
+        listingId,
+        memberId,
+        photoId,
+      )
+
+      if (photoResult.ok) {
+        setPhotoError('')
+        setPhotoReloadCounter((currentValue) => currentValue + 1)
+      } else if (photoResult.status === 401) {
+        clearStoredLogin()
+      } else if (photoResult.errorMessage !== '') {
+        setPhotoError(photoResult.errorMessage)
+      } else {
+        let detail: unknown = undefined
+        if (typeof photoResult.data === 'object' && photoResult.data !== null) {
+          const dataObject = photoResult.data as { detail?: unknown }
+          detail = dataObject.detail
+        }
+        if (typeof detail === 'string') {
+          setPhotoError(detail)
+        } else {
+          setPhotoError('Could not remove the photo (HTTP ' + photoResult.status + ').')
+        }
+      }
+    } finally {
+      photoActionInFlight.current = ''
+      setIsPhotoBusy(false)
+    }
+  }
+
   const inputClasses = 'w-full px-4 py-2.5 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-150'
+  // The file input styles its native "Choose File" button through Tailwind's
+  // file: variant, so it looks like the site's primary buttons instead of the
+  // browser's unstyled default.
+  const fileInputClasses = 'w-full p-2 text-sm text-text-muted bg-background border border-border rounded-lg cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-150 file:mr-4 file:px-4 file:py-2 file:rounded-lg file:border-0 file:bg-primary-600 file:text-text-inverse file:text-sm file:font-semibold file:cursor-pointer hover:file:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed'
   const labelClasses = 'block text-sm font-medium text-text mb-1.5'
 
   let contentArea
@@ -317,17 +395,39 @@ function EditListingPage() {
         </div>
       )
     } else {
-      let successArea = <></>
-      if (successMessage !== '') {
-        successArea = (
-          <div className="rounded-lg bg-success-bg border border-green-200 px-4 py-3 text-sm text-success mb-4">
-            <p className="font-medium">{successMessage}</p>
-            <Link
-              to={'/listings/' + listing.id}
-              className="text-primary-600 hover:text-primary-700 font-medium mt-1 inline-block"
-            >
-              View the updated listing →
-            </Link>
+      const photoTiles = []
+      if (listing.photos !== undefined) {
+        for (let index = 0; index < listing.photos.length; index = index + 1) {
+          const photo = listing.photos[index]
+          photoTiles.push(
+            <div key={photo.id}>
+              <img
+                src={'/api/photos/' + photo.id}
+                alt={'Photo of ' + listing.title}
+                loading="lazy"
+                className="w-full aspect-square object-cover rounded-lg border border-border"
+              />
+              <button
+                type="button"
+                disabled={isPhotoBusy}
+                onClick={() => handleRemovePhoto(photo.id)}
+                className="mt-2 w-full px-4 py-2 text-sm font-medium text-error bg-error-bg border border-red-200 rounded-lg hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Remove
+              </button>
+            </div>,
+          )
+        }
+      }
+
+      let photoErrorArea = <></>
+      if (photoError !== '') {
+        photoErrorArea = (
+          <div
+            className="rounded-lg bg-error-bg border border-red-200 px-4 py-3 text-sm text-error mt-4"
+            role="alert"
+          >
+            {photoError}
           </div>
         )
       }
@@ -343,7 +443,6 @@ function EditListingPage() {
 
       contentArea = (
         <>
-          {successArea}
           {errorArea}
           <form onSubmit={handleSubmit} className="space-y-5">
             <div>
@@ -452,6 +551,28 @@ function EditListingPage() {
               </button>
             </div>
           </form>
+          <section className="mt-8 pt-6 border-t border-border">
+            <h2 className="text-lg font-semibold text-text mb-4">Photos</h2>
+            {photoTiles.length > 0 && (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-5">
+                {photoTiles}
+              </div>
+            )}
+            <label htmlFor="listing-photo" className={labelClasses}>Add a photo</label>
+            <input
+              ref={photoInputRef}
+              id="listing-photo"
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              disabled={isPhotoBusy}
+              onChange={handleAddPhoto}
+              className={fileInputClasses}
+            />
+            <p className="text-xs text-text-muted mt-2">
+              To replace a photo, remove it and then add a new one.
+            </p>
+            {photoErrorArea}
+          </section>
         </>
       )
     }

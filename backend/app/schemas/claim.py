@@ -11,6 +11,8 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
+from app.schemas.listing import ListingPhotoRef
+
 
 # The largest value a 32-bit signed integer can hold. The requested_quantity
 # column is a PostgreSQL Integer, so a request above this would overflow that
@@ -88,15 +90,21 @@ class MyRequestItem(BaseModel):
     approved_at: Optional[datetime] = None
     picked_up_at: Optional[datetime] = None
     denied_at: Optional[datetime] = None
+    cancelled_at: Optional[datetime] = None
+    # The requested listing's photos, ordered for display, so the page can show
+    # the listing's cover photo next to the request. Same shape as
+    # ListingResponse.photos; the default keeps older construction sites working.
+    photos: list[ListingPhotoRef] = Field(default_factory=list)
 
 
-# The "my requests" response, split into the three sections the page shows. Each
+# The "my requests" response, split into the four sections the page shows. Each
 # list is newest-first with a stable id tiebreaker. An empty list means that
 # section has nothing.
 class MyRequestsResponse(BaseModel):
     pending: list[MyRequestItem]
     approved: list[MyRequestItem]
     denied: list[MyRequestItem]
+    withdrawn: list[MyRequestItem]
 
 
 # One request in the poster's full per-listing history (US-24). Unlike
@@ -127,6 +135,12 @@ class ListingAllRequestsGroup(BaseModel):
     listing_title: str
     remaining_quantity: int
     requests: list[AllRequestItem]
+    # When the listing was posted, so the page can show it under the title.
+    # Optional with a None default so older construction sites keep working.
+    created_at: Optional[datetime] = None
+    # The listing's photos, ordered for display, so the page can show the
+    # listing's cover photo on its group. Same shape as ListingResponse.photos.
+    photos: list[ListingPhotoRef] = Field(default_factory=list)
 
 
 # The whole all-requests response (US-24): one group per active listing the

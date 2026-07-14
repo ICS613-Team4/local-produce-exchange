@@ -13,6 +13,7 @@ from sqlalchemy.exc import OperationalError
 from app.main import app
 from app.models.claim import Claim
 from app.models.listing import Listing
+from app.models.listing_photo import ListingPhoto
 from app.models.member import Member
 from app.routers.claim import get_all_requests, get_request_queues
 
@@ -440,6 +441,11 @@ class ClaimantNameFailsSession:
         self.scalars_calls = self.scalars_calls + 1
         if self.scalars_calls == 1:
             return ScalarsListStub(self.listings)
+        # The second scalars call on the all-requests path is the batched
+        # photo read; answer it with no photos so the flow reaches the
+        # claimant read this fake is built to fail.
+        if self.scalars_calls == 2:
+            return ScalarsListStub([])
         return ScalarsListStub(self.claims)
 
     def execute(self, *args, **kwargs):
@@ -669,6 +675,40 @@ def test_all_requests_happy_path_active_listings_grouped(db_session):
     assert len(response.groups) == 2
     assert response.groups[0].listing_title == "Zucchini"
     assert response.groups[1].listing_title == "Apples"
+
+
+def test_all_requests_carries_each_listing_photos(db_session):
+    # Each group carries its listing's photos ordered by position, so the page
+    # can show the cover photo. A photo-less listing gets an empty list.
+    owner = insert_member(db_session, email="owner@example.com")
+    photographed = insert_listing(db_session, owner, title="Apples")
+    insert_listing(
+        db_session,
+        owner,
+        title="Zucchini",
+        created_at=datetime(2026, 6, 2, 9, 0, tzinfo=timezone.utc),
+    )
+    photo = ListingPhoto(
+        listing_id=photographed.id,
+        content_type="image/png",
+        image_bytes=b"png-bytes",
+        position=0,
+    )
+    db_session.add(photo)
+    db_session.commit()
+
+    response = get_all_requests(None, owner, db_session)
+
+    groups_by_title = {}
+    for group in response.groups:
+        groups_by_title[group.listing_title] = group
+    assert len(groups_by_title["Apples"].photos) == 1
+    assert groups_by_title["Apples"].photos[0].id == str(photo.id)
+    assert groups_by_title["Apples"].photos[0].content_type == "image/png"
+    assert groups_by_title["Zucchini"].photos == []
+    # Each group also names when its listing was posted.
+    assert groups_by_title["Apples"].created_at is not None
+    assert groups_by_title["Zucchini"].created_at is not None
 
 
 @pytest.mark.parametrize(

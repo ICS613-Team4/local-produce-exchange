@@ -97,6 +97,7 @@ test('renders all the listing fields and the submit button', () => {
   expect(screen.getByLabelText('Allergen tags')).toBeTruthy()
   expect(screen.getByLabelText('Pickup start')).toBeTruthy()
   expect(screen.getByLabelText('Pickup end')).toBeTruthy()
+  expect(screen.getByLabelText('Photos (optional)')).toBeTruthy()
   expect(screen.getByRole('button', { name: 'Create listing' })).toBeTruthy()
 })
 
@@ -141,6 +142,74 @@ test('navigates to the new listing detail page after a successful create', async
   // The detail stand-in shows the id, proving the redirect went to /listings/x.
   const detailMarker = await screen.findByText('listing x')
   expect(detailMarker).toBeTruthy()
+})
+
+test('creates the listing, uploads a selected photo, and then navigates', async () => {
+  window.localStorage.setItem('memberId', 'member-123')
+  const requestUrls: string[] = []
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    const urlText = String(url)
+    requestUrls.push(urlText)
+    if (urlText.endsWith('/photos')) {
+      return makeFakeResponse(
+        true,
+        201,
+        JSON.stringify({ id: 'photo-1', content_type: 'image/png', position: 0 }),
+      )
+    }
+    return makeFakeResponse(
+      true,
+      201,
+      JSON.stringify({ id: 'x', owner_id: 'member-123', status: 'active' }),
+    )
+  })
+
+  renderCreatePage()
+  fillForm()
+  const file = new File(['image bytes'], 'lettuce.png', { type: 'image/png' })
+  fireEvent.change(screen.getByLabelText('Photos (optional)'), {
+    target: { files: [file] },
+  })
+  submitForm()
+
+  expect(await screen.findByText('listing x')).toBeTruthy()
+  expect(requestUrls).toEqual(['/api/listings', '/api/listings/x/photos'])
+})
+
+test('keeps the created listing link when a selected photo is rejected', async () => {
+  window.localStorage.setItem('memberId', 'member-123')
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    const urlText = String(url)
+    if (urlText.endsWith('/photos')) {
+      return makeFakeResponse(
+        false,
+        422,
+        JSON.stringify({ detail: 'That file type is not allowed.' }),
+      )
+    }
+    return makeFakeResponse(
+      true,
+      201,
+      JSON.stringify({ id: 'x', owner_id: 'member-123', status: 'active' }),
+    )
+  })
+
+  renderCreatePage()
+  fillForm()
+  const file = new File(['plain text'], 'notes.txt', { type: 'text/plain' })
+  fireEvent.change(screen.getByLabelText('Photos (optional)'), {
+    target: { files: [file] },
+  })
+  submitForm()
+
+  const alert = await screen.findByRole('alert')
+  expect(alert.textContent).toContain('Your listing was created. Some photos were not added:')
+  expect(alert.textContent).toContain('That file type is not allowed.')
+  const listingLink = screen.getByRole('link', { name: 'View your listing' })
+  expect(listingLink.getAttribute('href')).toBe('/listings/x')
+  expect(screen.queryByText('listing x')).toBeNull()
+  const button = screen.getByRole('button', { name: /Creating/ }) as HTMLButtonElement
+  expect(button.disabled).toBe(true)
 })
 
 test('sends the member id header, a number quantity, split tags, and ISO pickup times', async () => {

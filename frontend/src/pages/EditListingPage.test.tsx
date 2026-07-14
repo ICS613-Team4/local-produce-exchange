@@ -57,6 +57,7 @@ function makeActiveListing() {
     pickup_end: '2026-07-01T11:00:00.000Z',
     status: 'active',
     created_at: '2026-06-19T00:00:00.000Z',
+    photos: [] as Array<{ id: string; content_type: string; position: number }>,
   }
   return listing
 }
@@ -97,6 +98,9 @@ function renderEditPage(initialPath = '/listings/abc/edit') {
     <MemoryRouter initialEntries={[initialPath]}>
       <Routes>
         <Route path="/listings/:id/edit" element={<EditListingPage />} />
+        {/* A successful save navigates to the detail route; this stand-in page
+            lets the tests observe that navigation. */}
+        <Route path="/listings/:id" element={<p>detail page stand-in</p>} />
       </Routes>
     </MemoryRouter>,
   )
@@ -162,6 +166,7 @@ test('shows a non-owner message and no form on direct access', async () => {
   const alert = await screen.findByRole('alert')
   expect(alert.textContent).toBe('You can only edit your own listing.')
   expect(screen.queryByLabelText('Title')).toBeNull()
+  expect(screen.queryByLabelText('Add a photo')).toBeNull()
 })
 
 test('prefills the form for the owner', async () => {
@@ -193,7 +198,210 @@ test('prefills the form for the owner', async () => {
   expect(pickupEndInput.value).toBe(inputValueFromIso(listing.pickup_end))
 })
 
-test('shows success, keeps the page open, and re-enables the button after save', async () => {
+test('shows an existing photo and removes it before reloading the listing', async () => {
+  setLoggedIn()
+  const firstListing = makeActiveListing()
+  firstListing.photos = [
+    { id: 'photo-1', content_type: 'image/png', position: 0 },
+  ]
+  let getCount = 0
+  let deleteCount = 0
+  vi.stubGlobal(
+    'fetch',
+    async (_url: string | URL | Request, options: RequestInit | undefined) => {
+      if (options?.method === 'DELETE') {
+        deleteCount = deleteCount + 1
+        return {
+          ok: true,
+          status: 204,
+          text: async () => '',
+        }
+      }
+      getCount = getCount + 1
+      if (getCount === 1) {
+        return makeFakeResponse(true, 200, firstListing)
+      }
+      return makeFakeResponse(true, 200, makeActiveListing())
+    },
+  )
+  vi.stubGlobal('confirm', () => true)
+
+  renderEditPage()
+
+  const image = await screen.findByRole('img', { name: 'Photo of Backyard Lemons' })
+  expect(image.getAttribute('src')).toBe('/api/photos/photo-1')
+  fireEvent.click(screen.getByRole('button', { name: 'Remove' }))
+
+  await waitFor(() => {
+    expect(deleteCount).toBe(1)
+    expect(getCount).toBe(2)
+    expect(screen.queryByRole('img', { name: 'Photo of Backyard Lemons' })).toBeNull()
+  })
+})
+
+test('shows a rejected upload error without changing the current photos', async () => {
+  setLoggedIn()
+  const listing = makeActiveListing()
+  listing.photos = [
+    { id: 'photo-1', content_type: 'image/png', position: 0 },
+  ]
+  let getCount = 0
+  let uploadCount = 0
+  vi.stubGlobal(
+    'fetch',
+    async (_url: string | URL | Request, options: RequestInit | undefined) => {
+      if (options?.method === 'POST') {
+        uploadCount = uploadCount + 1
+        return makeFakeResponse(
+          false,
+          422,
+          { detail: 'That file type is not allowed.' },
+        )
+      }
+      getCount = getCount + 1
+      return makeFakeResponse(true, 200, listing)
+    },
+  )
+
+  renderEditPage()
+  const image = await screen.findByRole('img', { name: 'Photo of Backyard Lemons' })
+  const file = new File(['plain text'], 'notes.txt', { type: 'text/plain' })
+  fireEvent.change(screen.getByLabelText('Add a photo'), {
+    target: { files: [file] },
+  })
+
+  const alert = await screen.findByRole('alert')
+  expect(alert.textContent).toBe('That file type is not allowed.')
+  expect(image.getAttribute('src')).toBe('/api/photos/photo-1')
+  expect(screen.getByRole('img', { name: 'Photo of Backyard Lemons' })).toBeTruthy()
+  expect(uploadCount).toBe(1)
+  expect(getCount).toBe(1)
+})
+
+test('clears stored login when a photo upload returns 401', async () => {
+  setLoggedIn()
+  vi.stubGlobal(
+    'fetch',
+    async (_url: string | URL | Request, options: RequestInit | undefined) => {
+      if (options?.method === 'POST') {
+        return makeFakeResponse(false, 401, { detail: 'Log in again.' })
+      }
+      return makeFakeResponse(true, 200, makeActiveListing())
+    },
+  )
+
+  renderEditPage()
+  await waitForLoadedForm()
+  const file = new File(['image bytes'], 'photo.png', { type: 'image/png' })
+  fireEvent.change(screen.getByLabelText('Add a photo'), {
+    target: { files: [file] },
+  })
+
+  await waitFor(() => {
+    expect(window.localStorage.getItem('memberId')).toBeNull()
+    expect(screen.getByText('You need to be logged in to see this page.')).toBeTruthy()
+  })
+})
+
+test('uploads a selected photo and reloads the listing photos', async () => {
+  setLoggedIn()
+  let getCount = 0
+  let uploadCount = 0
+  vi.stubGlobal(
+    'fetch',
+    async (_url: string | URL | Request, options: RequestInit | undefined) => {
+      if (options?.method === 'POST') {
+        uploadCount = uploadCount + 1
+        return makeFakeResponse(
+          true,
+          201,
+          { id: 'photo-1', content_type: 'image/png', position: 0 },
+        )
+      }
+      getCount = getCount + 1
+      const listing = makeActiveListing()
+      if (getCount > 1) {
+        listing.photos = [
+          { id: 'photo-1', content_type: 'image/png', position: 0 },
+        ]
+      }
+      return makeFakeResponse(true, 200, listing)
+    },
+  )
+
+  renderEditPage()
+  await waitForLoadedForm()
+  const file = new File(['image bytes'], 'photo.png', { type: 'image/png' })
+  fireEvent.change(screen.getByLabelText('Add a photo'), {
+    target: { files: [file] },
+  })
+
+  const image = await screen.findByRole('img', { name: 'Photo of Backyard Lemons' })
+  expect(image.getAttribute('src')).toBe('/api/photos/photo-1')
+  expect(uploadCount).toBe(1)
+  expect(getCount).toBe(2)
+})
+
+test('shows a denied removal error and keeps the photo', async () => {
+  setLoggedIn()
+  const listing = makeActiveListing()
+  listing.photos = [
+    { id: 'photo-1', content_type: 'image/png', position: 0 },
+  ]
+  let getCount = 0
+  vi.stubGlobal(
+    'fetch',
+    async (_url: string | URL | Request, options: RequestInit | undefined) => {
+      if (options?.method === 'DELETE') {
+        return makeFakeResponse(
+          false,
+          403,
+          { detail: 'You can only change photos on your own listing.' },
+        )
+      }
+      getCount = getCount + 1
+      return makeFakeResponse(true, 200, listing)
+    },
+  )
+  vi.stubGlobal('confirm', () => true)
+
+  renderEditPage()
+  await screen.findByRole('img', { name: 'Photo of Backyard Lemons' })
+  fireEvent.click(screen.getByRole('button', { name: 'Remove' }))
+
+  const alert = await screen.findByRole('alert')
+  expect(alert.textContent).toBe('You can only change photos on your own listing.')
+  expect(screen.getByRole('img', { name: 'Photo of Backyard Lemons' })).toBeTruthy()
+  expect(getCount).toBe(1)
+})
+
+test('cancelling photo removal sends no delete request', async () => {
+  setLoggedIn()
+  const listing = makeActiveListing()
+  listing.photos = [
+    { id: 'photo-1', content_type: 'image/png', position: 0 },
+  ]
+  let deleteCount = 0
+  vi.stubGlobal(
+    'fetch',
+    async (_url: string | URL | Request, options: RequestInit | undefined) => {
+      if (options?.method === 'DELETE') {
+        deleteCount = deleteCount + 1
+      }
+      return makeFakeResponse(true, 200, listing)
+    },
+  )
+  vi.stubGlobal('confirm', () => false)
+
+  renderEditPage()
+  await screen.findByRole('img', { name: 'Photo of Backyard Lemons' })
+  fireEvent.click(screen.getByRole('button', { name: 'Remove' }))
+
+  expect(deleteCount).toBe(0)
+  expect(screen.getByRole('img', { name: 'Photo of Backyard Lemons' })).toBeTruthy()
+})
+
+test('a successful save navigates straight to the detail page', async () => {
   setLoggedIn()
   const listing = makeActiveListing()
   vi.stubGlobal('fetch', async (_url: string | URL | Request, options: RequestInit | undefined) => {
@@ -207,13 +415,11 @@ test('shows success, keeps the page open, and re-enables the button after save',
   await waitForLoadedForm()
   submitForm()
 
-  expect(await screen.findByText('Your changes were saved.')).toBeTruthy()
-  // The styled link carries a trailing arrow in its accessible name.
-  const link = screen.getByRole('link', { name: /View the updated listing/ })
-  expect(link.getAttribute('href')).toBe('/listings/abc')
-  expect(screen.getByRole('heading', { name: 'Edit listing' })).toBeTruthy()
-  const button = screen.getByRole('button', { name: 'Save changes' }) as HTMLButtonElement
-  expect(button.disabled).toBe(false)
+  // The page leaves the edit form for the listing's detail route; no success
+  // message or link renders.
+  expect(await screen.findByText('detail page stand-in')).toBeTruthy()
+  expect(screen.queryByText('Your changes were saved.')).toBeNull()
+  expect(screen.queryByRole('heading', { name: 'Edit listing' })).toBeNull()
 })
 
 test('disables the button while the save request is in flight', async () => {
@@ -238,27 +444,8 @@ test('disables the button while the save request is in flight', async () => {
 
   pendingSave.resolve(makeFakeResponse(true, 200, listing))
 
-  await waitFor(() => {
-    const button = screen.getByRole('button', { name: 'Save changes' }) as HTMLButtonElement
-    expect(button.disabled).toBe(false)
-  })
-})
-
-test('clears a stale success message when a field changes', async () => {
-  setLoggedIn()
-  const listing = makeActiveListing()
-  vi.stubGlobal('fetch', async () => {
-    return makeFakeResponse(true, 200, listing)
-  })
-
-  renderEditPage()
-  await waitForLoadedForm()
-  submitForm()
-  expect(await screen.findByText('Your changes were saved.')).toBeTruthy()
-
-  fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Changed title' } })
-
-  expect(screen.queryByText('Your changes were saved.')).toBeNull()
+  // Once the save lands, the page navigates to the detail route.
+  expect(await screen.findByText('detail page stand-in')).toBeTruthy()
 })
 
 test('shows the backend detail on a failed save without a debug dump', async () => {
@@ -345,7 +532,7 @@ test('sends numeric quantity, split tags, and ISO pickup times on save', async (
   fireEvent.change(screen.getByLabelText('Pickup end'), { target: { value: '2026-07-01T11:00' } })
   submitForm()
 
-  await screen.findByText('Your changes were saved.')
+  await screen.findByText('detail page stand-in')
 
   const sentBody = JSON.parse(capturedBody)
   expect(typeof sentBody.total_quantity).toBe('number')
@@ -416,13 +603,13 @@ test('shows loading instead of the old form after route change while loading', a
   expect(screen.queryByDisplayValue('First Listing')).toBeNull()
 })
 
-test('does not carry submit messages or disabled state across listings', async () => {
+test('does not carry a failed-save error across listings', async () => {
   setLoggedIn()
   const firstListing = makeListingWithIdAndTitle('first', 'First Listing')
   const secondListing = makeListingWithIdAndTitle('second', 'Second Listing')
   vi.stubGlobal('fetch', async (url: string | URL | Request, options: RequestInit | undefined) => {
     if (options !== undefined && options.method === 'PUT') {
-      return makeFakeResponse(true, 200, firstListing)
+      return makeFakeResponse(false, 422, { detail: 'Title must not be blank.' })
     }
     if (String(url).includes('/second')) {
       return makeFakeResponse(true, 200, secondListing)
@@ -433,44 +620,16 @@ test('does not carry submit messages or disabled state across listings', async (
   renderEditPageWithSecondButton()
   await waitForLoadedForm()
   submitForm()
-  expect(await screen.findByText('Your changes were saved.')).toBeTruthy()
+  expect(await screen.findByRole('alert')).toBeTruthy()
 
   fireEvent.click(screen.getByRole('button', { name: 'Second listing' }))
   await waitForLoadedForm()
 
-  expect(screen.queryByText('Your changes were saved.')).toBeNull()
   expect(screen.queryByRole('alert')).toBeNull()
   const button = screen.getByRole('button', { name: 'Save changes' }) as HTMLButtonElement
   expect(button.disabled).toBe(false)
 })
 
-test('refills the form from the saved response after a successful save', async () => {
-  setLoggedIn()
-  const listing = makeActiveListing()
-  const savedListing = makeActiveListing()
-  savedListing.title = 'Fresh Kale'
-  savedListing.dietary_tags = ['Vegan']
-  vi.stubGlobal('fetch', async (_url: string | URL | Request, options: RequestInit | undefined) => {
-    if (options !== undefined && options.method === 'PUT') {
-      return makeFakeResponse(true, 200, savedListing)
-    }
-    return makeFakeResponse(true, 200, listing)
-  })
-
-  renderEditPage()
-  await waitForLoadedForm()
-  fireEvent.change(screen.getByLabelText('Title'), { target: { value: '  Fresh Kale  ' } })
-  fireEvent.change(screen.getByLabelText('Dietary tags'), {
-    target: { value: ' Vegan , , Vegan ' },
-  })
-  submitForm()
-
-  await screen.findByText('Your changes were saved.')
-  const titleInput = screen.getByLabelText('Title') as HTMLInputElement
-  const dietaryInput = screen.getByLabelText('Dietary tags') as HTMLInputElement
-  expect(titleInput.value).toBe('Fresh Kale')
-  expect(dietaryInput.value).toBe('Vegan')
-})
 
 test('clears stale credentials and fires the auth event on a 401 save response', async () => {
   setLoggedIn()

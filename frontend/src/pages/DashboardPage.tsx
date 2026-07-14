@@ -156,9 +156,9 @@ function DashboardPage() {
         <span aria-hidden="true" className="text-2xl group-hover:scale-110 transition-transform">💌</span>
         <span className="text-xs font-medium text-text-muted group-hover:text-primary-600">Invite</span>
       </Link>
-      <Link to="/profile" className="flex flex-col items-center gap-2 p-4 bg-surface rounded-xl border border-border shadow-sm hover:shadow-md hover:border-primary-200 transition-all duration-200 group">
-        <span aria-hidden="true" className="text-2xl group-hover:scale-110 transition-transform">👤</span>
-        <span className="text-xs font-medium text-text-muted group-hover:text-primary-600">Profile</span>
+      <Link to="/requests" className="flex flex-col items-center gap-2 p-4 bg-surface rounded-xl border border-border shadow-sm hover:shadow-md hover:border-primary-200 transition-all duration-200 group">
+        <span aria-hidden="true" className="text-2xl group-hover:scale-110 transition-transform">📥</span>
+        <span className="text-xs font-medium text-text-muted group-hover:text-primary-600">Incoming Requests</span>
       </Link>
     </div>
   )

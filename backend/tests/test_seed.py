@@ -13,8 +13,10 @@ from sqlalchemy.orm import sessionmaker
 from app import seed
 from app.models.claim import Claim
 from app.models.listing import Listing
+from app.models.listing_photo import ListingPhoto
 from app.models.member import InviteToken, Member, MemberProfile
 from app.models.sample_data import SampleData
+from app.routers.listing_photo import MAX_PHOTO_BYTES
 
 
 def bind_seed_to_connection(db_connection, monkeypatch):
@@ -115,6 +117,7 @@ def test_seed_database_inserts_all_groups(db_connection, monkeypatch):
     assert count_rows(session_factory, MemberProfile) == 4
     assert count_rows(session_factory, InviteToken) == 2
     assert count_rows(session_factory, Listing) == 8
+    assert count_rows(session_factory, ListingPhoto) == 8
     assert count_rows(session_factory, Claim) == 5
 
 
@@ -183,6 +186,7 @@ def test_seed_database_does_not_duplicate_rows(db_connection, monkeypatch):
     assert count_rows(session_factory, MemberProfile) == 4
     assert count_rows(session_factory, InviteToken) == 2
     assert count_rows(session_factory, Listing) == 8
+    assert count_rows(session_factory, ListingPhoto) == 8
     # The claim guard (table_is_empty on Claim) keeps the second run from adding
     # duplicate demo claims.
     assert count_rows(session_factory, Claim) == 5
@@ -214,12 +218,14 @@ def test_seed_restores_deleted_listings(db_connection, monkeypatch):
     seed.seed_database()
 
     delete_all_rows(session_factory, Claim)
+    delete_all_rows(session_factory, ListingPhoto)
     delete_all_rows(session_factory, Listing)
     assert count_rows(session_factory, Listing) == 0
     assert count_rows(session_factory, Claim) == 0
 
     seed.seed_database()
     assert count_rows(session_factory, Listing) == 8
+    assert count_rows(session_factory, ListingPhoto) == 8
     assert count_rows(session_factory, Claim) == 5
     assert count_rows(session_factory, Member) == 4
 
@@ -268,6 +274,43 @@ def test_seed_claims_skips_when_listings_missing(db_session):
     assert len(rows) == 0
 
 
+def test_seed_listing_photos_skips_when_members_missing(db_session):
+    # Called directly on a database with no members, seed_listing_photos finds
+    # no owner for any row and skips rather than failing.
+    seed.seed_listing_photos(db_session)
+
+    rows = db_session.scalars(select(ListingPhoto)).all()
+    assert len(rows) == 0
+
+
+def test_seed_listing_photos_skips_when_listings_missing(db_session):
+    # With members present but no demo listings, every photo row finds no
+    # listing and skips.
+    seed.seed_members(db_session)
+
+    seed.seed_listing_photos(db_session)
+
+    rows = db_session.scalars(select(ListingPhoto)).all()
+    assert len(rows) == 0
+
+
+def test_seed_listing_photos_skips_a_missing_photo_file(db_session, monkeypatch):
+    # A row that names a photo file that is not on disk is skipped with a
+    # message instead of crashing the seed.
+    seed.seed_members(db_session)
+    seed.seed_listings(db_session)
+    monkeypatch.setattr(
+        seed,
+        "_SEED_PHOTO_ROWS",
+        [("bob@example.com", "Fresh Manoa Lettuce", "no-such-file.webp")],
+    )
+
+    seed.seed_listing_photos(db_session)
+
+    rows = db_session.scalars(select(ListingPhoto)).all()
+    assert len(rows) == 0
+
+
 def test_seed_restores_deleted_profiles(db_connection, monkeypatch):
     session_factory = bind_seed_to_connection(db_connection, monkeypatch)
     seed.seed_database()
@@ -278,3 +321,86 @@ def test_seed_restores_deleted_profiles(db_connection, monkeypatch):
     seed.seed_database()
     assert count_rows(session_factory, MemberProfile) == 4
     assert count_rows(session_factory, Member) == 4
+
+
+def test_seed_database_attaches_one_valid_photo_to_each_listing(
+    db_connection,
+    monkeypatch,
+):
+    session_factory = bind_seed_to_connection(db_connection, monkeypatch)
+    seed.seed_database()
+
+    session = session_factory()
+    try:
+        listings = session.scalars(select(Listing)).all()
+        photos = session.scalars(select(ListingPhoto)).all()
+        assert len(listings) == 8
+        assert len(photos) == 8
+
+        for listing in listings:
+            listing_photos = []
+            for photo in photos:
+                if photo.listing_id == listing.id:
+                    listing_photos.append(photo)
+            assert len(listing_photos) == 1
+            assert listing_photos[0].content_type == "image/webp"
+            assert listing_photos[0].position == 0
+            assert len(listing_photos[0].image_bytes) > 0
+            assert len(listing_photos[0].image_bytes) <= MAX_PHOTO_BYTES
+            assert len(listing_photos[0].image_bytes) <= 300 * 1024
+    finally:
+        session.close()
+
+
+def test_seed_listing_photos_is_idempotent(db_connection, monkeypatch):
+    session_factory = bind_seed_to_connection(db_connection, monkeypatch)
+    seed.seed_database()
+
+    session = session_factory()
+    try:
+        seed.seed_listing_photos(session)
+        seed.seed_listing_photos(session)
+        session.commit()
+    finally:
+        session.close()
+
+    assert count_rows(session_factory, ListingPhoto) == 8
+
+
+def test_seed_listing_photos_restores_only_a_missing_listing_photo(
+    db_connection,
+    monkeypatch,
+):
+    session_factory = bind_seed_to_connection(db_connection, monkeypatch)
+    seed.seed_database()
+
+    session = session_factory()
+    try:
+        owner = seed.find_member_by_email(session, "bob@example.com")
+        listing = seed.find_listing_by_owner_and_title(
+            session,
+            owner,
+            "Fresh Manoa Lettuce",
+        )
+        original_photos = session.scalars(select(ListingPhoto)).all()
+        original_ids_by_listing = {}
+        for photo in original_photos:
+            original_ids_by_listing[photo.listing_id] = photo.id
+
+        session.execute(
+            delete(ListingPhoto).where(ListingPhoto.listing_id == listing.id)
+        )
+        session.commit()
+
+        seed.seed_listing_photos(session)
+        session.commit()
+
+        restored_photos = session.scalars(select(ListingPhoto)).all()
+        assert len(restored_photos) == 8
+        for photo in restored_photos:
+            if photo.listing_id == listing.id:
+                assert photo.id != original_ids_by_listing[listing.id]
+            else:
+                assert photo.id == original_ids_by_listing[photo.listing_id]
+    finally:
+        session.close()

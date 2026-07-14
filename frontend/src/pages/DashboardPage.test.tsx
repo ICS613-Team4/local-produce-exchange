@@ -153,8 +153,11 @@ test('shows the title and the member action links', () => {
   const inviteLink = screen.getByRole('link', { name: 'Invite' })
   expect(inviteLink.getAttribute('href')).toBe('/invite')
 
-  const profileLink = screen.getByRole('link', { name: 'Profile' })
-  expect(profileLink.getAttribute('href')).toBe('/profile')
+  // The profile quick action was replaced by Incoming Requests, which points
+  // at the request-queues page like the summary card's link below.
+  const incomingQuickAction = screen.getByRole('link', { name: /Incoming Requests/ })
+  expect(incomingQuickAction.getAttribute('href')).toBe('/requests')
+  expect(screen.queryByRole('link', { name: 'Profile' })).toBeNull()
 
   const incomingRequestsLink = screen.getByRole('link', {
     name: /See all incoming/i,

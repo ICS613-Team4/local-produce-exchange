@@ -252,13 +252,98 @@ test('shows detail from non-ok send response', async () => {
   expect(screen.getByRole('alert').textContent).toContain('Server blew up.')
 })
 
-// ── back link ─────────────────────────────────────────────────────────────
+// ── listing summary card ──────────────────────────────────────────────────
 
-test('renders back link to my-requests', async () => {
+test('shows the listing summary card with photo, poster, quantities, and pickup window', async () => {
+  window.localStorage.setItem('memberId', 'member-1')
+  const thread = {
+    ...makeEmptyThread(),
+    listing_id: 'listing-9',
+    listing_title: 'Backyard Meyer Lemons',
+    owner_name: 'Dave Diaz',
+    claimant_name: 'Alice Admin',
+    listing_created_at: '2026-06-19T00:00:00.000Z',
+    pickup_start: '2026-07-01T09:00:00.000Z',
+    pickup_end: '2026-07-01T11:00:00.000Z',
+    requested_quantity: 3,
+    approved_quantity: 2,
+    photos: [{ id: 'photo-1', content_type: 'image/png', position: 0 }],
+  }
+  vi.stubGlobal('fetch', async () => makeFakeResponse(true, 200, thread))
+
+  renderPage()
+
+  // The title links to the listing's detail page.
+  const titleLink = await screen.findByRole('link', { name: 'Backyard Meyer Lemons' })
+  expect(titleLink.getAttribute('href')).toBe('/listings/listing-9')
+  // The cover photo renders from the public photo endpoint.
+  const image = screen.getByRole('img', { name: 'Backyard Meyer Lemons' })
+  expect(image.getAttribute('src')).toBe('/api/photos/photo-1')
+  // The poster and posted time, in the viewer's zone.
+  const timeZoneOptions = { timeZoneName: 'short' as const }
+  const postedExpected = new Date('2026-06-19T00:00:00.000Z').toLocaleString(undefined, timeZoneOptions)
+  expect(screen.getByText('Posted by Dave Diaz on ' + postedExpected)).toBeTruthy()
+  // Who requested the items, on its own line under the poster.
+  expect(screen.getByText('Requested by Alice Admin')).toBeTruthy()
+  // The claim quantities and the pickup window.
+  expect(screen.getByText('Requested:')).toBeTruthy()
+  expect(screen.getByText('3')).toBeTruthy()
+  expect(screen.getByText('Approved:')).toBeTruthy()
+  expect(screen.getByText('2')).toBeTruthy()
+  expect(screen.getByText('Pickup:')).toBeTruthy()
+})
+
+test('shows no listing summary card when the response has no listing fields', async () => {
   window.localStorage.setItem('memberId', 'member-1')
   vi.stubGlobal('fetch', async () => makeFakeResponse(true, 200, makeEmptyThread()))
 
   renderPage()
 
-  await waitFor(() => screen.getByText('← Back to My Requests'))
+  await waitFor(() => screen.getByRole('heading', { name: 'Exchange Thread' }))
+  expect(screen.queryByText(/Requested:/)).toBeNull()
+  expect(screen.queryByRole('img')).toBeNull()
+})
+
+// ── back link ─────────────────────────────────────────────────────────────
+
+test('renders no back link, since arrivals come from several pages', async () => {
+  window.localStorage.setItem('memberId', 'member-1')
+  vi.stubGlobal('fetch', async () => makeFakeResponse(true, 200, makeEmptyThread()))
+
+  renderPage()
+
+  await waitFor(() => screen.getByRole('heading', { name: 'Exchange Thread' }))
+  expect(screen.queryByText(/Back to My Requests/)).toBeNull()
+})
+
+test('shows the poster instructions when the viewer owns the listing', async () => {
+  window.localStorage.setItem('memberId', 'owner-1')
+  const thread = { ...makeEmptyThread(), owner_id: 'owner-1', claimant_id: 'claimant-1' }
+  vi.stubGlobal('fetch', async () => makeFakeResponse(true, 200, thread))
+
+  renderPage()
+
+  expect(await screen.findByText(/You posted this listing/)).toBeTruthy()
+  expect(screen.queryByText(/You requested these items/)).toBeNull()
+})
+
+test('shows the requester instructions when the viewer made the claim', async () => {
+  window.localStorage.setItem('memberId', 'claimant-1')
+  const thread = { ...makeEmptyThread(), owner_id: 'owner-1', claimant_id: 'claimant-1' }
+  vi.stubGlobal('fetch', async () => makeFakeResponse(true, 200, thread))
+
+  renderPage()
+
+  expect(await screen.findByText(/You requested these items/)).toBeTruthy()
+  expect(screen.queryByText(/You posted this listing/)).toBeNull()
+})
+
+test('shows the generic instructions when the response has no party ids', async () => {
+  window.localStorage.setItem('memberId', 'member-1')
+  vi.stubGlobal('fetch', async () => makeFakeResponse(true, 200, makeEmptyThread()))
+
+  renderPage()
+
+  await waitFor(() => screen.getByRole('heading', { name: 'Exchange Thread' }))
+  expect(screen.getByText(/between the poster and the requester/)).toBeTruthy()
 })

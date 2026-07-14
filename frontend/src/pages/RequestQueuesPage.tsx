@@ -88,47 +88,35 @@ function RequestQueuesPage() {
     return 'bg-background-alt text-text-muted'
   }
 
-  // Short text for the status badge. picked_up is special-cased so the badge
+  // Short text for the status badge. An approved or picked-up request carries
+  // the quantity that was approved right in the badge ("Approved: 2"), so no
+  // separate approval line is needed. picked_up is special-cased so the badge
   // does not render as literal "Picked_up".
-  function getStatusBadgeLabel(status: string) {
-    if (status === 'picked_up') return 'Picked up'
-    return status.charAt(0).toUpperCase() + status.slice(1)
-  }
-
-  // The status outcome lines for one request, one bullet per line. Approved and
-  // denied show their decision details; a picked-up request keeps its Approved
-  // line and adds a "Picked up on" line below it, so the owner can see both the
-  // approval and that the recipient confirmed the pickup. Every other status
-  // shows its plain name.
-  function buildStatusOutcomeLines(item: AllRequestItem) {
+  function getStatusBadgeLabel(item: AllRequestItem) {
+    let approvedQuantity = 0
+    if (item.approved_quantity !== null) {
+      approvedQuantity = item.approved_quantity
+    }
     if (item.status === 'approved') {
-      let approvedQuantity = 0
-      if (item.approved_quantity !== null) { approvedQuantity = item.approved_quantity }
-      let approvedAtText = ''
-      if (item.approved_at !== null) {
-        approvedAtText = formatTimestamp(item.approved_at)
-      }
-      return ['Approved: ' + approvedQuantity + ' on ' + approvedAtText]
+      return 'Approved: ' + approvedQuantity
     }
     if (item.status === 'picked_up') {
-      // A picked-up request was approved first, so its approval details are still
-      // set. Show the same Approved line, then the picked-up line right below it.
-      let approvedQuantity = 0
-      if (item.approved_quantity !== null) {
-        approvedQuantity = item.approved_quantity
-      }
-      let approvedAtText = ''
-      if (item.approved_at !== null) {
-        approvedAtText = formatTimestamp(item.approved_at)
-      }
+      return 'Picked up: ' + approvedQuantity
+    }
+    return item.status.charAt(0).toUpperCase() + item.status.slice(1)
+  }
+
+  // The status outcome lines for one request, one bullet per line. The badge
+  // already names the status and the approved quantity, so only the details
+  // the badge cannot carry render here: when a pickup was confirmed and when
+  // a denial happened.
+  function buildStatusOutcomeLines(item: AllRequestItem) {
+    if (item.status === 'picked_up') {
       let pickedUpAtText = ''
       if (item.picked_up_at !== null) {
         pickedUpAtText = formatTimestamp(item.picked_up_at)
       }
-      return [
-        'Approved: ' + approvedQuantity + ' on ' + approvedAtText,
-        'Picked up on ' + pickedUpAtText,
-      ]
+      return ['Picked up on ' + pickedUpAtText]
     }
     if (item.status === 'denied') {
       let deniedAtText = ''
@@ -137,7 +125,7 @@ function RequestQueuesPage() {
       }
       return ['Denied on ' + deniedAtText]
     }
-    return ['Status: ' + item.status]
+    return []
   }
 
   function buildRequestRow(item: AllRequestItem) {
@@ -145,11 +133,6 @@ function RequestQueuesPage() {
     const statusOutcomeLines = buildStatusOutcomeLines(item)
     const statusOutcomeItems = []
     for (let index = 0; index < statusOutcomeLines.length; index = index + 1) {
-      // The generic "Status: x" fallback duplicates the badge, so skip it. The
-      // detail lines (approval, denial, pickup) still render below the badge.
-      if (statusOutcomeLines[index] === 'Status: ' + item.status) {
-        continue
-      }
       statusOutcomeItems.push(
         <li key={index} className="text-xs text-text-muted">
           {statusOutcomeLines[index]}
@@ -160,8 +143,10 @@ function RequestQueuesPage() {
     // link is about arranging the handoff; once the recipient has confirmed the
     // pickup, the handoff is done, so the link becomes "Contact the Recipient"
     // (the owner viewing this page is the provider, so they contact the recipient).
+    // Styled like the site's small bordered buttons, so the link reads as an
+    // action and matches the my-requests page's version of the same control.
     const threadLinkClasses =
-      'inline-flex items-center mt-1 text-xs font-medium text-primary-600 hover:text-primary-700'
+      'inline-flex items-center px-3 py-1.5 text-xs font-medium text-primary-600 border border-primary-200 rounded-md hover:bg-primary-50 transition-colors'
     let threadLink = null
     if (item.status === 'approved') {
       const exchangeThreadTarget = '/exchange-thread?claim=' + item.id
@@ -212,17 +197,17 @@ function RequestQueuesPage() {
           </p>
           <div className="flex items-center gap-2 mt-1">
             <span className={'inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ' + badgeClasses}>
-              {getStatusBadgeLabel(item.status)}
+              {getStatusBadgeLabel(item)}
             </span>
             <span className="text-xs text-text-muted">{requestedAtText}</span>
           </div>
           <ul className="mt-1">{statusOutcomeItems}</ul>
-          {threadLink}
         </div>
-        {(approveButton || denyButton) && (
+        {(approveButton || denyButton || threadLink) && (
           <div className="flex items-center gap-2 shrink-0 ml-3">
             {approveButton}
             {denyButton}
+            {threadLink}
           </div>
         )}
       </li>
@@ -240,13 +225,45 @@ function RequestQueuesPage() {
       }
       body = <ul>{rowItems}</ul>
     }
+    // The listing's cover photo (its first photo) as a square thumbnail next
+    // to the group heading, the same style the my-listings and my-requests
+    // rows use. A photo-less listing renders no image.
+    let thumbnailArea = null
+    if (group.photos !== undefined && group.photos.length > 0) {
+      thumbnailArea = (
+        <img
+          src={'/api/photos/' + group.photos[0].id}
+          alt={group.listing_title}
+          loading="lazy"
+          className="w-20 h-20 sm:w-24 sm:h-24 object-cover rounded-lg border border-border shrink-0"
+        />
+      )
+    }
+    // The posted-on line shows under the title when the backend sent the
+    // listing's creation time.
+    let postedLine = null
+    if (group.created_at !== undefined && group.created_at !== null) {
+      postedLine = (
+        <p className="text-xs text-text-muted mt-0.5">
+          Posted {formatTimestamp(group.created_at)}
+        </p>
+      )
+    }
+    // The thumbnail sits in the header row next to the title; the request
+    // rows below span the card's full width, flush left under the photo.
     return (
       <article key={group.listing_id} className="bg-surface rounded-xl border border-border p-6 shadow-sm">
-        <div className="flex items-start justify-between mb-4">
-          <h2 className="text-base font-semibold text-text">{group.listing_title}</h2>
-          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary-50 text-primary-700 shrink-0 ml-3">
-            {group.remaining_quantity} remaining
-          </span>
+        <div className="flex items-start gap-4 mb-4">
+          {thumbnailArea}
+          <div className="flex-1 min-w-0 flex items-start justify-between">
+            <div className="min-w-0">
+              <h2 className="text-base font-semibold text-text">{group.listing_title}</h2>
+              {postedLine}
+            </div>
+            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary-50 text-primary-700 shrink-0 ml-3">
+              {group.remaining_quantity} remaining
+            </span>
+          </div>
         </div>
         {body}
       </article>
@@ -322,7 +339,7 @@ function RequestQueuesPage() {
 
   return (
     <section>
-      <h1 className="text-3xl font-bold text-text mb-6">Requests from other members</h1>
+      <h1 className="text-3xl font-bold text-text mb-6">Requests From Other Members</h1>
       {contentArea}
     </section>
   )

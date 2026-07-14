@@ -553,6 +553,46 @@ function ListingDetailPage() {
     if (typeof listing.owner_name === 'string' && listing.owner_name !== '') {
       postedLine = 'Posted by ' + listing.owner_name + ' on ' + postedText
     }
+    // The first photo renders as one large cover image spanning the card, the
+    // way listing sites such as Airbnb and Etsy lead with a big photo. Any
+    // remaining photos render as smaller square tiles in a row below it, so
+    // the card width is always filled without crowding the page.
+    let photoArea = null
+    if (listing.photos !== undefined && listing.photos.length > 0) {
+      const coverPhoto = listing.photos[0]
+      const coverImage = (
+        <img
+          src={'/api/photos/' + coverPhoto.id}
+          alt={'Photo of ' + listing.title}
+          className="w-full aspect-video object-cover rounded-xl border border-border"
+        />
+      )
+      const extraImages = []
+      for (let index = 1; index < listing.photos.length; index = index + 1) {
+        const photo = listing.photos[index]
+        extraImages.push(
+          <img
+            key={photo.id}
+            src={'/api/photos/' + photo.id}
+            alt={'Photo of ' + listing.title}
+            loading="lazy"
+            className="w-full aspect-square object-cover rounded-lg border border-border"
+          />,
+        )
+      }
+      let extraArea = null
+      if (extraImages.length > 0) {
+        extraArea = (
+          <div className="grid grid-cols-3 gap-4 mt-4">{extraImages}</div>
+        )
+      }
+      photoArea = (
+        <div className="mb-6">
+          {coverImage}
+          {extraArea}
+        </div>
+      )
+    }
     // Spell out, in plain words, that the times above are in the viewer's own
     // local zone, the way calendar and event sites do. We add the IANA zone
     // name (like "Pacific/Honolulu") when the browser can report it.
@@ -663,6 +703,9 @@ function ListingDetailPage() {
                   className={inputClasses}
                 />
               </div>
+              <span className="text-sm text-text-muted pb-2.5 shrink-0">
+                (max: {listing.remaining_quantity})
+              </span>
               <button
                 type="submit"
                 disabled={isRequesting}
@@ -798,6 +841,10 @@ function ListingDetailPage() {
             </span>
           )}
         </div>
+        {/* The posted-by line shows under the title and again at the bottom of
+            the listing, so it is visible without scrolling past the photos. */}
+        <p className="text-xs text-text-muted mb-4">{postedLine}</p>
+        {photoArea}
         <p className="text-text-muted leading-relaxed mb-6">{listing.description}</p>
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
@@ -876,4 +923,3 @@ function ListingDetailPage() {
 }
 
 export default ListingDetailPage
-

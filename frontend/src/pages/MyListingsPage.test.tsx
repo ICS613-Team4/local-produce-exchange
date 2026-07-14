@@ -115,6 +115,35 @@ test('renders owned listings in the returned order', async () => {
   expect(items[1].textContent).toContain('Banana')
 })
 
+test('a row with photos shows the first photo as a thumbnail', async () => {
+  setLoggedIn()
+  const withPhotos = makeListing('a', 'Apple', 'active', null) as ReturnType<typeof makeListing> & {
+    photos?: Array<{ id: string; content_type: string; position: number }>
+  }
+  withPhotos.photos = [
+    { id: 'photo-first', content_type: 'image/png', position: 0 },
+    { id: 'photo-second', content_type: 'image/png', position: 1 },
+  ]
+  stubMyListings(() => makeFakeResponse(true, 200, [withPhotos]))
+
+  renderMyListings()
+
+  const image = await screen.findByRole('img', { name: 'Apple' })
+  // Only the first photo shows, even when the listing has more than one.
+  expect(image.getAttribute('src')).toBe('/api/photos/photo-first')
+  expect(screen.getAllByRole('img').length).toBe(1)
+})
+
+test('a row without photos shows no thumbnail image', async () => {
+  setLoggedIn()
+  stubMyListings(() => makeFakeResponse(true, 200, [makeListing('a', 'Apple', 'active', null)]))
+
+  renderMyListings()
+
+  expect(await screen.findByText(/Apple/)).toBeTruthy()
+  expect(screen.queryByRole('img')).toBeNull()
+})
+
 test('an active row shows edit, an enabled deactivate, a disabled activate, and a title link', async () => {
   setLoggedIn()
   stubMyListings(() => makeFakeResponse(true, 200, [makeListing('a', 'Apple', 'active', null)]))
