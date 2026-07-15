@@ -182,13 +182,31 @@ test('an owner-deactivated row shows no edit, a plain title, an enabled Activate
   expect((deactivateButton as HTMLButtonElement).disabled).toBe(true)
 })
 
-test('clicking Activate on a deactivated row alerts that it lands in User Story 31', async () => {
+test('clicking Activate calls the reactivate endpoint and reloads the list', async () => {
   setLoggedIn()
-  stubMyListings(() => makeFakeResponse(true, 200, [makeListing('b', 'Banana', 'deactivated', null)]))
+  vi.stubGlobal('confirm', () => {
+    return true
+  })
 
-  let alertMessage = ''
-  vi.stubGlobal('alert', (message: string) => {
-    alertMessage = message
+  let myListingsCalls = 0
+  let reactivateUrl = ''
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    const urlText = String(url)
+    if (urlText.includes('/reactivate')) {
+      reactivateUrl = urlText
+      return {
+        ok: true,
+        status: 204,
+        text: async () => {
+          return ''
+        },
+      }
+    }
+    myListingsCalls = myListingsCalls + 1
+    if (myListingsCalls === 1) {
+      return makeFakeResponse(true, 200, [makeListing('b', 'Banana', 'deactivated', null)])
+    }
+    return makeFakeResponse(true, 200, [makeListing('b', 'Banana', 'active', null)])
   })
 
   renderMyListings()
@@ -196,7 +214,113 @@ test('clicking Activate on a deactivated row alerts that it lands in User Story 
   const activateButton = await screen.findByRole('button', { name: 'Activate listing' })
   fireEvent.click(activateButton)
 
-  expect(alertMessage).toContain('User Story 31')
+  const titleLink = await screen.findByRole('link', { name: 'Banana' })
+  expect(titleLink.getAttribute('href')).toBe('/listings/b')
+  expect(reactivateUrl).toContain('/api/listings/b/reactivate')
+  expect(myListingsCalls).toBe(2)
+})
+
+test('cancelling the reactivate confirm does not call the endpoint', async () => {
+  setLoggedIn()
+  vi.stubGlobal('confirm', () => {
+    return false
+  })
+  let reactivateCalled = false
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    const urlText = String(url)
+    if (urlText.includes('/reactivate')) {
+      reactivateCalled = true
+      return {
+        ok: true,
+        status: 204,
+        text: async () => {
+          return ''
+        },
+      }
+    }
+    return makeFakeResponse(true, 200, [makeListing('b', 'Banana', 'deactivated', null)])
+  })
+
+  renderMyListings()
+
+  const activateButton = await screen.findByRole('button', { name: 'Activate listing' })
+  fireEvent.click(activateButton)
+  await waitForStateUpdates()
+
+  expect(reactivateCalled).toBe(false)
+})
+
+test('a failed reactivate shows the server message and keeps the row deactivated', async () => {
+  setLoggedIn()
+  vi.stubGlobal('confirm', () => {
+    return true
+  })
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    const urlText = String(url)
+    if (urlText.includes('/reactivate')) {
+      return makeFakeResponse(false, 403, {
+        detail: 'An administrator deactivated this listing, so you cannot reactivate it.',
+      })
+    }
+    return makeFakeResponse(true, 200, [makeListing('b', 'Banana', 'deactivated', null)])
+  })
+
+  renderMyListings()
+
+  const activateButton = await screen.findByRole('button', { name: 'Activate listing' })
+  fireEvent.click(activateButton)
+
+  expect(
+    await screen.findByText(
+      'An administrator deactivated this listing, so you cannot reactivate it.',
+    ),
+  ).toBeTruthy()
+  expect(screen.queryByRole('link', { name: 'Banana' })).toBeNull()
+  expect(screen.getByRole('button', { name: 'Activate listing' })).toBeTruthy()
+})
+
+test('a reactivate transport error shows its message and keeps the row deactivated', async () => {
+  setLoggedIn()
+  vi.stubGlobal('confirm', () => {
+    return true
+  })
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    const urlText = String(url)
+    if (urlText.includes('/reactivate')) {
+      throw new TypeError('Failed to fetch')
+    }
+    return makeFakeResponse(true, 200, [makeListing('b', 'Banana', 'deactivated', null)])
+  })
+
+  renderMyListings()
+
+  const activateButton = await screen.findByRole('button', { name: 'Activate listing' })
+  fireEvent.click(activateButton)
+
+  expect(await screen.findByText('Request failed: TypeError: Failed to fetch')).toBeTruthy()
+  expect(screen.queryByRole('link', { name: 'Banana' })).toBeNull()
+})
+
+test('a 401 on reactivate clears the credentials and shows the logged-out message', async () => {
+  setLoggedIn()
+  vi.stubGlobal('confirm', () => {
+    return true
+  })
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    const urlText = String(url)
+    if (urlText.includes('/reactivate')) {
+      return makeFakeResponse(false, 401, { detail: 'Not authenticated.' })
+    }
+    return makeFakeResponse(true, 200, [makeListing('b', 'Banana', 'deactivated', null)])
+  })
+
+  renderMyListings()
+
+  const activateButton = await screen.findByRole('button', { name: 'Activate listing' })
+  fireEvent.click(activateButton)
+
+  expect(await screen.findByText('You need to be logged in to see this page.')).toBeTruthy()
+  expect(window.localStorage.getItem('memberId')).toBeNull()
 })
 
 test('an admin-deactivated row shows no edit, no buttons, and the explanation', async () => {

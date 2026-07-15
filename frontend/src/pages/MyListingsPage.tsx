@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
+import type { MouseEvent } from 'react'
 import { Link } from 'react-router'
 
 import {
   sendDeactivateListingRequest,
   sendGetMyListingsRequest,
+  sendReactivateListingRequest,
 } from '../services/listingService'
 import type { ListingDetail, ListingResult } from '../services/listingService'
 import { authStateChangedEventName } from '../services/authService'
@@ -30,15 +32,19 @@ function MyListingsPage() {
   // the loading state.
   const [result, setResult] = useState<ListingResult | null>(null)
 
-  // Bumped after a successful deactivate to re-run the load effect, so the row
-  // updates to its new status without a full page reload.
+  // Bumped after a successful status change to re-run the load effect, so the
+  // row updates without a full page reload.
   const [reloadCounter, setReloadCounter] = useState(0)
 
   // The listing id whose deactivate request is in flight, so only that row's
   // button is greyed while it runs.
   const [deactivatingId, setDeactivatingId] = useState('')
 
-  // A failure message from a deactivate attempt, shown inline.
+  // The listing id whose reactivate request is in flight, so only that row's
+  // button is greyed while it runs.
+  const [reactivatingId, setReactivatingId] = useState('')
+
+  // A failure message from a listing action, shown inline.
   const [actionError, setActionError] = useState('')
 
   // Blocks a same-tick double-click on one row's Deactivate button. Holds the
@@ -46,8 +52,12 @@ function MyListingsPage() {
   // ListingDetailPage's deactivate guard.
   const deactivateInFlightRef = useRef('')
 
+  // Blocks a same-tick double-click on one row's Activate button. Holds the key
+  // of the request in flight (listing id plus member id).
+  const reactivateInFlightRef = useRef('')
+
   // Load the caller's listings when the page has a logged-in member, and again
-  // whenever reloadCounter changes (after a successful deactivate).
+  // whenever reloadCounter changes after a successful status change.
   useEffect(() => {
     latestRequestNumber.current = latestRequestNumber.current + 1
     if (memberId === '') {
@@ -111,7 +121,8 @@ function MyListingsPage() {
   }
 
   // Deactivate one active listing the owner views.
-  async function handleDeactivate(listingId: string) {
+  async function handleDeactivate(event: MouseEvent<HTMLButtonElement>) {
+    const listingId = event.currentTarget.value
     const requestKey = listingId + '|' + memberId
     if (deactivateInFlightRef.current === requestKey) {
       return
@@ -163,6 +174,61 @@ function MyListingsPage() {
     setActionError(failureMessage)
   }
 
+  async function handleReactivate(event: MouseEvent<HTMLButtonElement>) {
+    const listingId = event.currentTarget.value
+    const requestKey = listingId + '|' + memberId
+    if (reactivateInFlightRef.current === requestKey) {
+      return
+    }
+    reactivateInFlightRef.current = requestKey
+
+    const confirmed = window.confirm(
+      'Reactivate this listing? It will show up in browsing again and can take new requests.',
+    )
+    if (confirmed === false) {
+      if (reactivateInFlightRef.current === requestKey) {
+        reactivateInFlightRef.current = ''
+      }
+      return
+    }
+
+    setReactivatingId(listingId)
+    setActionError('')
+
+    const reactivateResult = await sendReactivateListingRequest(listingId, memberId)
+
+    if (reactivateInFlightRef.current === requestKey) {
+      reactivateInFlightRef.current = ''
+    }
+
+    setReactivatingId('')
+
+    if (reactivateResult.status === 401) {
+      window.localStorage.removeItem('memberId')
+      window.localStorage.removeItem('memberName')
+      window.localStorage.removeItem('memberEmail')
+      setMemberId('')
+      window.dispatchEvent(new Event(authStateChangedEventName))
+      return
+    }
+
+    if (reactivateResult.ok === true) {
+      setReloadCounter((currentValue) => currentValue + 1)
+      return
+    }
+
+    let failureMessage = 'Could not reactivate the listing. Please try again.'
+    if (reactivateResult.errorMessage !== '') {
+      failureMessage = reactivateResult.errorMessage
+    } else if (typeof reactivateResult.data === 'object' && reactivateResult.data !== null) {
+      const dataObject = reactivateResult.data as { detail?: unknown }
+      if (typeof dataObject.detail === 'string') {
+        failureMessage = dataObject.detail
+      }
+    }
+    setActionError(failureMessage)
+  }
+
   function buildListingRow(listing: ListingDetail) {
     const postedText = formatTimestamp(listing.created_at)
     const statusLabel = buildStatusLabel(listing)
@@ -198,8 +264,9 @@ function MyListingsPage() {
           </Link>
           <button
             type="button"
+            value={listing.id}
             disabled={isThisRowPending}
-            onClick={() => handleDeactivate(listing.id)}
+            onClick={handleDeactivate}
             className="inline-flex items-center px-3 py-1.5 text-xs font-medium text-error border border-red-200 rounded-md hover:bg-error-bg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isThisRowPending ? 'Deactivating…' : 'Deactivate'}
@@ -210,21 +277,21 @@ function MyListingsPage() {
         </div>
       )
     } else {
+      const isThisRowReactivating = reactivatingId === listing.id
       controls = (
-        <div className="mt-3 space-y-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => window.alert('Reactivating a listing will be implemented in User Story 31.')}
-              className="inline-flex items-center px-3 py-1.5 text-xs font-medium text-primary-600 border border-primary-200 rounded-md hover:bg-primary-50 transition-colors"
-            >
-              Activate listing
-            </button>
-            <button type="button" disabled className="inline-flex items-center px-3 py-1.5 text-xs font-medium text-text-muted border border-border rounded-md opacity-50 cursor-not-allowed">
-              Deactivate listing
-            </button>
-          </div>
-          <p className="text-xs text-text-muted">This listing cannot be edited until reactivation is implemented.</p>
+        <div className="flex flex-wrap items-center gap-2 mt-3">
+          <button
+            type="button"
+            value={listing.id}
+            disabled={isThisRowReactivating}
+            onClick={handleReactivate}
+            className="inline-flex items-center px-3 py-1.5 text-xs font-medium text-primary-600 border border-primary-200 rounded-md hover:bg-primary-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Activate listing
+          </button>
+          <button type="button" disabled className="inline-flex items-center px-3 py-1.5 text-xs font-medium text-text-muted border border-border rounded-md opacity-50 cursor-not-allowed">
+            Deactivate listing
+          </button>
         </div>
       )
     }
@@ -329,7 +396,7 @@ function MyListingsPage() {
     )
   }
 
-  // A failed deactivate shows its message above the list, without hiding it.
+  // A failed listing action shows its message above the list, without hiding it.
   let actionErrorArea = null
   if (actionError !== '') {
     actionErrorArea = (

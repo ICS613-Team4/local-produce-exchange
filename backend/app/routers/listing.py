@@ -817,3 +817,98 @@ def deactivate_listing(
 
     # FastAPI sends 204 with an empty body given status_code=204.
     return None
+
+
+@router.post("/listings/{listing_id}/reactivate", status_code=204)
+def reactivate_listing(
+    listing_id: str,
+    current_member: Member = Depends(get_current_member),
+    session: Session = Depends(get_db_session),
+) -> None:
+    # The owner turns their own deactivated listing back on. This is the inverse
+    # of deactivate_listing: it flips status from "deactivated" back to "active".
+    # It refuses a listing an admin took down (deactivated_by is set), because
+    # only an admin can undo an admin deactivation (US-32). The checks run in the
+    # same order as deactivate_listing so the two endpoints behave the same way.
+
+    # Active-member gate. A suspended account gets a suspension-specific message;
+    # any other non-active status gets the generic one. This runs before the
+    # ownership check, so even the owner is blocked while suspended.
+    if current_member.status != "active":
+        if current_member.status == "suspended":
+            raise HTTPException(
+                status_code=403,
+                detail="Your account is suspended, so you cannot reactivate a listing.",
+            )
+        raise HTTPException(
+            status_code=403,
+            detail="Your account is not active, so you cannot reactivate a listing.",
+        )
+
+    # A value that is not a real UUID cannot match any listing, so treat it as
+    # not found rather than a server error.
+    try:
+        listing_uuid = uuid.UUID(listing_id)
+    except (ValueError, AttributeError, TypeError):
+        raise HTTPException(status_code=404, detail="This listing is unavailable.")
+
+    # Load the row. A down or unmigrated database returns 503, matching the other
+    # endpoints.
+    try:
+        row = session.scalars(select(Listing).where(Listing.id == listing_uuid)).first()
+    except Exception as error:
+        logger.error("Reading a listing for reactivate failed: %s", error)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Could not read the listing right now. "
+                "Make sure the database is running and migrated."
+            ),
+        )
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="This listing is unavailable.")
+
+    # Ownership gate (Scenario 3). A member can only reactivate their own listing;
+    # another member's listing stays unchanged.
+    if row.owner_id != current_member.id:
+        raise HTTPException(status_code=403, detail="You can only reactivate your own listing.")
+
+    # Workflow gate (Scenario 4). An already-active listing has nothing to
+    # reactivate.
+    if row.status == "active":
+        raise HTTPException(status_code=409, detail="This listing is already active.")
+
+    # Only a deactivated listing can be reactivated. A claimed, expired, or
+    # cancelled listing is not a reactivation target.
+    if row.status != "deactivated":
+        raise HTTPException(status_code=409, detail="Only a deactivated listing can be reactivated.")
+
+    # Permission gate (Scenario 2). A set deactivated_by means an admin took the
+    # listing down. Only an admin can undo that (US-32), so the owner is denied
+    # and the listing stays deactivated.
+    if row.deactivated_by is not None:
+        raise HTTPException(
+            status_code=403,
+            detail="An administrator deactivated this listing, so you cannot reactivate it.",
+        )
+
+    # The one state change this story owns. The listing was owner-deactivated, so
+    # deactivated_by is already null and stays null.
+    row.status = "active"
+
+    try:
+        session.commit()
+    except Exception as error:
+        session.rollback()
+        logger.error("Reactivating a listing failed: %s", error)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Could not reactivate the listing right now. "
+                "Make sure the database is running and migrated."
+            ),
+        )
+
+    # FastAPI sends 204 with an empty body given status_code=204.
+    return None
