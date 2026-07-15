@@ -1325,27 +1325,21 @@ def complete_exchange(
 
 
 @router.patch("/claims/{claim_id}/cancel")
-def cancel_exchange(
+def cancel_approved_claim(
     claim_id: str,
     current_member: Member = Depends(get_current_member),
     session: Session = Depends(get_db_session),
 ) -> ClaimResponse:
-    # The poster calls off an exchange they already approved, before pickup.
-    # The claim goes to "cancelled" and the quantity that approval reserved
-    # goes back to the listing. Only an APPROVED claim can be cancelled this
-    # way: a pending one is denied instead, and a picked-up or completed one
-    # is already in the recipient's hands.
-
-    # Only an active member may cancel an exchange.
+    # Only an active member may cancel a request.
     if current_member.status != "active":
         if current_member.status == "suspended":
             raise HTTPException(
                 status_code=403,
-                detail="Your account is suspended, so you cannot cancel an exchange.",
+                detail="Your account is suspended, so you cannot cancel a request.",
             )
         raise HTTPException(
             status_code=403,
-            detail="Your account is not active, so you cannot cancel an exchange.",
+            detail="Your account is not active, so you cannot cancel a request.",
         )
 
     try:
@@ -1353,14 +1347,13 @@ def cancel_exchange(
     except (ValueError, AttributeError, TypeError):
         raise HTTPException(status_code=404, detail="Request not found.")
 
-    # Lock the claim so two cancellations (or a cancellation racing a pickup
-    # confirmation) cannot update it at once.
+    # Lock the claim first. A second cancel waits, then sees "cancelled" below.
     try:
         claim = session.scalars(
             select(Claim).where(Claim.id == claim_uuid).with_for_update()
         ).first()
     except Exception as error:
-        logger.error("Loading claim for cancellation failed: %s", error)
+        logger.error("Loading claim for cancel failed: %s", error)
         raise HTTPException(
             status_code=503,
             detail=(
@@ -1372,22 +1365,34 @@ def cancel_exchange(
     if claim is None:
         raise HTTPException(status_code=404, detail="Request not found.")
 
+    if claim.claimant_id != current_member.id:
+        raise HTTPException(
+            status_code=403,
+            detail="You can only cancel your own request.",
+        )
+
     if claim.status != "approved":
         raise HTTPException(
             status_code=409,
-            detail="This exchange is not approved, so it cannot be cancelled.",
+            detail="This request is not approved, so it cannot be cancelled.",
         )
 
-    # Load the listing and lock its row too: the reserved quantity is returned
-    # below, and the lock serializes that read-modify-write against approvals
-    # of other claims on the same listing. Claims are always locked before
-    # listings here, the same fixed order as approve and deny.
+    if claim.approved_quantity is None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This approved request has no allocated quantity, "
+                "so it cannot be cancelled."
+            ),
+        )
+
+    # Lock the listing second, matching approve_claim's lock order.
     try:
         listing = session.scalars(
             select(Listing).where(Listing.id == claim.listing_id).with_for_update()
         ).first()
     except Exception as error:
-        logger.error("Loading listing for cancellation failed: %s", error)
+        logger.error("Loading listing for cancel failed: %s", error)
         raise HTTPException(
             status_code=503,
             detail=(
@@ -1399,29 +1404,22 @@ def cancel_exchange(
     if listing is None:
         raise HTTPException(status_code=404, detail="Request not found.")
 
-    if listing.owner_id != current_member.id:
-        raise HTTPException(
-            status_code=403,
-            detail="Only the listing owner can cancel the exchange.",
-        )
-
-    # Apply the cancellation. The quantity the approval moved off the listing
-    # goes back, so it can be offered to someone else.
+    amount_to_restore = claim.approved_quantity
     now = datetime.now(timezone.utc)
 
-    if claim.approved_quantity is not None:
-        listing.remaining_quantity = listing.remaining_quantity + claim.approved_quantity
     claim.status = "cancelled"
     claim.cancelled_at = now
+    listing.remaining_quantity = listing.remaining_quantity + amount_to_restore
 
-    # Notify the claimant that the poster called off the approved exchange
-    # (US-22).
+    # Notify the listing owner that the recipient called off the approved
+    # exchange (US-22), so the owner knows the quantity is available again.
     cancelled_message = (
-        f"Your approved exchange for '{listing.title}' was cancelled by the poster."
+        f"{current_member.name} cancelled their approved request on your "
+        f"listing '{listing.title}'."
     )
     create_notification(
         session,
-        claim.claimant_id,
+        listing.owner_id,
         claim.id,
         "request_cancelled",
         cancelled_message,
@@ -1439,11 +1437,11 @@ def cancel_exchange(
         session.commit()
     except Exception as error:
         session.rollback()
-        logger.error("Cancelling an exchange failed: %s", error)
+        logger.error("Cancelling an approved claim failed: %s", error)
         raise HTTPException(
             status_code=503,
             detail=(
-                "Could not cancel the exchange right now. "
+                "Could not cancel the request right now. "
                 "Make sure the database is running and migrated."
             ),
         )

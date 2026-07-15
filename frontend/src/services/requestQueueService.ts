@@ -524,9 +524,8 @@ export async function sendCancelExchangeRequest(
   memberId: string,
   claimId: string,
 ): Promise<RequestQueuesResult> {
-  // The poster calls off an exchange they already approved (before pickup).
-  // PATCH with no body; the backend checks the caller owns the listing, sets
-  // the claim to "cancelled", and returns the reserved quantity to the listing.
+  // The recipient cancels an approved request before pickup. PATCH has no body;
+  // the backend checks the caller owns the request and restores its quantity.
   const url = '/api/claims/' + claimId + '/cancel'
 
   try {

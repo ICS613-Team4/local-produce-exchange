@@ -498,7 +498,7 @@ test('cancel sends a PATCH to the cancel path with the member id header', async 
 
 test('cancel maps an HTTP error response into the result object', async () => {
   const responseBody = {
-    detail: 'This exchange is not approved, so it cannot be cancelled.',
+    detail: 'This request is not approved, so it cannot be cancelled.',
   }
   vi.stubGlobal('fetch', async () => {
     return makeFakeResponse(false, 409, JSON.stringify(responseBody))

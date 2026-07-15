@@ -430,9 +430,9 @@ test('a cancelled exchange shows the cancelled banner and disables the composer'
 
   renderPage()
 
-  // The claim carries an approved quantity, so the canceller is the poster,
+  // The claim carries an approved quantity, so the canceller is the requester,
   // named in the title line; the lock sentence sits under it as body text.
-  const bannerTitle = await screen.findByText('This exchange was cancelled by Bob Baker.')
+  const bannerTitle = await screen.findByText('This exchange was cancelled by Carol Chen.')
   expect(bannerTitle.className).toContain('font-medium')
   expect(
     screen.getByText('The thread is locked, so no new messages can be sent.'),

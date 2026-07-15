@@ -407,8 +407,8 @@ function ExchangeThreadPage() {
 
     // A cancelled exchange locks its thread the same way, minus the review
     // button (nothing was exchanged, so there is nobody to review). Only the
-    // listing owner can cancel after approval, so when the claim carries an
-    // approved quantity the canceller is the poster. A request withdrawn
+    // requester can cancel after approval (US-13), so when the claim carries an
+    // approved quantity the canceller is the requester. A request withdrawn
     // before approval also ends as "cancelled"; that one names nobody. The
     // gray box matches how the request pages badge cancelled rows.
     const exchangeIsCancelled = thread.claim_status === 'cancelled'
@@ -416,11 +416,11 @@ function ExchangeThreadPage() {
     if (exchangeIsCancelled) {
       let cancelledTitle = 'This exchange was cancelled.'
       if (thread.approved_quantity !== null && thread.approved_quantity !== undefined) {
-        let posterName = 'the poster'
-        if (typeof thread.owner_name === 'string' && thread.owner_name !== '') {
-          posterName = thread.owner_name
+        let requesterName = 'the requester'
+        if (typeof thread.claimant_name === 'string' && thread.claimant_name !== '') {
+          requesterName = thread.claimant_name
         }
-        cancelledTitle = 'This exchange was cancelled by ' + posterName + '.'
+        cancelledTitle = 'This exchange was cancelled by ' + requesterName + '.'
       }
       cancelledBanner = (
         <div className="rounded-lg bg-background-alt border border-border px-4 py-3 mb-4">

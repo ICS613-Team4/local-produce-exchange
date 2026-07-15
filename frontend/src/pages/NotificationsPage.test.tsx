@@ -153,8 +153,8 @@ test('each notification kind links to the right place', async () => {
 })
 
 test('a cancelled-exchange notification keeps its exchange link', async () => {
-  // The poster cancelling an approved exchange locks its thread, but the
-  // requester's notification still links there: the thread stays readable
+  // The requester cancelling an approved exchange locks its thread, but the
+  // poster's notification still links there: the thread stays readable
   // as history even though sending is closed.
   setLoggedIn()
   const body = {
@@ -163,7 +163,7 @@ test('a cancelled-exchange notification keeps its exchange link', async () => {
         id: 'n9',
         claim_id: 'claim-12',
         kind: 'request_cancelled',
-        message: "Your approved exchange for 'Thai Basil' was cancelled by the poster.",
+        message: "Carol Chen cancelled their approved request on your listing 'Thai Basil'.",
         is_read: false,
         created_at: '2026-07-03T10:00:00.000Z',
       },

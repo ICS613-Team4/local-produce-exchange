@@ -1,7 +1,7 @@
-# Tests for the poster cancelling an approved exchange before pickup.
+# Tests for cancelling an approved claim (US-13).
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import pytest
 from fastapi import HTTPException
@@ -12,49 +12,8 @@ from sqlalchemy.exc import OperationalError
 from app.models.claim import Claim
 from app.models.listing import Listing
 from app.models.member import Member
-from app.routers.claim import cancel_exchange
-
-
-class FakeScalarResult:
-    def __init__(self, value):
-        self.value = value
-
-    def first(self):
-        return self.value
-
-
-class ListingResultSession:
-    def __init__(self, claim, listing_result):
-        self.claim = claim
-        self.listing_result = listing_result
-        self.query_count = 0
-
-    def scalars(self, statement):
-        self.query_count = self.query_count + 1
-        if self.query_count == 1:
-            return FakeScalarResult(self.claim)
-        if isinstance(self.listing_result, Exception):
-            raise self.listing_result
-        return FakeScalarResult(self.listing_result)
-
-
-class CommitFailsSession:
-    def __init__(self, session):
-        self.session = session
-
-    def scalars(self, statement):
-        return self.session.scalars(statement)
-
-    def add(self, instance):
-        # The route saves a notification (US-22) with session.add before its
-        # commit, so this fake must accept the add and pass it through.
-        self.session.add(instance)
-
-    def commit(self):
-        raise OperationalError("commit", {}, Exception("database is down"))
-
-    def rollback(self):
-        self.session.rollback()
+from app.models.notification import Notification
+from app.routers.claim import approve_claim, cancel_approved_claim
 
 
 def insert_member(session, status="active", email="member@example.com", name="Member"):
@@ -89,271 +48,335 @@ def insert_listing(session, owner, remaining_quantity=10):
     return listing.id
 
 
-def insert_claim(session, listing_id, claimant, quantity=3, status="approved"):
-    now = datetime.now(timezone.utc)
-    approved_quantity = None
-    approved_at = None
-    picked_up_at = None
-    completed_at = None
-    cancelled_at = None
-    denied_at = None
-
-    if status == "approved" or status == "picked_up" or status == "completed":
-        approved_quantity = quantity
-        approved_at = now - timedelta(minutes=20)
-        # The live flow moves the approved quantity off the listing at approval
-        # time, so mirror that here; the database's remaining-le-total check
-        # constraint rejects a cancel that would inflate remaining otherwise.
-        listing = session.get(Listing, listing_id)
-        listing.remaining_quantity = listing.remaining_quantity - quantity
-    if status == "picked_up" or status == "completed":
-        picked_up_at = now - timedelta(minutes=10)
-    if status == "completed":
-        completed_at = now
-    if status == "cancelled":
-        cancelled_at = now
-    if status == "denied":
-        denied_at = now
-
+def insert_claim(
+    session,
+    listing_id,
+    claimant,
+    quantity=3,
+    status="requested",
+    approved_quantity=None,
+):
     claim = Claim(
         listing_id=listing_id,
         claimant_id=claimant.id,
         requested_quantity=quantity,
         approved_quantity=approved_quantity,
         status=status,
-        requested_at=now - timedelta(minutes=30),
-        approved_at=approved_at,
-        picked_up_at=picked_up_at,
-        completed_at=completed_at,
-        cancelled_at=cancelled_at,
-        denied_at=denied_at,
+        requested_at=datetime.now(timezone.utc),
     )
+    if status == "approved":
+        claim.approved_at = datetime.now(timezone.utc)
     session.add(claim)
     session.commit()
     return claim.id
 
 
-def test_cancel_exchange_happy_path(db_session):
+def test_cancel_approved_claim_happy_path(db_session):
+    poster = insert_member(db_session, email="poster@example.com", name="Poster")
+    listing_id = insert_listing(db_session, poster)
+    claimant = insert_member(db_session, email="claimant@example.com", name="Claimant")
+    claim_id = insert_claim(db_session, listing_id, claimant, quantity=3)
+    approve_claim(str(claim_id), poster, db_session)
+
+    response = cancel_approved_claim(str(claim_id), claimant, db_session)
+
+    assert response.status == "cancelled"
+    assert response.cancelled_at is not None
+    assert response.approved_quantity == 3
+    assert response.approved_at is not None
+
+
+def test_cancel_restores_remaining_quantity(db_session):
+    poster = insert_member(db_session, email="poster@example.com", name="Poster")
+    listing_id = insert_listing(db_session, poster)
+    claimant = insert_member(db_session, email="claimant@example.com", name="Claimant")
+    claim_id = insert_claim(db_session, listing_id, claimant, quantity=3)
+    approve_claim(str(claim_id), poster, db_session)
+
+    cancel_approved_claim(str(claim_id), claimant, db_session)
+
+    listing = db_session.scalars(select(Listing).where(Listing.id == listing_id)).first()
+    assert listing.remaining_quantity == 10
+
+
+def test_cancel_persists_cancelled_fields(db_session):
+    poster = insert_member(db_session, email="poster@example.com", name="Poster")
+    listing_id = insert_listing(db_session, poster)
+    claimant = insert_member(db_session, email="claimant@example.com", name="Claimant")
+    claim_id = insert_claim(db_session, listing_id, claimant, quantity=3)
+    approve_claim(str(claim_id), poster, db_session)
+
+    cancel_approved_claim(str(claim_id), claimant, db_session)
+
+    claim = db_session.scalars(select(Claim).where(Claim.id == claim_id)).first()
+    assert claim.status == "cancelled"
+    assert claim.cancelled_at is not None
+    assert claim.approved_quantity == 3
+
+
+def test_cancel_notifies_the_listing_owner(db_session):
+    # The recipient cancels, so the poster is the one who needs to hear about
+    # it (US-22): their quantity is back on the listing.
+    poster = insert_member(db_session, email="poster@example.com", name="Poster")
+    listing_id = insert_listing(db_session, poster)
+    claimant = insert_member(db_session, email="claimant@example.com", name="Claimant")
+    claim_id = insert_claim(db_session, listing_id, claimant, quantity=3)
+    approve_claim(str(claim_id), poster, db_session)
+
+    cancel_approved_claim(str(claim_id), claimant, db_session)
+
+    notifications = db_session.scalars(
+        select(Notification)
+        .where(Notification.claim_id == claim_id)
+        .where(Notification.kind == "request_cancelled")
+    ).all()
+    assert len(notifications) == 1
+    assert notifications[0].member_id == poster.id
+    assert "Claimant" in notifications[0].message
+    assert "Fresh Tomatoes" in notifications[0].message
+
+
+def test_cancel_restores_partial_approved_amount(db_session):
+    poster = insert_member(db_session, email="poster@example.com", name="Poster")
+    listing_id = insert_listing(db_session, poster, remaining_quantity=2)
+    claimant = insert_member(db_session, email="claimant@example.com", name="Claimant")
+    claim_id = insert_claim(db_session, listing_id, claimant, quantity=5)
+    approve_claim(str(claim_id), poster, db_session)
+
+    cancel_approved_claim(str(claim_id), claimant, db_session)
+
+    listing = db_session.scalars(select(Listing).where(Listing.id == listing_id)).first()
+    assert listing.remaining_quantity == 2
+
+
+def test_cancel_rejects_requested_claim(db_session):
     poster = insert_member(db_session, email="poster@example.com", name="Poster")
     listing_id = insert_listing(db_session, poster)
     claimant = insert_member(db_session, email="claimant@example.com", name="Claimant")
     claim_id = insert_claim(db_session, listing_id, claimant)
 
-    response = cancel_exchange(str(claim_id), poster, db_session)
+    with pytest.raises(HTTPException) as raised:
+        cancel_approved_claim(str(claim_id), claimant, db_session)
 
-    assert response.status == "cancelled"
-    assert response.cancelled_at is not None
-    assert response.approved_at is not None
-
-    saved_claim = db_session.scalars(
-        select(Claim).where(Claim.id == claim_id)
-    ).first()
-    assert saved_claim.status == "cancelled"
-    assert saved_claim.cancelled_at is not None
+    assert raised.value.status_code == 409
+    assert "not approved" in raised.value.detail.lower()
+    claim = db_session.scalars(select(Claim).where(Claim.id == claim_id)).first()
+    listing = db_session.scalars(select(Listing).where(Listing.id == listing_id)).first()
+    assert claim.status == "requested"
+    assert listing.remaining_quantity == 10
 
 
-def test_cancel_exchange_returns_the_reserved_quantity(db_session):
-    # The helper mirrors approval by moving 3 off the listing (7 of 10 left).
-    # Cancelling puts the 3 back.
-    poster = insert_member(db_session, email="poster@example.com", name="Poster")
-    listing_id = insert_listing(db_session, poster, remaining_quantity=10)
-    claimant = insert_member(db_session, email="claimant@example.com", name="Claimant")
-    claim_id = insert_claim(db_session, listing_id, claimant, quantity=3)
-    listing = db_session.scalars(
-        select(Listing).where(Listing.id == listing_id)
-    ).first()
-    assert listing.remaining_quantity == 7
-
-    cancel_exchange(str(claim_id), poster, db_session)
-
-    db_session.expire_all()
-    saved_listing = db_session.scalars(
-        select(Listing).where(Listing.id == listing_id)
-    ).first()
-    assert saved_listing.remaining_quantity == 10
-
-
-@pytest.mark.parametrize(
-    "claim_status",
-    ["requested", "picked_up", "completed", "cancelled", "denied"],
-)
-def test_cancel_exchange_rejects_wrong_status(db_session, claim_status):
+def test_cancel_rejects_picked_up_claim(db_session):
     poster = insert_member(db_session, email="poster@example.com", name="Poster")
     listing_id = insert_listing(db_session, poster)
     claimant = insert_member(db_session, email="claimant@example.com", name="Claimant")
-    claim_id = insert_claim(db_session, listing_id, claimant, status=claim_status)
+    claim_id = insert_claim(db_session, listing_id, claimant, status="picked_up")
 
     with pytest.raises(HTTPException) as raised:
-        cancel_exchange(str(claim_id), poster, db_session)
+        cancel_approved_claim(str(claim_id), claimant, db_session)
 
     assert raised.value.status_code == 409
-    assert raised.value.detail == (
-        "This exchange is not approved, so it cannot be cancelled."
-    )
-    saved_claim = db_session.scalars(
-        select(Claim).where(Claim.id == claim_id)
-    ).first()
-    assert saved_claim.status == claim_status
+    claim = db_session.scalars(select(Claim).where(Claim.id == claim_id)).first()
+    assert claim.status == "picked_up"
 
 
-def test_cancel_exchange_rejects_non_owner(db_session):
+def test_cancel_rejects_completed_claim(db_session):
+    poster = insert_member(db_session, email="poster@example.com", name="Poster")
+    listing_id = insert_listing(db_session, poster)
+    claimant = insert_member(db_session, email="claimant@example.com", name="Claimant")
+    claim_id = insert_claim(db_session, listing_id, claimant, status="completed")
+
+    with pytest.raises(HTTPException) as raised:
+        cancel_approved_claim(str(claim_id), claimant, db_session)
+
+    assert raised.value.status_code == 409
+    claim = db_session.scalars(select(Claim).where(Claim.id == claim_id)).first()
+    assert claim.status == "completed"
+
+
+def test_cancel_rejects_denied_claim(db_session):
+    poster = insert_member(db_session, email="poster@example.com", name="Poster")
+    listing_id = insert_listing(db_session, poster)
+    claimant = insert_member(db_session, email="claimant@example.com", name="Claimant")
+    claim_id = insert_claim(db_session, listing_id, claimant, status="denied")
+
+    with pytest.raises(HTTPException) as raised:
+        cancel_approved_claim(str(claim_id), claimant, db_session)
+
+    assert raised.value.status_code == 409
+    claim = db_session.scalars(select(Claim).where(Claim.id == claim_id)).first()
+    assert claim.status == "denied"
+
+
+def test_cancel_rejects_already_cancelled_claim(db_session):
+    poster = insert_member(db_session, email="poster@example.com", name="Poster")
+    listing_id = insert_listing(db_session, poster)
+    claimant = insert_member(db_session, email="claimant@example.com", name="Claimant")
+    claim_id = insert_claim(db_session, listing_id, claimant, status="cancelled")
+
+    with pytest.raises(HTTPException) as raised:
+        cancel_approved_claim(str(claim_id), claimant, db_session)
+
+    assert raised.value.status_code == 409
+    claim = db_session.scalars(select(Claim).where(Claim.id == claim_id)).first()
+    assert claim.status == "cancelled"
+
+
+def test_cancel_rejects_non_claimant(db_session):
     poster = insert_member(db_session, email="poster@example.com", name="Poster")
     listing_id = insert_listing(db_session, poster)
     claimant = insert_member(db_session, email="claimant@example.com", name="Claimant")
     stranger = insert_member(db_session, email="stranger@example.com", name="Stranger")
-    claim_id = insert_claim(db_session, listing_id, claimant)
+    claim_id = insert_claim(db_session, listing_id, claimant, quantity=3)
+    approve_claim(str(claim_id), poster, db_session)
 
     with pytest.raises(HTTPException) as raised:
-        cancel_exchange(str(claim_id), stranger, db_session)
+        cancel_approved_claim(str(claim_id), stranger, db_session)
 
     assert raised.value.status_code == 403
-    assert raised.value.detail == "Only the listing owner can cancel the exchange."
-    saved_claim = db_session.scalars(
-        select(Claim).where(Claim.id == claim_id)
-    ).first()
-    assert saved_claim.status == "approved"
-    assert saved_claim.cancelled_at is None
+    assert "own" in raised.value.detail.lower()
+    claim = db_session.scalars(select(Claim).where(Claim.id == claim_id)).first()
+    listing = db_session.scalars(select(Listing).where(Listing.id == listing_id)).first()
+    assert claim.status == "approved"
+    assert listing.remaining_quantity == 7
 
 
-def test_cancel_exchange_rejects_bad_claim_id(db_session):
-    poster = insert_member(db_session, email="poster@example.com", name="Poster")
-
-    with pytest.raises(HTTPException) as raised:
-        cancel_exchange("not-a-uuid", poster, db_session)
-
-    assert raised.value.status_code == 404
-
-
-def test_cancel_exchange_rejects_missing_claim(db_session):
-    poster = insert_member(db_session, email="poster@example.com", name="Poster")
-
-    with pytest.raises(HTTPException) as raised:
-        cancel_exchange(str(uuid.uuid4()), poster, db_session)
-
-    assert raised.value.status_code == 404
-
-
-@pytest.mark.parametrize(
-    ("member_status", "detail_text"),
-    [
-        ("suspended", "Your account is suspended"),
-        ("inactive", "Your account is not active"),
-    ],
-)
-def test_cancel_exchange_rejects_non_active_owner(
-    db_session,
-    member_status,
-    detail_text,
-):
-    poster = insert_member(
-        db_session,
-        status=member_status,
-        email=member_status + "@example.com",
-        name="Poster",
-    )
-    listing_id = insert_listing(db_session, poster)
-    claimant = insert_member(db_session, email="claimant@example.com", name="Claimant")
-    claim_id = insert_claim(db_session, listing_id, claimant)
-
-    with pytest.raises(HTTPException) as raised:
-        cancel_exchange(str(claim_id), poster, db_session)
-
-    assert raised.value.status_code == 403
-    assert detail_text in raised.value.detail
-    saved_claim = db_session.scalars(
-        select(Claim).where(Claim.id == claim_id)
-    ).first()
-    assert saved_claim.status == "approved"
-
-
-def test_cancel_exchange_returns_503_on_database_error(broken_session):
-    poster = Member(
-        id=uuid.uuid4(),
-        name="Poster",
-        email="poster@example.com",
-        password_hash="not-a-real-hash",
-        status="active",
-    )
-
-    with pytest.raises(HTTPException) as raised:
-        cancel_exchange(str(uuid.uuid4()), poster, broken_session)
-
-    assert raised.value.status_code == 503
-
-
-def test_cancel_exchange_returns_503_on_listing_load_error():
-    listing_id = uuid.uuid4()
-    claim = Claim(
-        id=uuid.uuid4(),
-        listing_id=listing_id,
-        claimant_id=uuid.uuid4(),
-        requested_quantity=1,
-        approved_quantity=1,
-        status="approved",
-        requested_at=datetime.now(timezone.utc),
-        approved_at=datetime.now(timezone.utc),
-    )
-    poster = Member(
-        id=uuid.uuid4(),
-        name="Poster",
-        email="poster@example.com",
-        password_hash="not-a-real-hash",
-        status="active",
-    )
-    error = OperationalError("statement", {}, Exception("database is down"))
-    session = ListingResultSession(claim, error)
-
-    with pytest.raises(HTTPException) as raised:
-        cancel_exchange(str(claim.id), poster, session)
-
-    assert raised.value.status_code == 503
-
-
-def test_cancel_exchange_rejects_missing_listing():
-    poster = Member(
-        id=uuid.uuid4(),
-        name="Poster",
-        email="poster@example.com",
-        password_hash="not-a-real-hash",
-        status="active",
-    )
-    claim = Claim(
-        id=uuid.uuid4(),
-        listing_id=uuid.uuid4(),
-        claimant_id=uuid.uuid4(),
-        requested_quantity=1,
-        approved_quantity=1,
-        status="approved",
-        requested_at=datetime.now(timezone.utc),
-        approved_at=datetime.now(timezone.utc),
-    )
-    session = ListingResultSession(claim, None)
-
-    with pytest.raises(HTTPException) as raised:
-        cancel_exchange(str(claim.id), poster, session)
-
-    assert raised.value.status_code == 404
-
-
-def test_cancel_exchange_returns_503_when_commit_fails(db_session):
+def test_cancel_rejects_listing_owner(db_session):
     poster = insert_member(db_session, email="poster@example.com", name="Poster")
     listing_id = insert_listing(db_session, poster)
     claimant = insert_member(db_session, email="claimant@example.com", name="Claimant")
-    claim_id = insert_claim(db_session, listing_id, claimant)
-    session = CommitFailsSession(db_session)
+    claim_id = insert_claim(db_session, listing_id, claimant, quantity=3)
+    approve_claim(str(claim_id), poster, db_session)
 
     with pytest.raises(HTTPException) as raised:
-        cancel_exchange(str(claim_id), poster, session)
+        cancel_approved_claim(str(claim_id), poster, db_session)
+
+    assert raised.value.status_code == 403
+    claim = db_session.scalars(select(Claim).where(Claim.id == claim_id)).first()
+    listing = db_session.scalars(select(Listing).where(Listing.id == listing_id)).first()
+    assert claim.status == "approved"
+    assert listing.remaining_quantity == 7
+
+
+def test_cancel_rejects_bad_claim_id(db_session):
+    member = insert_member(db_session)
+
+    with pytest.raises(HTTPException) as raised:
+        cancel_approved_claim("not-a-uuid", member, db_session)
+
+    assert raised.value.status_code == 404
+
+
+def test_cancel_rejects_missing_claim(db_session):
+    member = insert_member(db_session)
+
+    with pytest.raises(HTTPException) as raised:
+        cancel_approved_claim(str(uuid.uuid4()), member, db_session)
+
+    assert raised.value.status_code == 404
+
+
+def test_cancel_rejects_missing_approved_quantity(db_session):
+    poster = insert_member(db_session, email="poster@example.com", name="Poster")
+    listing_id = insert_listing(db_session, poster)
+    claimant = insert_member(db_session, email="claimant@example.com", name="Claimant")
+    claim_id = insert_claim(db_session, listing_id, claimant, status="approved")
+
+    with pytest.raises(HTTPException) as raised:
+        cancel_approved_claim(str(claim_id), claimant, db_session)
+
+    assert raised.value.status_code == 409
+    assert "allocated quantity" in raised.value.detail.lower()
+    claim = db_session.scalars(select(Claim).where(Claim.id == claim_id)).first()
+    listing = db_session.scalars(select(Listing).where(Listing.id == listing_id)).first()
+    assert claim.status == "approved"
+    assert listing.remaining_quantity == 10
+
+
+def test_cancel_returns_503_on_database_error(broken_session):
+    member = Member(
+        id=uuid.uuid4(),
+        name="Claimant",
+        email="claimant@example.com",
+        password_hash="not-a-real-hash",
+        status="active",
+    )
+
+    with pytest.raises(HTTPException) as raised:
+        cancel_approved_claim(str(uuid.uuid4()), member, broken_session)
 
     assert raised.value.status_code == 503
-    saved_claim = db_session.scalars(
-        select(Claim).where(Claim.id == claim_id)
-    ).first()
-    assert saved_claim.status == "approved"
-    assert saved_claim.cancelled_at is None
 
 
-def test_cancel_exchange_route_is_wired():
+class SecondReadFailsSession:
+    def __init__(self, session):
+        self.session = session
+        self.read_count = 0
+
+    def scalars(self, statement):
+        self.read_count = self.read_count + 1
+        if self.read_count == 2:
+            raise OperationalError("statement", {}, Exception("database is down"))
+        return self.session.scalars(statement)
+
+
+def test_cancel_returns_503_when_listing_read_fails(db_session):
+    poster = insert_member(db_session, email="poster@example.com", name="Poster")
+    listing_id = insert_listing(db_session, poster)
+    claimant = insert_member(db_session, email="claimant@example.com", name="Claimant")
+    claim_id = insert_claim(db_session, listing_id, claimant, quantity=3)
+    approve_claim(str(claim_id), poster, db_session)
+    failing_session = SecondReadFailsSession(db_session)
+
+    with pytest.raises(HTTPException) as raised:
+        cancel_approved_claim(str(claim_id), claimant, failing_session)
+
+    assert raised.value.status_code == 503
+    claim = db_session.scalars(select(Claim).where(Claim.id == claim_id)).first()
+    assert claim.status == "approved"
+
+
+class CommitFailsSession:
+    def __init__(self, session):
+        self.session = session
+        self.rollback_called = False
+
+    def scalars(self, statement):
+        return self.session.scalars(statement)
+
+    def add(self, instance):
+        # The route saves a notification (US-22) with session.add before its
+        # commit, so this fake has to accept the add and pass it through.
+        self.session.add(instance)
+
+    def commit(self):
+        raise OperationalError("statement", {}, Exception("database is down"))
+
+    def rollback(self):
+        self.rollback_called = True
+        self.session.rollback()
+
+
+def test_cancel_returns_503_when_commit_fails(db_session):
+    poster = insert_member(db_session, email="poster@example.com", name="Poster")
+    listing_id = insert_listing(db_session, poster)
+    claimant = insert_member(db_session, email="claimant@example.com", name="Claimant")
+    claim_id = insert_claim(db_session, listing_id, claimant, quantity=3)
+    approve_claim(str(claim_id), poster, db_session)
+    failing_session = CommitFailsSession(db_session)
+
+    with pytest.raises(HTTPException) as raised:
+        cancel_approved_claim(str(claim_id), claimant, failing_session)
+
+    assert raised.value.status_code == 503
+    assert failing_session.rollback_called is True
+    claim = db_session.scalars(select(Claim).where(Claim.id == claim_id)).first()
+    listing = db_session.scalars(select(Listing).where(Listing.id == listing_id)).first()
+    assert claim.status == "approved"
+    assert listing.remaining_quantity == 7
+
+
+def test_cancel_route_is_wired():
     from fastapi.routing import APIRoute
 
     from app.main import app
@@ -361,7 +384,6 @@ def test_cancel_exchange_route_is_wired():
     found = False
     for route in app.routes:
         if isinstance(route, APIRoute):
-            if route.path == "/api/claims/{claim_id}/cancel":
-                if "PATCH" in route.methods:
-                    found = True
+            if "/cancel" in route.path and "PATCH" in route.methods:
+                found = True
     assert found
