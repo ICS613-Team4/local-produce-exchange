@@ -21,6 +21,7 @@ from app.models.claim import Claim
 from app.models.listing import Listing
 from app.models.listing_photo import ListingPhoto
 from app.models.member import InviteToken, Member, MemberProfile
+from app.models.notification import Notification
 from app.models.sample_data import SampleData
 from app.security import hash_invite_token
 
@@ -476,9 +477,20 @@ def seed_claims(session):
         completed_at=now - timedelta(minutes=15),
     )
 
-    # Approval already reduced these quantities in the live workflow.
-    lettuce.remaining_quantity = lettuce.remaining_quantity - 2
-    bananas.remaining_quantity = bananas.remaining_quantity - 3
+    # In the live workflow, approval moves the approved quantity off the
+    # listing, and the quantity stays off through pickup and completion. So
+    # every seeded claim that reached approval needs the same deduction here:
+    # the two completed exchanges AND the two still-approved claims. Skipping
+    # an approved claim's deduction would overstate what the listing has left,
+    # and cancelling that claim would then push remaining_quantity past
+    # total_quantity and fail the database's remaining-le-total check.
+    # Computed from total_quantity (not remaining_quantity) so re-seeding
+    # claims onto listings that survived a partial wipe lands on the same
+    # numbers instead of subtracting a second time.
+    lettuce.remaining_quantity = lettuce.total_quantity - 2
+    bananas.remaining_quantity = bananas.total_quantity - 3
+    thai_basil.remaining_quantity = thai_basil.total_quantity - 3
+    lemons.remaining_quantity = lemons.total_quantity - 1
 
     session.add(bob_on_lemons)
     session.add(carol_on_lemons)
@@ -490,12 +502,174 @@ def seed_claims(session):
     print("Inserted 7 demo claims (3 pending, 2 approved, 2 completed).")
 
 
+def find_claim_by_listing_and_claimant(session, listing, claimant):
+    # Look a demo claim up by its listing and claimant. Each seeded
+    # (listing, claimant) pair is unique, so this identifies one claim without
+    # depending on generated ids.
+    statement = (
+        select(Claim)
+        .where(Claim.listing_id == listing.id)
+        .where(Claim.claimant_id == claimant.id)
+    )
+    claim = session.scalars(statement).first()
+    return claim
+
+
+def add_notifications_for_claim(session, claim, listing, owner, claimant):
+    # Adds the notification trail the live triggers (US-22) would have written
+    # for this claim, derived entirely from the claim row itself: the recipients
+    # come from the trigger rules, the messages from the claim's listing title,
+    # claimant name, and quantity, and each created_at from the matching claim
+    # timestamp. That keeps every seeded notification consistent with its source
+    # claim. Returns how many rows were added.
+    added_count = 0
+
+    # Every claim began as a request, so the owner was told it arrived.
+    submitted_message = (
+        claimant.name
+        + " requested "
+        + str(claim.requested_quantity)
+        + " of your listing '"
+        + listing.title
+        + "'."
+    )
+    session.add(
+        Notification(
+            member_id=owner.id,
+            claim_id=claim.id,
+            kind="request_submitted",
+            message=submitted_message,
+            created_at=claim.requested_at,
+        )
+    )
+    added_count = added_count + 1
+
+    # An approved or completed claim passed through approval, so the claimant
+    # was told they were approved.
+    if claim.status == "approved" or claim.status == "completed":
+        approved_message = "Your request for '" + listing.title + "' was approved."
+        session.add(
+            Notification(
+                member_id=claimant.id,
+                claim_id=claim.id,
+                kind="request_approved",
+                message=approved_message,
+                created_at=claim.approved_at,
+            )
+        )
+        added_count = added_count + 1
+
+    # A completed claim also passed through pickup and completion.
+    if claim.status == "completed":
+        pickup_message = (
+            claimant.name
+            + " confirmed pickup for your listing '"
+            + listing.title
+            + "'. Mark the exchange complete when you are done."
+        )
+        session.add(
+            Notification(
+                member_id=owner.id,
+                claim_id=claim.id,
+                kind="pickup_confirmed",
+                message=pickup_message,
+                created_at=claim.picked_up_at,
+            )
+        )
+        added_count = added_count + 1
+
+        # Only the listing owner can complete an exchange, so the completer in
+        # this message is always the owner, matching the live route's wording.
+        completed_message = (
+            "Your exchange for '"
+            + listing.title
+            + "' was marked complete by "
+            + owner.name
+            + ". Leave "
+            + owner.name
+            + " a review."
+        )
+        session.add(
+            Notification(
+                member_id=claimant.id,
+                claim_id=claim.id,
+                kind="exchange_completed",
+                message=completed_message,
+                created_at=claim.completed_at,
+            )
+        )
+        added_count = added_count + 1
+
+    return added_count
+
+
+def seed_notifications(session):
+    # Demo notifications for US-22, so every seed member opens the notifications
+    # page (and sees the header bell badge) with real content. The seeded claims
+    # were inserted directly rather than through the API routes, so the live
+    # triggers never fired for them; this writes the exact trail those triggers
+    # would have produced. Guarded by the empty-table check so re-running the
+    # seed adds no duplicates.
+    if not table_is_empty(session, Notification):
+        print("Notifications already present. Skipping notifications.")
+        return
+
+    alice = find_member_by_email(session, "alice@example.com")
+    bob = find_member_by_email(session, "bob@example.com")
+    carol = find_member_by_email(session, "carol@example.com")
+    dave = find_member_by_email(session, "dave@example.com")
+    if alice is None or bob is None or carol is None or dave is None:
+        print("Seed members are missing, so notifications were skipped.")
+        return
+
+    lemons = find_listing_by_owner_and_title(session, dave, "Backyard Meyer Lemons")
+    kabocha = find_listing_by_owner_and_title(session, bob, "Kabocha Squash")
+    thai_basil = find_listing_by_owner_and_title(session, carol, "Thai Basil")
+    lettuce = find_listing_by_owner_and_title(session, bob, "Fresh Manoa Lettuce")
+    bananas = find_listing_by_owner_and_title(session, carol, "Apple Bananas")
+    if (
+        lemons is None
+        or kabocha is None
+        or thai_basil is None
+        or lettuce is None
+        or bananas is None
+    ):
+        print("Demo listings are missing, so notifications were skipped.")
+        return
+
+    # The seven demo claims, each with its listing, owner, and claimant. The
+    # notification trail for each is derived from the claim row itself.
+    claim_rows = [
+        (find_claim_by_listing_and_claimant(session, lemons, bob), lemons, dave, bob),
+        (find_claim_by_listing_and_claimant(session, lemons, carol), lemons, dave, carol),
+        (find_claim_by_listing_and_claimant(session, kabocha, dave), kabocha, bob, dave),
+        (find_claim_by_listing_and_claimant(session, thai_basil, alice), thai_basil, carol, alice),
+        (find_claim_by_listing_and_claimant(session, lemons, alice), lemons, dave, alice),
+        (find_claim_by_listing_and_claimant(session, lettuce, carol), lettuce, bob, carol),
+        (find_claim_by_listing_and_claimant(session, bananas, bob), bananas, carol, bob),
+    ]
+
+    for claim, listing, owner, claimant in claim_rows:
+        if claim is None:
+            print("Demo claims are missing, so notifications were skipped.")
+            return
+
+    inserted_count = 0
+    for claim, listing, owner, claimant in claim_rows:
+        inserted_count = inserted_count + add_notifications_for_claim(
+            session, claim, listing, owner, claimant
+        )
+
+    print("Inserted " + str(inserted_count) + " demo notifications.")
+
+
 def seed_database():
     session = SessionLocal()
     try:
         # Order matters: members come before profiles, invite tokens, and
         # listings, because those three point back at members. Photos come after
-        # listings, and claims come last because they point at listings and members.
+        # listings, claims after listings and members, and notifications last
+        # because they point at claims and members.
         seed_sample_data(session)
         seed_members(session)
         seed_profiles(session)
@@ -503,6 +677,7 @@ def seed_database():
         seed_listings(session)
         seed_listing_photos(session)
         seed_claims(session)
+        seed_notifications(session)
         session.commit()
     finally:
         session.close()

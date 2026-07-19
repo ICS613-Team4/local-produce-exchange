@@ -143,7 +143,7 @@ function DashboardPage() {
 
   // --- Quick actions --------------------------------------------------------
   const quickActions = (
-    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">
+    <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-8">
       <Link to="/browse" className="flex flex-col items-center gap-2 p-4 bg-surface rounded-xl border border-border shadow-sm hover:shadow-md hover:border-primary-200 transition-all duration-200 group">
         <span aria-hidden="true" className="text-2xl group-hover:scale-110 transition-transform">🔍</span>
         <span className="text-xs font-medium text-text-muted group-hover:text-primary-600">Browse</span>
@@ -159,6 +159,10 @@ function DashboardPage() {
       <Link to="/requests" className="flex flex-col items-center gap-2 p-4 bg-surface rounded-xl border border-border shadow-sm hover:shadow-md hover:border-primary-200 transition-all duration-200 group">
         <span aria-hidden="true" className="text-2xl group-hover:scale-110 transition-transform">📥</span>
         <span className="text-xs font-medium text-text-muted group-hover:text-primary-600">Incoming Requests</span>
+      </Link>
+      <Link to="/notifications" className="flex flex-col items-center gap-2 p-4 bg-surface rounded-xl border border-border shadow-sm hover:shadow-md hover:border-primary-200 transition-all duration-200 group">
+        <span aria-hidden="true" className="text-2xl group-hover:scale-110 transition-transform">🔔</span>
+        <span className="text-xs font-medium text-text-muted group-hover:text-primary-600">Notifications</span>
       </Link>
     </div>
   )

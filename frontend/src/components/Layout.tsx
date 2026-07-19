@@ -2,6 +2,11 @@ import { useEffect, useState } from 'react'
 import { Link, Outlet, useLocation } from 'react-router'
 
 import { authStateChangedEventName, sendLogoutRequest } from '../services/authService'
+import {
+  sendGetUnreadCountRequest,
+  unreadCountPollIntervalMilliseconds,
+} from '../services/notificationService'
+import type { UnreadCountResponse } from '../services/notificationService'
 
 function Layout() {
   // Subscribe to the current location. Calling this hook makes the nav
@@ -19,11 +24,21 @@ function Layout() {
   // Mobile menu open/closed state.
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
+  // How many unread notifications the logged-in member has. The header bell
+  // shows this as a badge. Zero means no badge is drawn.
+  const [unreadCount, setUnreadCount] = useState(0)
+
   useEffect(function listenForAuthStateChange() {
     function handleAuthStateChange() {
       setAuthEventTick(function bumpTick(previousTick) {
         return previousTick + 1
       })
+      // A stale-session clear logs the member out without the Log out link, so
+      // the bell's count resets here too, not only in handleLogout.
+      const storedMemberId = window.localStorage.getItem('memberId') ?? ''
+      if (storedMemberId === '') {
+        setUnreadCount(0)
+      }
     }
     window.addEventListener(authStateChangedEventName, handleAuthStateChange)
     return function removeAuthStateListener() {
@@ -39,6 +54,77 @@ function Layout() {
   const memberName = window.localStorage.getItem('memberName') ?? ''
   const isLoggedIn = memberId !== ''
 
+  // Keep the bell's unread count fresh. This asks the count-only endpoint right
+  // away, then every unreadCountPollIntervalMilliseconds after that. It skips
+  // the request while the browser tab is hidden, and asks once immediately when
+  // the tab is shown again, so a tab left open in the background sends nothing.
+  // location.pathname is deliberately NOT a dependency: the timer plus the
+  // visibility refresh already keep the count fresh, and depending on the path
+  // would rebuild the timer and fire a request on every navigation.
+  useEffect(function pollUnreadCount() {
+    // Logged out means no polling at all. The count itself is reset to zero by
+    // the logout handler and the auth-event listener (event handlers may set
+    // state; an effect body must not), so this effect only ever polls.
+    if (isLoggedIn === false) {
+      return
+    }
+
+    // Set to false by the cleanup below, so a late answer from a logged-out or
+    // unmounted header never writes state.
+    let stillMounted = true
+    // True while a request is in flight. The timer checks this and skips its
+    // tick rather than stacking a second request on a slow or hung backend.
+    let alreadyAsking = false
+
+    async function loadCount() {
+      if (alreadyAsking === true) {
+        return
+      }
+      // Nobody is looking at a hidden tab, so do not spend a request on it.
+      if (document.hidden === true) {
+        return
+      }
+
+      alreadyAsking = true
+      const result = await sendGetUnreadCountRequest(memberId)
+      alreadyAsking = false
+
+      if (stillMounted === false) {
+        return
+      }
+
+      if (result.ok === true) {
+        const body = result.data as UnreadCountResponse
+        setUnreadCount(body.unread_count)
+      }
+      // A failed tick deliberately does nothing: it leaves the last good count
+      // on screen and tries again on the next tick. The header is the wrong
+      // place for an error banner, and blanking the badge on one dropped
+      // request would make the count flicker.
+    }
+
+    // Ask once now, so a member who just logged in does not wait for the first
+    // tick to see a badge.
+    loadCount()
+
+    const timerId = setInterval(loadCount, unreadCountPollIntervalMilliseconds)
+
+    // When the member comes back to a hidden tab, refresh right away instead of
+    // showing a count that could be as old as when they left.
+    function handleVisibilityChange() {
+      if (document.hidden === false) {
+        loadCount()
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    return function stopPolling() {
+      stillMounted = false
+      clearInterval(timerId)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [isLoggedIn, memberId])
+
   async function handleLogout() {
     // Clear the stored login right away, so the home page this link navigates to
     // reads the logged-out state. Fire the same event the stale-session pages use,
@@ -50,6 +136,9 @@ function Layout() {
     window.localStorage.removeItem('memberEmail')
     window.dispatchEvent(new Event(authStateChangedEventName))
     setMobileMenuOpen(false)
+    // The next member to log in on this browser must not see this member's
+    // badge count while the first fetch is still on its way.
+    setUnreadCount(0)
     await sendLogoutRequest()
   }
 
@@ -94,6 +183,34 @@ function Layout() {
     return undefined
   }
 
+  // The screen-reader label for the bell. The red circle is color alone, which a
+  // screen reader cannot convey, so the count goes in the label as words.
+  function getBellLabel() {
+    if (unreadCount === 0) {
+      return 'Notifications'
+    }
+    if (unreadCount === 1) {
+      return 'Notifications, 1 unread'
+    }
+    return 'Notifications, ' + unreadCount + ' unread'
+  }
+
+  // The mobile row spells the count out in the visible label, so the vertical
+  // list needs no badge of its own.
+  function getMobileNotificationsLabel() {
+    if (unreadCount === 0) {
+      return 'Notifications'
+    }
+    return 'Notifications (' + unreadCount + ')'
+  }
+
+  // The number drawn inside the badge. A big count would stretch the circle out
+  // of shape, so anything over 9 shows as "9+".
+  let badgeText = String(unreadCount)
+  if (unreadCount > 9) {
+    badgeText = '9+'
+  }
+
   let desktopNavItems
   let mobileNavItems
 
@@ -110,6 +227,7 @@ function Layout() {
     mobileNavItems = (
       <>
         <Link to="/dashboard" className={getMobileNavLinkClasses('/dashboard')} aria-current={getAriaCurrent('/dashboard')} onClick={closeMobileMenu}>Dashboard</Link>
+        <Link to="/notifications" className={getMobileNavLinkClasses('/notifications')} aria-current={getAriaCurrent('/notifications')} onClick={closeMobileMenu}>{getMobileNotificationsLabel()}</Link>
         <Link to="/browse" className={getMobileNavLinkClasses('/browse')} aria-current={getAriaCurrent('/browse')} onClick={closeMobileMenu}>Browse</Link>
         <Link to="/my-listings" className={getMobileNavLinkClasses('/my-listings')} aria-current={getAriaCurrent('/my-listings')} onClick={closeMobileMenu}>My Listings</Link>
         <Link to="/my-requests" className={getMobileNavLinkClasses('/my-requests')} aria-current={getAriaCurrent('/my-requests')} onClick={closeMobileMenu}>My Requests</Link>
@@ -157,6 +275,32 @@ function Layout() {
             <div className="hidden md:flex items-center gap-3">
               {isLoggedIn ? (
                 <>
+                  {/* The bell replaces a "Notifications" text link in the
+                      desktop nav row. The badge circle is aria-hidden because
+                      the bell's label already says the count in words; without
+                      that a screen reader would announce the number twice. */}
+                  <Link
+                    to="/notifications"
+                    aria-current={getAriaCurrent('/notifications')}
+                    aria-label={getBellLabel()}
+                    className={
+                      isCurrentPage('/notifications')
+                        ? 'relative inline-flex items-center p-2 rounded-md text-primary-700 bg-primary-50 transition-colors duration-150'
+                        : 'relative inline-flex items-center p-2 rounded-md text-text-muted hover:text-primary-600 hover:bg-primary-50 transition-colors duration-150'
+                    }
+                  >
+                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6 6 0 10-12 0v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                    </svg>
+                    {unreadCount > 0 && (
+                      <span
+                        aria-hidden="true"
+                        className="absolute top-1 right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-error px-1 text-[10px] font-semibold text-text-inverse"
+                      >
+                        {badgeText}
+                      </span>
+                    )}
+                  </Link>
                   {/* The member's name doubles as the link to their profile
                       page, replacing a separate Profile nav item. */}
                   <Link

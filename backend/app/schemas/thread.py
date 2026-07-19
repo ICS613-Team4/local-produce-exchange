@@ -39,6 +39,10 @@ class ThreadResponse(BaseModel):
     claimant_id: str = ""
     owner_name: str = ""
     claimant_name: str = ""
+    # The claim's workflow status (requested, approved, picked_up, completed,
+    # cancelled, denied), so the page can lock the thread of a completed
+    # exchange. The default keeps older stubs working.
+    claim_status: str = ""
     listing_created_at: Optional[datetime] = None
     pickup_start: Optional[datetime] = None
     pickup_end: Optional[datetime] = None

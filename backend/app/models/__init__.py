@@ -7,6 +7,7 @@ from app.models.claim import Claim
 from app.models.listing import Listing
 from app.models.listing_photo import ListingPhoto
 from app.models.member import InviteToken, Member, MemberProfile
+from app.models.notification import Notification
 from app.models.sample_data import SampleData
 
 __all__ = [
@@ -17,5 +18,6 @@ __all__ = [
     "ListingPhoto",
     "Member",
     "MemberProfile",
+    "Notification",
     "SampleData",
 ]

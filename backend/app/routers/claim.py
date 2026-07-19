@@ -18,6 +18,7 @@ from app.models.claim import Claim
 from app.models.listing import Listing
 from app.models.listing_photo import ListingPhoto
 from app.models.member import Member
+from app.notifications import create_notification
 from app.schemas.claim import (
     AllRequestItem,
     AllRequestsResponse,
@@ -228,6 +229,18 @@ def create_claim(
         session.add(new_claim)
         session.flush()
         new_claim_id = new_claim.id
+        # Notify the listing owner that a new request arrived (US-22).
+        submitted_message = (
+            f"{current_member.name} requested {payload.quantity} of "
+            f"your listing '{listing.title}'."
+        )
+        create_notification(
+            session,
+            listing.owner_id,
+            new_claim_id,
+            "request_submitted",
+            submitted_message,
+        )
         session.commit()
     except IntegrityError as error:
         # Two requests from the same member for the same listing raced past the
@@ -995,6 +1008,16 @@ def approve_claim(
     claim.approved_at = now
     listing.remaining_quantity -= allocated_quantity
 
+    # Notify the claimant that their request was approved (US-22).
+    approved_message = f"Your request for '{listing.title}' was approved."
+    create_notification(
+        session,
+        claim.claimant_id,
+        claim.id,
+        "request_approved",
+        approved_message,
+    )
+
     # Cache values before commit expires loaded attributes.
     claim_id_out = claim.id
     listing_id_out = claim.listing_id
@@ -1095,12 +1118,49 @@ def confirm_pickup(
             detail="Only an approved request can be marked as picked up.",
         )
 
+    # Load the listing (no lock) so the owner can be notified the item was
+    # picked up. Pickup changes no quantity, so no row lock is needed.
+    try:
+        listing = session.scalars(
+            select(Listing).where(Listing.id == claim.listing_id)
+        ).first()
+    except Exception as error:
+        logger.error("Loading listing for pickup confirmation failed: %s", error)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Could not process the request right now. "
+                "Make sure the database is running and migrated."
+            ),
+        )
+
     # ------------------------------------------------------------------
     # Apply the pickup confirmation.
     # ------------------------------------------------------------------
     now = datetime.now(timezone.utc)
     claim.status = "picked_up"
     claim.picked_up_at = now
+
+    # Notify the listing owner that the item was picked up (US-22). The FK
+    # guarantees the listing exists; the None check is a defensive guard so a
+    # pickup still succeeds even if the listing row somehow vanished.
+    if listing is not None:
+        # This message names the next action on purpose. Only the listing owner
+        # can move a picked-up claim to completed (complete_exchange rejects
+        # anyone else with a 403), and nothing else on the site tells them the
+        # exchange is waiting on them.
+        pickup_message = (
+            f"{current_member.name} confirmed pickup for your "
+            f"listing '{listing.title}'. Mark the exchange complete "
+            f"when you are done."
+        )
+        create_notification(
+            session,
+            listing.owner_id,
+            claim.id,
+            "pickup_confirmed",
+            pickup_message,
+        )
 
     # Cache values before commit expires loaded attributes.
     claim_id_out = claim.id
@@ -1212,7 +1272,20 @@ def complete_exchange(
     claim.status = "completed"
     claim.completed_at = now
 
-    # NOTIFY SEAM (US-22): notify claim.claimant_id in this transaction when notifications exist.
+    # Notify the claimant that the exchange was completed (US-22). The message
+    # names who completed it and prompts for a review, because the review
+    # button is the next action on a finished exchange.
+    completed_message = (
+        f"Your exchange for '{listing.title}' was marked complete by "
+        f"{current_member.name}. Leave {current_member.name} a review."
+    )
+    create_notification(
+        session,
+        claim.claimant_id,
+        claim.id,
+        "exchange_completed",
+        completed_message,
+    )
 
     claim_id_out = claim.id
     listing_id_out = claim.listing_id
@@ -1340,7 +1413,18 @@ def cancel_exchange(
     claim.status = "cancelled"
     claim.cancelled_at = now
 
-    # NOTIFY SEAM (US-22): notify claim.claimant_id in this transaction when notifications exist.
+    # Notify the claimant that the poster called off the approved exchange
+    # (US-22).
+    cancelled_message = (
+        f"Your approved exchange for '{listing.title}' was cancelled by the poster."
+    )
+    create_notification(
+        session,
+        claim.claimant_id,
+        claim.id,
+        "request_cancelled",
+        cancelled_message,
+    )
 
     claim_id_out = claim.id
     listing_id_out = claim.listing_id
@@ -1476,6 +1560,16 @@ def deny_claim(
     claim.status = "denied"
     claim.denied_at = now
 
+    # Notify the claimant that their request was denied (US-22).
+    denied_message = f"Your request for '{listing.title}' was denied."
+    create_notification(
+        session,
+        claim.claimant_id,
+        claim.id,
+        "request_denied",
+        denied_message,
+    )
+
     # Cache values before commit expires loaded attributes.
     claim_id_out = claim.id
     listing_id_out = claim.listing_id
@@ -1573,6 +1667,22 @@ def withdraw_claim(
             detail="This request is not pending, so it cannot be withdrawn.",
         )
 
+    # Load the listing (no lock) so the owner can be notified the request left
+    # the queue. Withdrawal changes no quantity, so no row lock is needed.
+    try:
+        listing = session.scalars(
+            select(Listing).where(Listing.id == claim.listing_id)
+        ).first()
+    except Exception as error:
+        logger.error("Loading listing for claim withdrawal failed: %s", error)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Could not process the request right now. "
+                "Make sure the database is running and migrated."
+            ),
+        )
+
     # ------------------------------------------------------------------
     # Apply the withdrawal. No quantity changes.
     # ------------------------------------------------------------------
@@ -1580,6 +1690,22 @@ def withdraw_claim(
 
     claim.status = "cancelled"
     claim.cancelled_at = now
+
+    # Notify the listing owner the request was withdrawn (US-22). The FK
+    # guarantees the listing exists; the None check is a defensive guard so a
+    # withdrawal still succeeds even if the listing row somehow vanished.
+    if listing is not None:
+        withdrawn_message = (
+            f"{current_member.name} withdrew their request on your "
+            f"listing '{listing.title}'."
+        )
+        create_notification(
+            session,
+            listing.owner_id,
+            claim.id,
+            "request_withdrawn",
+            withdrawn_message,
+        )
 
     # Cache values before commit expires loaded attributes.
     claim_id_out = claim.id

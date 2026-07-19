@@ -1,11 +1,15 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router'
 import { afterEach, expect, test, vi } from 'vitest'
 
 import Layout from './Layout'
 import { sendLogoutRequest } from '../services/authService'
+import {
+  sendGetUnreadCountRequest,
+  unreadCountPollIntervalMilliseconds,
+} from '../services/notificationService'
 
 // Mock the auth service so the Log out button never reaches the network. The
 // mock also supplies the shared event name the Layout imports, so the dispatch
@@ -19,13 +23,48 @@ vi.mock('../services/authService', () => {
   }
 })
 
+// Mock only the polled count request in the notification service; the real
+// poll-interval constant passes through so the timer tests advance by the same
+// number the header uses. The default answer is a failed tick, which the
+// header ignores, so tests that do not care about the bell stay unaffected.
+// A bell test queues a real count with mockCountOnce below.
+vi.mock('../services/notificationService', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../services/notificationService')>()
+  return {
+    notificationTimeoutMilliseconds: actual.notificationTimeoutMilliseconds,
+    unreadCountPollIntervalMilliseconds: actual.unreadCountPollIntervalMilliseconds,
+    sendGetNotificationsRequest: actual.sendGetNotificationsRequest,
+    sendGetUnreadCountRequest: vi.fn(async () => {
+      return { ok: false, status: 0, data: '', errorMessage: 'not stubbed in this test' }
+    }),
+  }
+})
+
 // Unmount components, clear localStorage, and reset mock call history after every
-// test, so one test cannot leak into the next.
+// test, so one test cannot leak into the next. Real timers and a visible
+// document come back too, in case a bell test faked either.
 afterEach(() => {
   cleanup()
   window.localStorage.clear()
   vi.clearAllMocks()
+  vi.useRealTimers()
+  setDocumentHidden(false)
 })
+
+// jsdom keeps document.hidden false; the hidden-tab test overrides it.
+function setDocumentHidden(hidden: boolean) {
+  Object.defineProperty(document, 'hidden', { value: hidden, configurable: true })
+}
+
+// Queue one successful unread-count answer for the bell.
+function mockCountOnce(count: number) {
+  vi.mocked(sendGetUnreadCountRequest).mockResolvedValueOnce({
+    ok: true,
+    status: 200,
+    data: { unread_count: count },
+    errorMessage: '',
+  })
+}
 
 // A child route that mimics login: it writes memberId and navigates, the same
 // shape LoginPage uses. The route-change test uses it to prove the nav re-reads.
@@ -52,7 +91,7 @@ function FakeStaleClearRoute() {
 // Renders the Layout as a parent route with a few stand-in child routes, the same
 // shape App.tsx uses. The starting path decides which child renders first.
 function renderLayoutAt(initialPath: string) {
-  render(
+  return render(
     <MemoryRouter initialEntries={[initialPath]}>
       <Routes>
         <Route element={<Layout />}>
@@ -181,4 +220,191 @@ test('re-reads localStorage on the auth event without a route change', async () 
   // The event makes the nav re-read and show the logged-out set, same route.
   expect((await screen.findAllByRole('link', { name: 'Log in' })).length).toBeGreaterThanOrEqual(1)
   expect(screen.queryByRole('link', { name: 'Log out' })).toBeNull()
+})
+
+// ── the notification bell and its badge (US-22) ──────────────────────────────
+
+function setLoggedInMember() {
+  window.localStorage.setItem('memberId', 'member-123')
+  window.localStorage.setItem('memberName', 'Bob Baker')
+}
+
+test('the bell shows the unread count as a badge and says it in the label', async () => {
+  setLoggedInMember()
+  mockCountOnce(3)
+  renderLayoutAt('/dashboard')
+
+  // Queried by role and accessible name, so this proves the screen-reader
+  // label carries the count, not just the pixels.
+  const bell = await screen.findByRole('link', { name: 'Notifications, 3 unread' })
+  expect(bell.getAttribute('href')).toBe('/notifications')
+  // The only text inside the bell link is the visible badge number.
+  expect(bell.textContent).toBe('3')
+})
+
+test('a zero count draws no badge and keeps the plain label', async () => {
+  setLoggedInMember()
+  mockCountOnce(0)
+  renderLayoutAt('/dashboard')
+  await act(async () => {})
+
+  expect(sendGetUnreadCountRequest).toHaveBeenCalledTimes(1)
+  const bell = screen.getByRole('link', { name: 'Notifications' })
+  expect(bell.getAttribute('aria-label')).toBe('Notifications')
+  // No badge element renders at zero: a badge showing "0" would be a defect.
+  expect(bell.textContent).toBe('')
+})
+
+test('a single unread notification says 1 unread in the label', async () => {
+  setLoggedInMember()
+  mockCountOnce(1)
+  renderLayoutAt('/dashboard')
+
+  const bell = await screen.findByRole('link', { name: 'Notifications, 1 unread' })
+  expect(bell.textContent).toBe('1')
+})
+
+test('a count over nine shows 9+ while the label says the real number', async () => {
+  setLoggedInMember()
+  mockCountOnce(12)
+  renderLayoutAt('/dashboard')
+
+  const bell = await screen.findByRole('link', { name: 'Notifications, 12 unread' })
+  expect(bell.textContent).toBe('9+')
+})
+
+test('logged out renders no bell and never asks for a count', async () => {
+  renderLayoutAt('/')
+  await act(async () => {})
+
+  expect(screen.queryByRole('link', { name: /Notifications/ })).toBeNull()
+  expect(sendGetUnreadCountRequest).not.toHaveBeenCalled()
+})
+
+test('the desktop nav row has no Notifications text link; the bell replaces it', async () => {
+  setLoggedInMember()
+  mockCountOnce(0)
+  renderLayoutAt('/dashboard')
+  await act(async () => {})
+
+  // With the mobile menu closed, exactly one link answers to "Notifications",
+  // and it is the icon bell (aria-label, svg icon, no visible text), not a
+  // sixth text link in the nav row.
+  const links = screen.getAllByRole('link', { name: 'Notifications' })
+  expect(links.length).toBe(1)
+  expect(links[0].getAttribute('aria-label')).toBe('Notifications')
+  expect(links[0].querySelector('svg')).toBeTruthy()
+  expect(links[0].textContent).toBe('')
+})
+
+test('the mobile menu lists a Notifications row with the count spelled out', async () => {
+  setLoggedInMember()
+  mockCountOnce(2)
+  renderLayoutAt('/dashboard')
+  await screen.findByRole('link', { name: 'Notifications, 2 unread' })
+
+  fireEvent.click(screen.getByRole('button', { name: 'Toggle navigation menu' }))
+
+  const mobileRow = screen.getByRole('link', { name: 'Notifications (2)' })
+  expect(mobileRow.getAttribute('href')).toBe('/notifications')
+
+  // Choosing the row closes the menu, like every other mobile nav row.
+  fireEvent.click(mobileRow)
+  expect(screen.queryByRole('link', { name: 'Notifications (2)' })).toBeNull()
+})
+
+test('a slow answer is never stacked with a second request', async () => {
+  vi.useFakeTimers()
+  setLoggedInMember()
+  // The first ask never answers, so the next tick must skip its request
+  // instead of piling a second one on top of the hung backend.
+  vi.mocked(sendGetUnreadCountRequest).mockImplementationOnce(() => {
+    return new Promise(() => {})
+  })
+  renderLayoutAt('/dashboard')
+  await act(async () => {})
+  expect(sendGetUnreadCountRequest).toHaveBeenCalledTimes(1)
+
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(unreadCountPollIntervalMilliseconds)
+  })
+  expect(sendGetUnreadCountRequest).toHaveBeenCalledTimes(1)
+})
+
+test('the badge refreshes on the poll interval without a navigation', async () => {
+  vi.useFakeTimers()
+  setLoggedInMember()
+  mockCountOnce(3)
+  mockCountOnce(5)
+  renderLayoutAt('/dashboard')
+
+  // The first ask happens on mount, before any tick.
+  await act(async () => {})
+  expect(sendGetUnreadCountRequest).toHaveBeenCalledTimes(1)
+  expect(screen.getByRole('link', { name: 'Notifications, 3 unread' })).toBeTruthy()
+
+  // One poll interval later the count is asked again and the badge moves.
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(unreadCountPollIntervalMilliseconds)
+  })
+  expect(sendGetUnreadCountRequest).toHaveBeenCalledTimes(2)
+  expect(screen.getByRole('link', { name: 'Notifications, 5 unread' })).toBeTruthy()
+})
+
+test('a hidden tab skips the poll and a visible tab refreshes right away', async () => {
+  vi.useFakeTimers()
+  setLoggedInMember()
+  mockCountOnce(3)
+  renderLayoutAt('/dashboard')
+  await act(async () => {})
+  expect(sendGetUnreadCountRequest).toHaveBeenCalledTimes(1)
+
+  // Hidden: the tick fires but sends nothing.
+  setDocumentHidden(true)
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(unreadCountPollIntervalMilliseconds)
+  })
+  expect(sendGetUnreadCountRequest).toHaveBeenCalledTimes(1)
+
+  // Visible again: one request fires immediately, without waiting for a tick.
+  mockCountOnce(4)
+  setDocumentHidden(false)
+  await act(async () => {
+    document.dispatchEvent(new Event('visibilitychange'))
+  })
+  expect(sendGetUnreadCountRequest).toHaveBeenCalledTimes(2)
+})
+
+test('unmounting stops the poll timer', async () => {
+  vi.useFakeTimers()
+  setLoggedInMember()
+  mockCountOnce(3)
+  const view = renderLayoutAt('/dashboard')
+  await act(async () => {})
+  expect(sendGetUnreadCountRequest).toHaveBeenCalledTimes(1)
+
+  // A missing clearInterval would leak a timer per login, so this is asserted
+  // rather than trusted: after unmount, no more ticks ask for the count.
+  view.unmount()
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(unreadCountPollIntervalMilliseconds * 3)
+  })
+  expect(sendGetUnreadCountRequest).toHaveBeenCalledTimes(1)
+})
+
+test('a failed tick keeps the last good count on the badge', async () => {
+  vi.useFakeTimers()
+  setLoggedInMember()
+  mockCountOnce(3)
+  // No second answer is queued, so the next tick gets the failing default.
+  renderLayoutAt('/dashboard')
+  await act(async () => {})
+  expect(screen.getByRole('link', { name: 'Notifications, 3 unread' })).toBeTruthy()
+
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(unreadCountPollIntervalMilliseconds)
+  })
+  expect(sendGetUnreadCountRequest).toHaveBeenCalledTimes(2)
+  // The badge does not blank out on one dropped request.
+  expect(screen.getByRole('link', { name: 'Notifications, 3 unread' })).toBeTruthy()
 })

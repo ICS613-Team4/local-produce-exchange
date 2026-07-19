@@ -11,6 +11,7 @@ import InvitePage from './pages/InvitePage.tsx'
 import ListingDetailPage from './pages/ListingDetailPage.tsx'
 import LoginPage from './pages/LoginPage.tsx'
 import NotFoundPage from './pages/NotFoundPage.tsx'
+import NotificationsPage from './pages/NotificationsPage.tsx'
 import MyListingsPage from './pages/MyListingsPage.tsx'
 import MyRequestsPage from './pages/MyRequestsPage.tsx'
 import ProfilePage from './pages/ProfilePage.tsx'
@@ -40,6 +41,7 @@ function App() {
             <Route path="/requests" element={<RequestQueuesPage />} />
             <Route path="/my-requests" element={<MyRequestsPage />} />
             <Route path="/my-listings" element={<MyListingsPage />} />
+            <Route path="/notifications" element={<NotificationsPage />} />
             <Route path="/listings/create" element={<CreateListingPage />} />
             <Route path="/listings/:id/edit" element={<EditListingPage />} />
             <Route path="/exchange-thread" element={<ExchangeThreadPage />} />

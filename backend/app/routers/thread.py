@@ -23,6 +23,7 @@ from app.models.listing import Listing
 from app.models.listing_photo import ListingPhoto
 from app.models.member import Member
 from app.models.thread import Message, MessageThread
+from app.notifications import create_notification
 from app.schemas.listing import ListingPhotoRef
 from app.schemas.thread import MessageResponse, SendMessagePayload, ThreadResponse
 
@@ -237,6 +238,7 @@ def get_thread_for_claim(
         claimant_id=str(claim.claimant_id),
         owner_name=owner_name,
         claimant_name=claimant_name,
+        claim_status=claim.status,
         listing_created_at=listing.created_at,
         pickup_start=pickup_start,
         pickup_end=pickup_end,
@@ -252,7 +254,26 @@ def send_message_to_thread(
     acting_member: Member,
     session: Session,
 ) -> MessageResponse:
-    _load_claim_and_check_party(claim_id, acting_member, session)
+    claim, listing = _load_claim_and_check_party(claim_id, acting_member, session)
+
+    # A completed exchange is finished history: its thread is locked. The page
+    # disables its Send button, and this check makes the lock real for a direct
+    # API call too. Reading the thread stays open; only sending is closed.
+    if claim.status == "completed":
+        raise HTTPException(
+            status_code=409,
+            detail="This exchange is complete, so its thread is locked.",
+        )
+
+    # A cancelled exchange is closed the same way. The poster calling off an
+    # approved exchange (or the requester withdrawing a pending one) ends the
+    # conversation, so the thread locks too; reading stays open as history.
+    if claim.status == "cancelled":
+        raise HTTPException(
+            status_code=409,
+            detail="This exchange was cancelled, so its thread is locked.",
+        )
+
     thread = _get_or_create_thread(claim_id, session)
 
     sent_at = datetime.now(timezone.utc)
@@ -268,10 +289,31 @@ def send_message_to_thread(
     if not new_message.body:
         raise HTTPException(status_code=422, detail="Message body must not be blank.")
 
+    # Notify the other party that a message arrived (US-22). The parties to an
+    # exchange are the listing owner and the claimant, and the permission check
+    # above already proved the sender is one of them, so the recipient is
+    # whichever one the sender is not. The message body is deliberately NOT
+    # copied into the notification; the member opens the thread to read it.
+    if acting_member.id == claim.claimant_id:
+        recipient_id = listing.owner_id
+    else:
+        recipient_id = claim.claimant_id
+
+    message_notification_text = (
+        f"{acting_member.name} sent you a message about '{listing.title}'."
+    )
+
     try:
         session.add(new_message)
         session.flush()
         message_id = new_message.id
+        create_notification(
+            session,
+            recipient_id,
+            claim.id,
+            "message_received",
+            message_notification_text,
+        )
         session.commit()
     except Exception as error:
         session.rollback()

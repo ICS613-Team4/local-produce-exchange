@@ -45,6 +45,11 @@ class CommitFailsSession:
     def scalars(self, statement):
         return self.session.scalars(statement)
 
+    def add(self, instance):
+        # The route saves a notification (US-22) with session.add before its
+        # commit, so this fake must accept the add and pass it through.
+        self.session.add(instance)
+
     def commit(self):
         raise OperationalError("commit", {}, Exception("database is down"))
 
