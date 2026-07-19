@@ -37,6 +37,13 @@ export type NotificationsResponse = {
 // one-line change here and nothing else needs editing.
 export const unreadCountPollIntervalMilliseconds = 15000
 
+// Fired on window after something changes how many notifications are unread.
+// The notifications page dispatches this after a successful mark-read (US-23),
+// and the header bell listens for it so its unread badge drops right away
+// instead of waiting for its next scheduled refresh. Same shape as the auth
+// service's authStateChangedEventName, which the header already listens for.
+export const notificationsChangedEventName = 'notificationsChanged'
+
 // The header bell's tiny response: just the count.
 export type UnreadCountResponse = {
   unread_count: number
@@ -111,6 +118,63 @@ export async function sendGetNotificationsRequest(
       try {
         data = JSON.parse(responseText)
       } catch {
+        data = responseText
+      }
+    }
+
+    return {
+      ok: response.ok,
+      status: response.status,
+      data: data,
+      errorMessage: '',
+    }
+  } catch (caughtError) {
+    let errorMessage: string
+    if (caughtError instanceof DOMException && caughtError.name === 'TimeoutError') {
+      errorMessage =
+        'Timeout: no answer from the backend after ' +
+        notificationTimeoutMilliseconds +
+        ' ms.'
+    } else {
+      errorMessage = 'Request failed: ' + String(caughtError)
+    }
+
+    return {
+      ok: false,
+      status: 0,
+      data: '',
+      errorMessage: errorMessage,
+    }
+  }
+}
+
+export async function sendMarkNotificationReadRequest(
+  memberId: string,
+  notificationId: string,
+): Promise<NotificationsResult> {
+  // Mark one notification read (US-23). PATCH with no body to
+  // /api/notifications/<id>/read; the acting member's id travels in the
+  // X-Member-Id header like the other calls. The backend is idempotent: marking
+  // an already-read notification still returns ok.
+  const url = '/api/notifications/' + notificationId + '/read'
+
+  try {
+    const response = await fetch(url, {
+      method: 'PATCH',
+      headers: {
+        'X-Member-Id': memberId,
+      },
+      signal: AbortSignal.timeout(notificationTimeoutMilliseconds),
+    })
+
+    const responseText = await response.text()
+    let data: unknown = ''
+    if (responseText !== '') {
+      try {
+        data = JSON.parse(responseText)
+      } catch {
+        // If a proxy or server problem returns plain text or HTML, keep the
+        // HTTP status and show the body instead of throwing it away.
         data = responseText
       }
     }

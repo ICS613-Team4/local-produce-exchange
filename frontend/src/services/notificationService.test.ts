@@ -4,6 +4,7 @@ import {
   notificationTimeoutMilliseconds,
   sendGetNotificationsRequest,
   sendGetUnreadCountRequest,
+  sendMarkNotificationReadRequest,
 } from './notificationService'
 
 type FakeResponse = {
@@ -197,6 +198,91 @@ test('count request returns a failure message when fetch rejects', async () => {
   })
 
   const result = await sendGetUnreadCountRequest('member-123')
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(0)
+  expect(result.errorMessage).toBe('Request failed: TypeError: Failed to fetch')
+})
+
+// ── sendMarkNotificationReadRequest (US-23) ──────────────────────────────────
+
+test('mark-read request sends a PATCH with the member header and parses the body', async () => {
+  const responseBody = {
+    id: 'notif-1',
+    is_read: true,
+    read_at: '2026-07-18T09:00:00.000Z',
+  }
+  let requestUrl = ''
+  let requestOptions: RequestInit = {}
+  vi.stubGlobal('fetch', async (url: string | URL | Request, options: RequestInit | undefined) => {
+    requestUrl = String(url)
+    if (options !== undefined) {
+      requestOptions = options
+    }
+    return makeFakeResponse(true, 200, JSON.stringify(responseBody))
+  })
+
+  const result = await sendMarkNotificationReadRequest('member-123', 'notif-1')
+
+  expect(result.ok).toBe(true)
+  expect(result.status).toBe(200)
+  expect(JSON.stringify(result.data)).toBe(JSON.stringify(responseBody))
+  expect(result.errorMessage).toBe('')
+  expect(requestUrl).toBe('/api/notifications/notif-1/read')
+  expect(requestOptions.method).toBe('PATCH')
+  expect(JSON.stringify(requestOptions.headers)).toContain('member-123')
+  expect(requestOptions.signal).toBeTruthy()
+})
+
+test('mark-read request surfaces a non-OK status and keeps the body', async () => {
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(
+      false,
+      403,
+      JSON.stringify({ detail: 'You can only mark your own notifications read.' }),
+    )
+  })
+
+  const result = await sendMarkNotificationReadRequest('member-123', 'notif-1')
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(403)
+  expect(JSON.stringify(result.data)).toContain('your own notifications')
+  expect(result.errorMessage).toBe('')
+})
+
+test('mark-read request keeps a plain text response body', async () => {
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(false, 502, 'Bad Gateway')
+  })
+
+  const result = await sendMarkNotificationReadRequest('member-123', 'notif-1')
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(502)
+  expect(result.data).toBe('Bad Gateway')
+})
+
+test('mark-read request returns a timeout message when fetch times out', async () => {
+  vi.stubGlobal('fetch', async () => {
+    throw new DOMException('The operation timed out.', 'TimeoutError')
+  })
+
+  const result = await sendMarkNotificationReadRequest('member-123', 'notif-1')
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(0)
+  expect(result.errorMessage).toBe(
+    'Timeout: no answer from the backend after ' + notificationTimeoutMilliseconds + ' ms.',
+  )
+})
+
+test('mark-read request returns a failure message when fetch rejects', async () => {
+  vi.stubGlobal('fetch', async () => {
+    throw new TypeError('Failed to fetch')
+  })
+
+  const result = await sendMarkNotificationReadRequest('member-123', 'notif-1')
 
   expect(result.ok).toBe(false)
   expect(result.status).toBe(0)

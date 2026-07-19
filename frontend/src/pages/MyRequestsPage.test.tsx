@@ -40,7 +40,8 @@ function makeFakeResponse(ok: boolean, status: number, body: object): FakeRespon
   return fakeResponse
 }
 
-// One request in each of the three sections.
+// One request in each of the three sections. Each row carries its listing's
+// status, which decides whether the title renders as a link.
 function makeMyRequestsBody() {
   const body = {
     pending: [
@@ -48,6 +49,7 @@ function makeMyRequestsBody() {
         id: 'p1',
         listing_id: 'l1',
         listing_title: 'Apples',
+        listing_status: 'active',
         owner_name: 'Carol Chen',
         requested_quantity: 3,
         approved_quantity: null,
@@ -62,6 +64,7 @@ function makeMyRequestsBody() {
         id: 'a1',
         listing_id: 'l2',
         listing_title: 'Bananas',
+        listing_status: 'active',
         owner_name: 'Bob Baker',
         requested_quantity: 5,
         approved_quantity: 2,
@@ -76,6 +79,7 @@ function makeMyRequestsBody() {
         id: 'd1',
         listing_id: 'l3',
         listing_title: 'Cherries',
+        listing_status: 'active',
         owner_name: 'Alice Admin',
         requested_quantity: 4,
         approved_quantity: null,
@@ -160,12 +164,47 @@ test('an approved request shows its thread link while pending and denied do not'
   expect(threadLinks.length).toBe(1)
   expect(threadLinks[0].getAttribute('href')).toContain('/exchange-thread')
   // The link sits on the approved row (the same list item as the Bananas title).
+  // Every row's title is its own link to the listing, so these checks name the
+  // thread link by its href instead of just asking whether the row has a link.
   const approvedRow = screen.getByText('Bananas').closest('li')
-  expect(approvedRow?.querySelector('a')).toBeTruthy()
+  expect(approvedRow?.querySelector('a[href^="/exchange-thread"]')).toBeTruthy()
   const pendingRow = screen.getByText('Apples').closest('li')
   const deniedRow = screen.getByText('Cherries').closest('li')
-  expect(pendingRow?.querySelector('a')).toBeNull()
-  expect(deniedRow?.querySelector('a')).toBeNull()
+  expect(pendingRow?.querySelector('a[href^="/exchange-thread"]')).toBeNull()
+  expect(deniedRow?.querySelector('a[href^="/exchange-thread"]')).toBeNull()
+})
+
+test('each request title links to its listing', async () => {
+  setLoggedIn()
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, makeMyRequestsBody())
+  })
+
+  renderMyRequestsPage()
+
+  // One link per row, pointing at that row's listing, whatever the request's
+  // status. The provider's name stays outside the link.
+  const applesLink = await screen.findByRole('link', { name: 'Apples' })
+  expect(applesLink.getAttribute('href')).toBe('/listings/l1')
+  expect(screen.getByRole('link', { name: 'Bananas' }).getAttribute('href')).toBe('/listings/l2')
+  expect(screen.getByRole('link', { name: 'Cherries' }).getAttribute('href')).toBe('/listings/l3')
+})
+
+test('a request on a deactivated listing shows its title as plain text', async () => {
+  setLoggedIn()
+  const body = makeMyRequestsBody()
+  body.pending[0].listing_status = 'deactivated'
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, body)
+  })
+
+  renderMyRequestsPage()
+
+  // The title still shows, but a deactivated listing has no page to show, so
+  // it is not a link. The other rows are unaffected.
+  expect(await screen.findByText('Apples')).toBeTruthy()
+  expect(screen.queryByRole('link', { name: 'Apples' })).toBeNull()
+  expect(screen.getByRole('link', { name: 'Bananas' })).toBeTruthy()
 })
 
 test('a picked-up request shows a Contact the Poster thread link', async () => {
@@ -236,7 +275,9 @@ test('a completed exchange shows in the Completed section with no thread link', 
   const completedRow = screen.getByText('Bananas').closest('li')
   expect(completedRow?.textContent).toContain('Completed')
   expect(screen.getByText(/Your exchange for 2 was completed on/)).toBeTruthy()
-  expect(completedRow?.querySelector('a')).toBeNull()
+  // The row's title still links to the listing, so this names the thread link
+  // by its href rather than asking whether the row has any link at all.
+  expect(completedRow?.querySelector('a[href^="/exchange-thread"]')).toBeNull()
   expect(screen.getByRole('button', { name: 'Leave a Review for Bob' })).toBeTruthy()
 })
 

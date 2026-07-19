@@ -465,6 +465,20 @@ test('a deactivated listing group is marked in its heading', async () => {
   ).toBeTruthy()
   // The in-flight exchange on the deactivated listing keeps its complete button.
   expect(screen.getByRole('button', { name: 'Mark exchange complete' })).toBeTruthy()
+  // A deactivated listing has no page to show, so its title is not a link.
+  expect(screen.queryByRole('link', { name: 'Backyard Meyer Lemons' })).toBeNull()
+})
+
+test("an active listing's heading links to the listing", async () => {
+  setLoggedIn()
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, makeAllRequestsBody())
+  })
+
+  renderRequestsPage('/requests')
+
+  const titleLink = await screen.findByRole('link', { name: 'Backyard Meyer Lemons' })
+  expect(titleLink.getAttribute('href')).toBe('/listings/lemons')
 })
 
 test('marking an exchange complete sends a PATCH and reloads the completed row', async () => {

@@ -4,6 +4,8 @@
 # called by the status-change routes in claim.py and thread.py.
 
 import logging
+import uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import func, select
@@ -14,6 +16,7 @@ from app.dependencies import get_current_member
 from app.models.member import Member
 from app.models.notification import Notification
 from app.schemas.notification import (
+    MarkNotificationReadResponse,
     NotificationItem,
     NotificationsResponse,
     UnreadCountResponse,
@@ -144,3 +147,99 @@ def get_unread_count(
         unread_count = 0
 
     return UnreadCountResponse(unread_count=unread_count)
+
+
+@router.patch("/notifications/{notification_id}/read")
+def mark_notification_read(
+    notification_id: str,
+    current_member: Member = Depends(get_current_member),
+    session: Session = Depends(get_db_session),
+) -> MarkNotificationReadResponse:
+    # Mark one of the caller's own notifications read (US-23). Marking is
+    # one-way and idempotent: marking an already-read notification is accepted
+    # and changes nothing (Scenario 2).
+
+    # Active-status gate, the same rule the read endpoints above use.
+    if current_member.status != "active":
+        if current_member.status == "suspended":
+            raise HTTPException(
+                status_code=403,
+                detail="Your account is suspended, so you cannot update notifications.",
+            )
+        raise HTTPException(
+            status_code=403,
+            detail="Your account is not active, so you cannot update notifications.",
+        )
+
+    # Parse the id. A non-UUID string cannot match any notification.
+    try:
+        notification_uuid = uuid.UUID(notification_id)
+    except (ValueError, AttributeError, TypeError):
+        raise HTTPException(status_code=404, detail="Notification not found.")
+
+    # Load the notification. Like withdraw_claim, this single-row owner-only
+    # flip changes no other row and no quantity, so it loads without a row lock.
+    try:
+        notification = session.scalars(
+            select(Notification).where(Notification.id == notification_uuid)
+        ).first()
+    except Exception as error:
+        logger.error("Loading a notification to mark read failed: %s", error)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Could not update the notification right now. "
+                "Make sure the database is running and migrated: "
+                "npm run db:up, then npm run db:migrate, then npm run db:seed."
+            ),
+        )
+
+    if notification is None:
+        raise HTTPException(status_code=404, detail="Notification not found.")
+
+    # Ownership rule. Only the recipient may mark their own notification read.
+    # Checked before the read-state branch, so a non-owner never learns whether
+    # the notification was read.
+    if notification.member_id != current_member.id:
+        raise HTTPException(
+            status_code=403,
+            detail="You can only mark your own notifications read.",
+        )
+
+    # Scenario 2: already read. Return success without an error and change
+    # nothing. The stored read_at is left exactly as it was, so a repeat is a
+    # no-op.
+    if notification.is_read:
+        return MarkNotificationReadResponse(
+            id=str(notification.id),
+            is_read=True,
+            read_at=notification.read_at,
+        )
+
+    # Scenario 1: flip it to read and stamp the time.
+    now = datetime.now(timezone.utc)
+    notification.is_read = True
+    notification.read_at = now
+
+    # Cache values before commit expires loaded attributes.
+    notification_id_out = notification.id
+    read_at_out = notification.read_at
+
+    try:
+        session.commit()
+    except Exception as error:
+        session.rollback()
+        logger.error("Marking a notification read failed: %s", error)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Could not update the notification right now. "
+                "Make sure the database is running and migrated."
+            ),
+        )
+
+    return MarkNotificationReadResponse(
+        id=str(notification_id_out),
+        is_read=True,
+        read_at=read_at_out,
+    )

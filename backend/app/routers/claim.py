@@ -774,6 +774,7 @@ def build_my_request_items(session, claims):
                 id=str(claim_row.id),
                 listing_id=str(listing_row.id),
                 listing_title=listing_row.title,
+                listing_status=listing_row.status,
                 owner_name=owner_name,
                 requested_quantity=claim_row.requested_quantity,
                 approved_quantity=claim_row.approved_quantity,

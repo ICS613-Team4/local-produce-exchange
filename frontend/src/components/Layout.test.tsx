@@ -7,9 +7,11 @@ import { afterEach, expect, test, vi } from 'vitest'
 import Layout from './Layout'
 import { sendLogoutRequest } from '../services/authService'
 import {
+  notificationsChangedEventName,
   sendGetUnreadCountRequest,
   unreadCountPollIntervalMilliseconds,
 } from '../services/notificationService'
+import type { NotificationsResult } from '../services/notificationService'
 
 // Mock the auth service so the Log out button never reaches the network. The
 // mock also supplies the shared event name the Layout imports, so the dispatch
@@ -33,6 +35,7 @@ vi.mock('../services/notificationService', async (importOriginal) => {
   return {
     notificationTimeoutMilliseconds: actual.notificationTimeoutMilliseconds,
     unreadCountPollIntervalMilliseconds: actual.unreadCountPollIntervalMilliseconds,
+    notificationsChangedEventName: actual.notificationsChangedEventName,
     sendGetNotificationsRequest: actual.sendGetNotificationsRequest,
     sendGetUnreadCountRequest: vi.fn(async () => {
       return { ok: false, status: 0, data: '', errorMessage: 'not stubbed in this test' }
@@ -407,4 +410,165 @@ test('a failed tick keeps the last good count on the badge', async () => {
   expect(sendGetUnreadCountRequest).toHaveBeenCalledTimes(2)
   // The badge does not blank out on one dropped request.
   expect(screen.getByRole('link', { name: 'Notifications, 3 unread' })).toBeTruthy()
+})
+
+// ── the badge drops as soon as a notification is marked read (US-23) ─────────
+
+// A count answer the test releases by hand, for holding a request in flight.
+function makeHeldCountAnswer() {
+  let releaseFn: ((value: NotificationsResult) => void) | null = null
+  const promise = new Promise<NotificationsResult>((resolve) => {
+    releaseFn = resolve
+  })
+  function release(count: number) {
+    if (releaseFn !== null) {
+      releaseFn({ ok: true, status: 200, data: { unread_count: count }, errorMessage: '' })
+    }
+  }
+  return { promise: promise, release: release }
+}
+
+test('the notifications-changed event drops the badge right away', async () => {
+  setLoggedInMember()
+  mockCountOnce(3)
+  renderLayoutAt('/dashboard')
+  await screen.findByRole('link', { name: 'Notifications, 3 unread' })
+
+  mockCountOnce(2)
+  await act(async () => {
+    window.dispatchEvent(new Event(notificationsChangedEventName))
+  })
+
+  // The rendered result is asserted, not just the service call: the badge
+  // number and the accessible name both dropped.
+  const bell = screen.getByRole('link', { name: 'Notifications, 2 unread' })
+  expect(bell.textContent).toBe('2')
+})
+
+test('the event refresh does not wait for the poll timer', async () => {
+  vi.useFakeTimers()
+  setLoggedInMember()
+  mockCountOnce(3)
+  renderLayoutAt('/dashboard')
+  await act(async () => {})
+  expect(sendGetUnreadCountRequest).toHaveBeenCalledTimes(1)
+
+  mockCountOnce(2)
+  await act(async () => {
+    window.dispatchEvent(new Event(notificationsChangedEventName))
+  })
+
+  // The clock never advanced, so this second ask came from the listener, not
+  // from the ordinary poll correcting things later.
+  expect(sendGetUnreadCountRequest).toHaveBeenCalledTimes(2)
+  expect(screen.getByRole('link', { name: 'Notifications, 2 unread' })).toBeTruthy()
+})
+
+test('the listener is removed when the header unmounts', async () => {
+  setLoggedInMember()
+  mockCountOnce(3)
+  const view = renderLayoutAt('/dashboard')
+  await act(async () => {})
+  expect(sendGetUnreadCountRequest).toHaveBeenCalledTimes(1)
+
+  view.unmount()
+  await act(async () => {
+    window.dispatchEvent(new Event(notificationsChangedEventName))
+  })
+
+  // A leftover listener would ask again after unmount.
+  expect(sendGetUnreadCountRequest).toHaveBeenCalledTimes(1)
+})
+
+test('going from one unread to none removes the badge instead of showing zero', async () => {
+  setLoggedInMember()
+  mockCountOnce(1)
+  renderLayoutAt('/dashboard')
+  await screen.findByRole('link', { name: 'Notifications, 1 unread' })
+
+  mockCountOnce(0)
+  await act(async () => {
+    window.dispatchEvent(new Event(notificationsChangedEventName))
+  })
+
+  const bell = screen.getByRole('link', { name: 'Notifications' })
+  expect(bell.getAttribute('aria-label')).toBe('Notifications')
+  expect(bell.textContent).toBe('')
+})
+
+test('an answer that predates the mark is never shown on the badge', async () => {
+  vi.useFakeTimers()
+  setLoggedInMember()
+  mockCountOnce(3)
+  renderLayoutAt('/dashboard')
+  await act(async () => {})
+  expect(screen.getByRole('link', { name: 'Notifications, 3 unread' })).toBeTruthy()
+
+  // Hold a poll in flight. Its eventual answer (4) was computed before the
+  // mark, so it must never reach the badge.
+  const heldPoll = makeHeldCountAnswer()
+  vi.mocked(sendGetUnreadCountRequest).mockImplementationOnce(() => heldPoll.promise)
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(unreadCountPollIntervalMilliseconds)
+  })
+  expect(sendGetUnreadCountRequest).toHaveBeenCalledTimes(2)
+
+  // The mark-read event arrives while that poll is still in flight. No new
+  // request can start yet; the re-ask is queued for when the poll lands.
+  await act(async () => {
+    window.dispatchEvent(new Event(notificationsChangedEventName))
+  })
+  expect(sendGetUnreadCountRequest).toHaveBeenCalledTimes(2)
+
+  // Hold the re-ask too, so the moment between the two answers is observable.
+  const heldReAsk = makeHeldCountAnswer()
+  vi.mocked(sendGetUnreadCountRequest).mockImplementationOnce(() => heldReAsk.promise)
+
+  // The stale poll answers 4. The write is skipped and the re-ask fires; with
+  // the re-ask still pending, the badge must still say 3, never 4. Asserting
+  // only the final number would pass even with the stale write left in, so
+  // this intermediate check is the point of the test.
+  await act(async () => {
+    heldPoll.release(4)
+  })
+  expect(sendGetUnreadCountRequest).toHaveBeenCalledTimes(3)
+  expect(screen.getByRole('link', { name: 'Notifications, 3 unread' })).toBeTruthy()
+  expect(screen.queryByRole('link', { name: 'Notifications, 4 unread' })).toBeNull()
+
+  // The re-ask answers with the true post-mark count.
+  await act(async () => {
+    heldReAsk.release(2)
+  })
+  expect(screen.getByRole('link', { name: 'Notifications, 2 unread' })).toBeTruthy()
+})
+
+test('the re-ask after a mid-flight event happens exactly once', async () => {
+  vi.useFakeTimers()
+  setLoggedInMember()
+  mockCountOnce(3)
+  renderLayoutAt('/dashboard')
+  await act(async () => {})
+
+  const heldPoll = makeHeldCountAnswer()
+  vi.mocked(sendGetUnreadCountRequest).mockImplementationOnce(() => heldPoll.promise)
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(unreadCountPollIntervalMilliseconds)
+  })
+  await act(async () => {
+    window.dispatchEvent(new Event(notificationsChangedEventName))
+  })
+
+  mockCountOnce(2)
+  await act(async () => {
+    heldPoll.release(3)
+  })
+
+  // One initial ask, one held poll, one re-ask: three in total. Letting
+  // everything settle adds no fourth call, which proves the flag was cleared
+  // before the retry rather than looping.
+  expect(sendGetUnreadCountRequest).toHaveBeenCalledTimes(3)
+  await act(async () => {})
+  await act(async () => {})
+  expect(sendGetUnreadCountRequest).toHaveBeenCalledTimes(3)
+  expect(screen.getByRole('link', { name: 'Notifications, 2 unread' })).toBeTruthy()
 })

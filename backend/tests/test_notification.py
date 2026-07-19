@@ -31,7 +31,11 @@ from app.routers.claim import (
     deny_claim,
     withdraw_claim,
 )
-from app.routers.notification import get_notifications, get_unread_count
+from app.routers.notification import (
+    get_notifications,
+    get_unread_count,
+    mark_notification_read,
+)
 from app.routers.thread import send_message_to_thread
 from app.schemas.claim import CreateClaimPayload
 from app.schemas.thread import SendMessagePayload
@@ -110,6 +114,7 @@ def insert_notification(
     message="Something happened.",
     created_at=None,
     is_read=False,
+    read_at=None,
 ):
     notification = Notification(
         member_id=member_id,
@@ -120,6 +125,8 @@ def insert_notification(
     )
     if created_at is not None:
         notification.created_at = created_at
+    if read_at is not None:
+        notification.read_at = read_at
     session.add(notification)
     session.commit()
     return notification
@@ -154,6 +161,24 @@ class ClaimThenListingErrorSession:
         if self.query_count == 1:
             return FakeScalarResult(self.claim)
         raise self.error
+
+
+class NotificationCommitErrorSession:
+    # Answers the notification load, then raises on commit, so the commit 503
+    # branch in mark_notification_read (US-23) is covered. rollback is a no-op
+    # so the route reaches its HTTPException.
+    def __init__(self, notification, error):
+        self.notification = notification
+        self.error = error
+
+    def scalars(self, statement):
+        return FakeScalarResult(self.notification)
+
+    def commit(self):
+        raise self.error
+
+    def rollback(self):
+        pass
 
 
 # ── the list endpoint get_notifications ──────────────────────────────────────
@@ -415,6 +440,174 @@ def test_notification_routes_are_wired():
                     found_count = True
     assert found_list
     assert found_count
+
+
+# ── the mark-read endpoint mark_notification_read (US-23) ────────────────────
+
+
+def test_mark_notification_read_marks_an_unread_notification(db_session):
+    member = insert_member(db_session, email="reader@example.com", name="Reader")
+    notification = insert_notification(db_session, member.id, message="unread until now")
+
+    result = mark_notification_read(str(notification.id), member, db_session)
+
+    assert result.id == str(notification.id)
+    assert result.is_read is True
+    assert result.read_at is not None
+
+    saved = db_session.scalars(
+        select(Notification).where(Notification.id == notification.id)
+    ).first()
+    assert saved.is_read is True
+    assert saved.read_at is not None
+
+
+def test_mark_notification_read_already_read_is_idempotent(db_session):
+    # Scenario 2: the repeat is accepted with no error and changes nothing,
+    # including the stored read_at.
+    member = insert_member(db_session, email="reader@example.com", name="Reader")
+    original_read_at = datetime(2026, 7, 10, 12, 0, tzinfo=timezone.utc)
+    notification = insert_notification(
+        db_session,
+        member.id,
+        message="already read",
+        is_read=True,
+        read_at=original_read_at,
+    )
+
+    result = mark_notification_read(str(notification.id), member, db_session)
+
+    assert result.is_read is True
+    assert result.read_at == original_read_at
+
+    saved = db_session.scalars(
+        select(Notification).where(Notification.id == notification.id)
+    ).first()
+    assert saved.is_read is True
+    assert saved.read_at == original_read_at
+
+
+def test_mark_notification_read_rejects_a_non_owner(db_session):
+    owner = insert_member(db_session, email="owner@example.com", name="Owner")
+    intruder = insert_member(db_session, email="intruder@example.com", name="Intruder")
+    notification = insert_notification(db_session, owner.id, message="for the owner")
+
+    with pytest.raises(HTTPException) as raised:
+        mark_notification_read(str(notification.id), intruder, db_session)
+
+    assert raised.value.status_code == 403
+    assert "your own notifications" in raised.value.detail
+
+    # The refusal wrote nothing: the owner's notification is still unread.
+    saved = db_session.scalars(
+        select(Notification).where(Notification.id == notification.id)
+    ).first()
+    assert saved.is_read is False
+    assert saved.read_at is None
+
+
+@pytest.mark.parametrize(
+    ("member_status", "detail_text"),
+    [
+        ("suspended", "Your account is suspended"),
+        ("inactive", "Your account is not active"),
+    ],
+)
+def test_mark_notification_read_rejects_non_active_member(
+    db_session,
+    member_status,
+    detail_text,
+):
+    member = insert_member(
+        db_session,
+        status=member_status,
+        email=member_status + "@example.com",
+        name="Blocked",
+    )
+
+    # The gate fires before any load, so the id never matters here.
+    with pytest.raises(HTTPException) as raised:
+        mark_notification_read(str(uuid.uuid4()), member, db_session)
+
+    assert raised.value.status_code == 403
+    assert detail_text in raised.value.detail
+
+
+def test_mark_notification_read_bad_id_is_404(db_session):
+    member = insert_member(db_session, email="reader@example.com", name="Reader")
+
+    with pytest.raises(HTTPException) as raised:
+        mark_notification_read("not-a-uuid", member, db_session)
+
+    assert raised.value.status_code == 404
+    assert "Notification not found" in raised.value.detail
+
+
+def test_mark_notification_read_missing_id_is_404(db_session):
+    member = insert_member(db_session, email="reader@example.com", name="Reader")
+
+    with pytest.raises(HTTPException) as raised:
+        mark_notification_read(str(uuid.uuid4()), member, db_session)
+
+    assert raised.value.status_code == 404
+    assert "Notification not found" in raised.value.detail
+
+
+def test_mark_notification_read_returns_503_on_database_error(broken_session):
+    member = Member(
+        id=uuid.uuid4(),
+        name="Reader",
+        email="reader@example.com",
+        password_hash="not-a-real-hash",
+        status="active",
+    )
+
+    with pytest.raises(HTTPException) as raised:
+        mark_notification_read(str(uuid.uuid4()), member, broken_session)
+
+    assert raised.value.status_code == 503
+    assert "Could not update the notification" in raised.value.detail
+
+
+def test_mark_notification_read_returns_503_when_the_commit_fails():
+    member_id = uuid.uuid4()
+    member = Member(
+        id=member_id,
+        name="Reader",
+        email="reader@example.com",
+        password_hash="not-a-real-hash",
+        status="active",
+    )
+    notification = Notification(
+        id=uuid.uuid4(),
+        member_id=member_id,
+        claim_id=None,
+        kind="request_submitted",
+        message="The commit will fail.",
+        is_read=False,
+    )
+    error = OperationalError("statement", {}, Exception("database is down"))
+    session = NotificationCommitErrorSession(notification, error)
+
+    with pytest.raises(HTTPException) as raised:
+        mark_notification_read(str(notification.id), member, session)
+
+    assert raised.value.status_code == 503
+    assert "Could not update the notification" in raised.value.detail
+
+
+def test_mark_notification_read_route_is_wired():
+    from fastapi.routing import APIRoute
+
+    from app.main import app
+
+    found_mark_read = False
+    for route in app.routes:
+        if isinstance(route, APIRoute):
+            if route.path == "/api/notifications/{notification_id}/read":
+                if "PATCH" in route.methods:
+                    found_mark_read = True
+    assert found_mark_read
 
 
 # ── the helper create_notification ───────────────────────────────────────────

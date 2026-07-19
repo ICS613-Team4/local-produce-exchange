@@ -35,3 +35,13 @@ class NotificationsResponse(BaseModel):
 # no field that grows as the member collects more notifications.
 class UnreadCountResponse(BaseModel):
     unread_count: int
+
+
+# The response for marking one notification read (US-23). It confirms the final
+# state so the caller can show it without another read. is_read is always true
+# after a successful call (the notification is read, or was already read).
+# read_at is the time it was marked read.
+class MarkNotificationReadResponse(BaseModel):
+    id: str
+    is_read: bool
+    read_at: Optional[datetime] = None

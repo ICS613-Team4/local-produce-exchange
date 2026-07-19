@@ -3,6 +3,7 @@ import { Link, Outlet, useLocation } from 'react-router'
 
 import { authStateChangedEventName, sendLogoutRequest } from '../services/authService'
 import {
+  notificationsChangedEventName,
   sendGetUnreadCountRequest,
   unreadCountPollIntervalMilliseconds,
 } from '../services/notificationService'
@@ -75,9 +76,14 @@ function Layout() {
     // True while a request is in flight. The timer checks this and skips its
     // tick rather than stacking a second request on a slow or hung backend.
     let alreadyAsking = false
+    // Set when a refresh was requested while another was already in flight. The
+    // in-flight answer may be from before whatever changed, so ask once more as
+    // soon as it lands rather than dropping the request.
+    let askAgainWhenDone = false
 
     async function loadCount() {
       if (alreadyAsking === true) {
+        askAgainWhenDone = true
         return
       }
       // Nobody is looking at a hidden tab, so do not spend a request on it.
@@ -93,7 +99,13 @@ function Layout() {
         return
       }
 
-      if (result.ok === true) {
+      // Only write a count that is still current. If askAgainWhenDone is set, a
+      // mark-read landed WHILE this request was in flight, so this answer was
+      // computed before that change and is already known to be wrong. Writing
+      // it would flash the stale number on the badge for one round trip before
+      // the re-ask corrects it. Skip the write and let the re-ask below supply
+      // the real number.
+      if (result.ok === true && askAgainWhenDone === false) {
         const body = result.data as UnreadCountResponse
         setUnreadCount(body.unread_count)
       }
@@ -101,6 +113,14 @@ function Layout() {
       // on screen and tries again on the next tick. The header is the wrong
       // place for an error banner, and blanking the badge on one dropped
       // request would make the count flicker.
+
+      // Honor a refresh that arrived mid-flight. The flag is cleared before the
+      // retry, so this cannot loop: only a fresh event or timer tick can set it
+      // again.
+      if (askAgainWhenDone === true) {
+        askAgainWhenDone = false
+        loadCount()
+      }
     }
 
     // Ask once now, so a member who just logged in does not wait for the first
@@ -118,10 +138,20 @@ function Layout() {
     }
     document.addEventListener('visibilitychange', handleVisibilityChange)
 
+    // A page that changed how many notifications are unread (marking one read,
+    // US-23) fires this event. Re-read the count now rather than waiting for
+    // the next scheduled refresh, so the badge drops as soon as the member
+    // marks a notification read.
+    function handleNotificationsChanged() {
+      loadCount()
+    }
+    window.addEventListener(notificationsChangedEventName, handleNotificationsChanged)
+
     return function stopPolling() {
       stillMounted = false
       clearInterval(timerId)
       document.removeEventListener('visibilitychange', handleVisibilityChange)
+      window.removeEventListener(notificationsChangedEventName, handleNotificationsChanged)
     }
   }, [isLoggedIn, memberId])
 
