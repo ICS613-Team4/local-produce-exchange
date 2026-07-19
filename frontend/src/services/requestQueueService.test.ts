@@ -8,6 +8,7 @@ import {
   sendCreateClaimRequest,
   sendDecideClaimRequest,
   sendGetAllRequestsRequest,
+  sendGetExchangeHistoryRequest,
   sendGetMyClaimRequest,
   sendGetMyRequestsRequest,
   sendGetRequestQueuesRequest,
@@ -718,4 +719,109 @@ test('all requests returns a timeout message when the request times out', async 
   expect(result.errorMessage).toBe(
     'Timeout: no answer from the backend after ' + requestQueueTimeoutMilliseconds + ' ms.',
   )
+})
+
+// --- US-24: sendGetExchangeHistoryRequest returns the caller's exchange history ---
+
+test('gets the exchange history at /api/exchange-history with the member id header', async () => {
+  const responseBody = {
+    requested: [],
+    approved: [
+      {
+        id: 'c1',
+        listing_id: 'l1',
+        listing_title: 'Lemons',
+        side: 'recipient',
+        other_party_name: 'Dave Diaz',
+        requested_quantity: 2,
+        approved_quantity: 2,
+        status: 'approved',
+        requested_at: '2026-07-01T09:00:00.000Z',
+        approved_at: '2026-07-02T09:00:00.000Z',
+        picked_up_at: null,
+        completed_at: null,
+        cancelled_at: null,
+        denied_at: null,
+      },
+    ],
+    picked_up: [],
+    completed: [],
+    cancelled: [],
+    denied: [],
+  }
+  let requestUrl = ''
+  let requestOptions: RequestInit = {}
+  vi.stubGlobal('fetch', async (url: string | URL | Request, options: RequestInit | undefined) => {
+    requestUrl = String(url)
+    if (options !== undefined) {
+      requestOptions = options
+    }
+    return makeFakeResponse(true, 200, JSON.stringify(responseBody))
+  })
+
+  const result = await sendGetExchangeHistoryRequest('member-123')
+
+  expect(result.ok).toBe(true)
+  expect(result.status).toBe(200)
+  expect(JSON.stringify(result.data)).toBe(JSON.stringify(responseBody))
+  expect(result.errorMessage).toBe('')
+  expect(requestUrl).toBe('/api/exchange-history')
+  expect(requestOptions.method).toBe('GET')
+  expect(JSON.stringify(requestOptions.headers)).toContain('X-Member-Id')
+  expect(JSON.stringify(requestOptions.headers)).toContain('member-123')
+  expect(requestOptions.signal).toBeTruthy()
+})
+
+test('exchange history keeps a non-JSON body as plain text', async () => {
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(false, 502, 'Bad gateway')
+  })
+
+  const result = await sendGetExchangeHistoryRequest('member-123')
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(502)
+  expect(result.data).toBe('Bad gateway')
+})
+
+test('exchange history maps an HTTP error response into the result object', async () => {
+  const responseBody = {
+    detail: 'Your account is suspended, so you cannot view your exchange history.',
+  }
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(false, 403, JSON.stringify(responseBody))
+  })
+
+  const result = await sendGetExchangeHistoryRequest('member-123')
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(403)
+  expect(JSON.stringify(result.data)).toBe(JSON.stringify(responseBody))
+})
+
+test('exchange history returns a timeout message when the request times out', async () => {
+  vi.stubGlobal('fetch', async () => {
+    throw new DOMException('The operation timed out.', 'TimeoutError')
+  })
+
+  const result = await sendGetExchangeHistoryRequest('member-123')
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(0)
+  expect(result.errorMessage).toBe(
+    'Timeout: no answer from the backend after ' + requestQueueTimeoutMilliseconds + ' ms.',
+  )
+})
+
+test('exchange history reports other transport failures with the error text', async () => {
+  vi.stubGlobal('fetch', async () => {
+    throw new Error('network down')
+  })
+
+  const result = await sendGetExchangeHistoryRequest('member-123')
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(0)
+  expect(result.errorMessage).toContain('Request failed:')
+  expect(result.errorMessage).toContain('network down')
 })

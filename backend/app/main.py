@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from app.routers import (
     auth,
     claim,
+    exchange_history,
     health,
     invite,
     listing,
@@ -49,6 +50,7 @@ app = FastAPI(title="Surplus: A Local Produce Exchange API")
 # Every route in this router starts with /api.
 app.include_router(auth.router, prefix="/api")
 app.include_router(claim.router, prefix="/api")
+app.include_router(exchange_history.router, prefix="/api")
 app.include_router(health.router, prefix="/api")
 app.include_router(invite.router, prefix="/api")
 app.include_router(listing.router, prefix="/api")
