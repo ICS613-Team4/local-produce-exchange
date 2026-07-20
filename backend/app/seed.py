@@ -31,6 +31,7 @@ _HASHES = [
     "$2b$12$pPJeQeNnQ2ube5f1B33OsuekyZHVlN/IkXHJ7vfWE4KZj81zVcgYq",
     "$2b$12$mhLUc4NY3E0oXKT55xmbeuhNIxtOwPe1kKeUKwVYPbbx4jplvB1hG",
     "$2b$12$D87RT4vw8S19Gl4PSo1Ck.JqLJxoPcpWVLlj.d0wuzSjaG99vCVk2",
+    "$2b$12$TiNTcn1n5lr7UAq/kYDg0OEvswXP2x.JQju295RxDJhqeMU0iezkO",
 ]
 
 # Plaintext for the pending demo invite token - shown once at seed time.
@@ -99,9 +100,18 @@ def seed_members(session):
     bob   = Member(name="Bob Baker",   email="bob@example.com",   password_hash=_HASHES[1])
     carol = Member(name="Carol Chen",  email="carol@example.com", password_hash=_HASHES[2])
     dave  = Member(name="Dave Diaz",   email="dave@example.com",  password_hash=_HASHES[3])
+    # Suspended from the start, unlike Dave (who the US-25 manual test suspends
+    # live during that test). Erin is the standing fixture for scenarios whose
+    # precondition is "a suspended account exists" without disturbing Dave's
+    # active starting state: US-26 (unsuspend) and US-29 (view a suspended
+    # member's profile as admin).
+    erin  = Member(
+        name="Erin Ito", email="erin@example.com", password_hash=_HASHES[4],
+        status="suspended", suspended_at=datetime.now(timezone.utc),
+    )
 
-    session.add_all([alice, bob, carol, dave])
-    print("Inserted 4 members.")
+    session.add_all([alice, bob, carol, dave, erin])
+    print("Inserted 5 members.")
 
 
 def seed_profiles(session):
@@ -116,6 +126,7 @@ def seed_profiles(session):
     bob = find_member_by_email(session, "bob@example.com")
     carol = find_member_by_email(session, "carol@example.com")
     dave = find_member_by_email(session, "dave@example.com")
+    erin = find_member_by_email(session, "erin@example.com")
 
     if alice is not None:
         session.add(MemberProfile(member_id=alice.id, display_name="Alice", neighborhood="Manoa", contact_preference="email"))
@@ -125,6 +136,8 @@ def seed_profiles(session):
         session.add(MemberProfile(member_id=carol.id, display_name="Carol", neighborhood="Kailua", contact_preference="either"))
     if dave is not None:
         session.add(MemberProfile(member_id=dave.id, display_name="Dave", neighborhood="Pearl City"))
+    if erin is not None:
+        session.add(MemberProfile(member_id=erin.id, display_name="Erin", neighborhood="Waipahu"))
     print("Inserted member profiles.")
 
 

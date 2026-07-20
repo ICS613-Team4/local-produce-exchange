@@ -1,6 +1,8 @@
 import { BrowserRouter, Route, Routes } from 'react-router'
 import Layout from './components/Layout.tsx'
 import AboutPage from './pages/AboutPage.tsx'
+import AdminMemberDetailPage from './pages/AdminMemberDetailPage.tsx'
+import AdminMemberSearchPage from './pages/AdminMemberSearchPage.tsx'
 import BrowsePage from './pages/BrowsePage.tsx'
 import CreateListingPage from './pages/CreateListingPage.tsx'
 import DashboardPage from './pages/DashboardPage.tsx'
@@ -17,6 +19,7 @@ import MyRequestsPage from './pages/MyRequestsPage.tsx'
 import ProfilePage from './pages/ProfilePage.tsx'
 import RegisterPage from './pages/RegisterPage.tsx'
 import RequestQueuesPage from './pages/RequestQueuesPage.tsx'
+import RequireAdmin from './components/RequireAdmin.tsx'
 import RequireAuth from './components/RequireAuth.tsx'
 import TestPage from './pages/TestPage.tsx'
 
@@ -49,6 +52,14 @@ function App() {
             <Route path="/listings/create" element={<CreateListingPage />} />
             <Route path="/listings/:id/edit" element={<EditListingPage />} />
             <Route path="/exchange-thread" element={<ExchangeThreadPage />} />
+          </Route>
+          {/* Admin-only pages (US-29). Separate guard from RequireAuth: these
+              need role "admin", not just a logged-in member, and RequireAdmin
+              gives a distinct "not authorized" message for a logged-in
+              non-admin instead of the "please log in" one. */}
+          <Route element={<RequireAdmin />}>
+            <Route path="/admin/members" element={<AdminMemberSearchPage />} />
+            <Route path="/admin/members/:id" element={<AdminMemberDetailPage />} />
           </Route>
           <Route path="/browse" element={<BrowsePage />} />
           <Route path="/listings/:id" element={<ListingDetailPage />} />

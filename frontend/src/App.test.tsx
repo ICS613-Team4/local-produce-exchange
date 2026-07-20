@@ -265,3 +265,74 @@ test('guards the /profile/:id route, showing the log-in message when logged out'
   const loginLink = screen.getByRole('link', { name: 'log in' })
   expect(loginLink.getAttribute('href')).toBe('/login')
 })
+
+test('wires the /admin/members route inside RequireAdmin for a logged-in admin', async () => {
+  window.history.pushState({}, '', '/admin/members')
+  window.localStorage.setItem('memberId', 'admin-123')
+  window.localStorage.setItem('memberName', 'Alice Admin')
+
+  // RequireAdmin validates admin-123 via GET /api/members/:id, checking role.
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, { id: 'admin-123', role: 'admin' })
+  })
+
+  render(<App />)
+
+  // The search page heading renders, which only happens if App registered the
+  // route inside RequireAdmin and let a logged-in admin through.
+  expect(await screen.findByRole('heading', { name: 'Search members' })).toBeTruthy()
+})
+
+test('blocks the /admin/members route for a logged-in member who is not an admin', async () => {
+  window.history.pushState({}, '', '/admin/members')
+  window.localStorage.setItem('memberId', 'member-123')
+  window.localStorage.setItem('memberName', 'Bob Baker')
+
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, { id: 'member-123', role: 'member' })
+  })
+
+  render(<App />)
+
+  expect(await screen.findByText(/do not have access/)).toBeTruthy()
+  expect(screen.queryByRole('heading', { name: 'Search members' })).toBeNull()
+})
+
+test('guards the /admin/members route, showing the log-in message when logged out', () => {
+  window.history.pushState({}, '', '/admin/members')
+  render(<App />)
+
+  expect(screen.queryByRole('heading', { name: 'Search members' })).toBeNull()
+  const loginLink = screen.getByRole('link', { name: 'log in' })
+  expect(loginLink.getAttribute('href')).toBe('/login')
+})
+
+test('wires the /admin/members/:id route inside RequireAdmin for a logged-in admin', async () => {
+  window.history.pushState({}, '', '/admin/members/member-456')
+  window.localStorage.setItem('memberId', 'admin-123')
+  window.localStorage.setItem('memberName', 'Alice Admin')
+
+  const targetMember = {
+    id: 'member-456',
+    name: 'Carla Carrot',
+    email: 'carla@example.com',
+    status: 'active',
+    role: 'member',
+    created_at: '2026-01-01T00:00:00Z',
+    suspended_at: null,
+    display_name: 'Carla',
+    neighborhood: 'Manoa',
+    contact_preference: 'email',
+  }
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    const urlText = String(url)
+    if (urlText.includes('member-456')) {
+      return makeFakeResponse(true, 200, targetMember)
+    }
+    return makeFakeResponse(true, 200, { id: 'admin-123', role: 'admin' })
+  })
+
+  render(<App />)
+
+  expect(await screen.findByRole('heading', { name: 'Carla Carrot' })).toBeTruthy()
+})
