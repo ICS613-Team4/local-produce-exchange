@@ -174,15 +174,6 @@ function MyRequestsPage() {
     setReloadCounter((currentValue) => currentValue + 1)
   }
 
-  // Placeholder for the review feature (US-20). The button renders on
-  // completed rows now so the flow is visible, but the review form itself is
-  // US-20's to build; until then the click explains that.
-  function handleLeaveReview() {
-    window.alert(
-      'Reviews are not built yet. Leaving a rating and review for a completed exchange arrives with user story US-20.',
-    )
-  }
-
   // Map a claim status to its badge colors. Pickup and completion use distinct
   // tokens so they read differently from the green approved badge, matching
   // the poster's all-requests page.
@@ -316,22 +307,28 @@ function MyRequestsPage() {
       }
       // A finished exchange: the poster marked it complete after the pickup.
       // No thread link here, matching the poster's all-requests page, where a
-      // completed row also loses its link. The review button reviews the other
-      // party, the poster; the form itself is US-20's (see handleLeaveReview).
+      // completed row also loses its link. The review link reviews the other
+      // party, the poster, on the shared /review screen (US-20).
       detailLine = <>Your exchange for {approvedQuantity} was completed on {completedAtText}</>
       let posterFirstName = 'the poster'
       if (item.owner_name !== '') {
         posterFirstName = item.owner_name.split(' ')[0]
       }
+      // Once the caller has reviewed this exchange, the same link opens the
+      // pre-filled edit form, so the label says so instead of inviting a
+      // first review.
+      let reviewLinkLabel = 'Leave a Review for ' + posterFirstName
+      if (item.reviewed_by_me === true) {
+        reviewLinkLabel = 'Edit Your Review for ' + posterFirstName
+      }
       controlsArea = (
         <div className="flex flex-wrap items-center gap-2 mt-3">
-          <button
-            type="button"
-            onClick={() => handleLeaveReview()}
+          <Link
+            to={'/review?claim=' + item.id}
             className="inline-flex items-center px-3 py-1.5 text-xs font-medium text-primary-600 border border-primary-200 rounded-md hover:bg-primary-50 transition-colors"
           >
-            Leave a Review for {posterFirstName}
-          </button>
+            {reviewLinkLabel}
+          </Link>
         </div>
       )
     } else if (item.status === 'denied') {

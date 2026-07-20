@@ -105,6 +105,11 @@ function makeActiveListing() {
     created_at: '2026-06-19T00:00:00.000Z',
     owner_name: 'Olivia Owner',
     photos: [] as Array<{ id: string; content_type: string; position: number }>,
+    // The owner's listing-owner rating (US-20). null and 0 read as
+    // "(no listing owner rating)"; a test that needs a rated owner
+    // overwrites these.
+    owner_rating_average: null as number | null,
+    owner_rating_count: 0,
   }
   return listing
 }
@@ -1364,4 +1369,41 @@ test('does not flash the request form while the claim status is still loading', 
   )
   expect(await screen.findByRole('link', { name: /Arrange the Exchange/ })).toBeTruthy()
   expect(screen.queryByRole('button', { name: 'Submit request' })).toBeNull()
+})
+
+// --- US-20: the owner's listing-owner rating on the detail page ---
+
+test('shows the owner rating chip with the role-scoped average', async () => {
+  setLoggedIn()
+  const listing = makeActiveListing()
+  listing.owner_rating_average = 4.5
+  listing.owner_rating_count = 2
+  stubListingFetch(() => makeFakeResponse(true, 200, listing))
+
+  renderDetailPage()
+
+  await screen.findByText('Backyard Lemons')
+  // The rating sits inline in the posted-by line, which shows twice on the
+  // page (under the title and at the bottom), so the chip renders twice. The
+  // count is not shown.
+  const chips = screen.getAllByRole('button', {
+    name: "View the reviews behind this member's rating as a listing owner",
+  })
+  expect(chips.length).toBe(2)
+  expect(chips[0].textContent).toBe('(★ 4.5 listing owner rating)')
+  expect(chips[1].textContent).toBe('(★ 4.5 listing owner rating)')
+})
+
+test('says no rating, without a button, when the owner has no reviews', async () => {
+  setLoggedIn()
+  stubListingFetch(() => makeFakeResponse(true, 200, makeActiveListing()))
+
+  renderDetailPage()
+
+  await screen.findByText('Backyard Lemons')
+  // No reviews renders plain non-clickable text in both posted-by lines: no
+  // star, no chip button.
+  expect(screen.getAllByText('(no listing owner rating)').length).toBe(2)
+  expect(screen.queryByText(/★/)).toBeNull()
+  expect(screen.queryByRole('button', { name: /View the reviews/ })).toBeNull()
 })

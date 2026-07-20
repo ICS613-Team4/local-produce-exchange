@@ -8,6 +8,7 @@ import EditListingPage from './pages/EditListingPage.tsx'
 import ExchangeThreadPage from './pages/ExchangeThreadPage.tsx'
 import HomePage from './pages/HomePage.tsx'
 import InvitePage from './pages/InvitePage.tsx'
+import LeaveReviewPage from './pages/LeaveReviewPage.tsx'
 import ListingDetailPage from './pages/ListingDetailPage.tsx'
 import LoginPage from './pages/LoginPage.tsx'
 import NotFoundPage from './pages/NotFoundPage.tsx'
@@ -45,6 +46,7 @@ function App() {
             <Route path="/listings/create" element={<CreateListingPage />} />
             <Route path="/listings/:id/edit" element={<EditListingPage />} />
             <Route path="/exchange-thread" element={<ExchangeThreadPage />} />
+            <Route path="/review" element={<LeaveReviewPage />} />
           </Route>
           <Route path="/browse" element={<BrowsePage />} />
           <Route path="/listings/:id" element={<ListingDetailPage />} />

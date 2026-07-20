@@ -21,6 +21,7 @@ import type {
   RequestQueuesResult,
 } from '../services/requestQueueService'
 import { formatTimestamp, getLocalTimeZoneNote } from '../utils/formatTimestamp'
+import MemberRatingChip from '../components/MemberRatingChip'
 
 function DashboardPage() {
   const memberId = window.localStorage.getItem('memberId') ?? ''
@@ -384,10 +385,29 @@ function DashboardPage() {
           </button>
         )
       }
+      // The requestor's rating AS a requestor (US-20), inline right after the
+      // requestor's name, so the owner can weigh whose request to accept.
+      let claimantRequestorAverage = null
+      if (item.claimant_requestor_average !== undefined && item.claimant_requestor_average !== null) {
+        claimantRequestorAverage = item.claimant_requestor_average
+      }
+      let claimantRequestorCount = 0
+      if (item.claimant_requestor_count !== undefined) {
+        claimantRequestorCount = item.claimant_requestor_count
+      }
       rowItems.push(
         <li key={item.id} className="flex items-center justify-between py-2.5 border-b border-border last:border-0">
           <div className="min-w-0">
-            <p className="text-sm text-text">{item.claimant_name} requested {item.requested_quantity}</p>
+            <p className="text-sm text-text">
+              {item.claimant_name}{' '}
+              <MemberRatingChip
+                memberId={item.claimant_id}
+                role="requestor"
+                average={claimantRequestorAverage}
+                count={claimantRequestorCount}
+              />{' '}
+              requested {item.requested_quantity}
+            </p>
             <p className="text-xs text-text-muted">{requestedAtText}</p>
           </div>
           <div className="flex items-center gap-2 shrink-0 ml-3">

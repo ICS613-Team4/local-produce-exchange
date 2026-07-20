@@ -270,7 +270,7 @@ test('a completed exchange shows in the Completed section with no thread link', 
   // The row sits under the Completed heading with the completed badge and the
   // completion line, and offers no thread link (matching the poster side,
   // where a completed row also loses its link). Its one control is the
-  // placeholder review button naming the poster.
+  // review link naming the poster.
   expect(await screen.findByRole('heading', { level: 2, name: 'Completed' })).toBeTruthy()
   const completedRow = screen.getByText('Bananas').closest('li')
   expect(completedRow?.textContent).toContain('Completed')
@@ -278,15 +278,14 @@ test('a completed exchange shows in the Completed section with no thread link', 
   // The row's title still links to the listing, so this names the thread link
   // by its href rather than asking whether the row has any link at all.
   expect(completedRow?.querySelector('a[href^="/exchange-thread"]')).toBeNull()
-  expect(screen.getByRole('button', { name: 'Leave a Review for Bob' })).toBeTruthy()
+  expect(screen.queryByRole('link', { name: /Arrange|Contact/ })).toBeNull()
+  // The row's one control is the review link (US-20), which opens the shared
+  // review page rather than the placeholder button main used to render.
+  expect(screen.getByRole('link', { name: 'Leave a Review for Bob' })).toBeTruthy()
 })
 
-test('the review button on a completed exchange explains it arrives with US-20', async () => {
+test('the review link on a completed exchange points at the shared review page', async () => {
   setLoggedIn()
-  let alertMessage = ''
-  vi.stubGlobal('alert', (message: string) => {
-    alertMessage = message
-  })
   const body = {
     pending: [],
     approved: [],
@@ -314,10 +313,8 @@ test('the review button on a completed exchange explains it arrives with US-20',
 
   renderMyRequestsPage()
 
-  const reviewButton = await screen.findByRole('button', { name: 'Leave a Review for Bob' })
-  fireEvent.click(reviewButton)
-
-  expect(alertMessage).toContain('US-20')
+  const reviewLink = await screen.findByRole('link', { name: 'Leave a Review for Bob' })
+  expect(reviewLink.getAttribute('href')).toBe('/review?claim=completed-1')
 })
 
 test('a response without a completed list treats the section as empty', async () => {
@@ -794,4 +791,39 @@ test('renders the not-logged-in message and does not fetch when logged out', asy
   expect(screen.getByText('You need to be logged in to see this page.')).toBeTruthy()
   await waitForStateUpdates()
   expect(fetchCallCount).toBe(0)
+})
+
+test('a completed exchange the caller reviewed offers the edit label', async () => {
+  setLoggedIn()
+  const body = {
+    pending: [],
+    approved: [],
+    completed: [
+      {
+        id: 'completed-1',
+        listing_id: 'l2',
+        listing_title: 'Bananas',
+        owner_name: 'Bob Baker',
+        requested_quantity: 5,
+        approved_quantity: 2,
+        status: 'completed',
+        requested_at: '2026-07-01T08:00:00.000Z',
+        approved_at: '2026-07-02T10:00:00.000Z',
+        picked_up_at: '2026-07-03T09:00:00.000Z',
+        completed_at: '2026-07-04T09:00:00.000Z',
+        denied_at: null,
+        reviewed_by_me: true,
+      },
+    ],
+    denied: [],
+  }
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, body)
+  })
+
+  renderMyRequestsPage()
+
+  const reviewLink = await screen.findByRole('link', { name: 'Edit Your Review for Bob' })
+  expect(reviewLink.getAttribute('href')).toBe('/review?claim=completed-1')
+  expect(screen.queryByRole('link', { name: 'Leave a Review for Bob' })).toBeNull()
 })

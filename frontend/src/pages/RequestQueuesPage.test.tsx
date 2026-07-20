@@ -276,11 +276,11 @@ test('a picked-up request shows both outcome lines and the Contact the Recipient
   expect(screen.getByRole('button', { name: 'Mark exchange complete' })).toBeTruthy()
   const recipientLink = screen.getByRole('link', { name: 'Contact the Recipient' })
   expect(recipientLink.getAttribute('href')).toContain('/exchange-thread?claim=c3')
-  // A finished exchange offers no Approve or Deny, and the review button
+  // A finished exchange offers no Approve or Deny, and the review link
   // belongs to completed rows only.
   expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
   expect(screen.queryByRole('button', { name: 'Deny' })).toBeNull()
-  expect(screen.queryByRole('button', { name: /Leave a Review/ })).toBeNull()
+  expect(screen.queryByRole('link', { name: /Leave a Review/ })).toBeNull()
 })
 
 test('a completed request shows its full outcome and no complete button', async () => {
@@ -296,27 +296,21 @@ test('a completed request shows its full outcome and no complete button', async 
   expect(screen.getByText(/Picked up on/)).toBeTruthy()
   expect(screen.getByText(/Completed on/)).toBeTruthy()
   expect(screen.queryByRole('button', { name: 'Mark exchange complete' })).toBeNull()
-  // The completed row's one control is the placeholder review button naming
-  // the recipient (the fixture's claimant is Carol Chen).
-  expect(screen.getByRole('button', { name: 'Leave a Review for Carol' })).toBeTruthy()
+  // The completed row's one control is the review link naming the recipient
+  // (the fixture's claimant is Carol Chen).
+  expect(screen.getByRole('link', { name: 'Leave a Review for Carol' })).toBeTruthy()
 })
 
-test('the review button on a completed request explains it arrives with US-20', async () => {
+test('the review link on a completed request points at the shared review page', async () => {
   setLoggedIn()
-  let alertMessage = ''
-  vi.stubGlobal('alert', (message: string) => {
-    alertMessage = message
-  })
   vi.stubGlobal('fetch', async () => {
     return makeFakeResponse(true, 200, makeCompletedBody())
   })
 
   renderRequestsPage('/requests')
 
-  const reviewButton = await screen.findByRole('button', { name: 'Leave a Review for Carol' })
-  fireEvent.click(reviewButton)
-
-  expect(alertMessage).toContain('US-20')
+  const reviewLink = await screen.findByRole('link', { name: 'Leave a Review for Carol' })
+  expect(reviewLink.getAttribute('href')).toBe('/review?claim=c3')
 })
 
 test('a deactivated listing group is marked in its heading', async () => {
@@ -861,4 +855,52 @@ test('shows a denied status outcome for a denied request', async () => {
 
   expect(await screen.findByText(/Denied on/)).toBeTruthy()
   expect(screen.queryByRole('button', { name: 'Mark exchange complete' })).toBeNull()
+})
+
+test('a completed request the caller reviewed offers the edit label', async () => {
+  setLoggedIn()
+  const body = makeCompletedBody()
+  body.groups[0].requests[0].reviewed_by_me = true
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, body)
+  })
+
+  renderRequestsPage('/requests')
+
+  const reviewLink = await screen.findByRole('link', { name: 'Edit Your Review for Carol' })
+  expect(reviewLink.getAttribute('href')).toBe('/review?claim=c3')
+  expect(screen.queryByRole('link', { name: 'Leave a Review for Carol' })).toBeNull()
+})
+
+test('a request row shows the requestor rating inline after the name', async () => {
+  setLoggedIn()
+  const body = makeAllRequestsBody()
+  body.groups[0].requests[0].claimant_requestor_average = 4.3
+  body.groups[0].requests[0].claimant_requestor_count = 12
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, body)
+  })
+
+  renderRequestsPage('/requests')
+
+  // Bob's rating sits inline in his own row line, with no count shown.
+  const bobName = await screen.findByText('Bob Baker')
+  const chip = screen.getByRole('button', {
+    name: "View the reviews behind this member's rating as a requestor",
+  })
+  expect(chip.textContent).toBe('(★ 4.3 requestor rating)')
+  const bobLine = bobName.parentElement
+  expect(bobLine !== null).toBe(true)
+  if (bobLine !== null) {
+    expect(bobLine.contains(chip)).toBe(true)
+  }
+  // Carol's row has no reviews, so her line says so in plain non-clickable
+  // text with no star.
+  const carolName = screen.getByText('Carol Chen')
+  const carolLine = carolName.parentElement
+  expect(carolLine !== null).toBe(true)
+  if (carolLine !== null) {
+    expect(carolLine.textContent).toContain('(no requestor rating)')
+    expect(carolLine.textContent).not.toContain('★')
+  }
 })

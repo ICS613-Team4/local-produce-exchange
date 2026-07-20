@@ -14,6 +14,7 @@ import type {
 } from '../services/requestQueueService'
 import { authStateChangedEventName } from '../services/authService'
 import { formatTimestamp, getLocalTimeZoneNote } from '../utils/formatTimestamp'
+import MemberRatingChip from '../components/MemberRatingChip'
 
 const notLoggedInMessage = 'You need to be logged in to see this page.'
 
@@ -84,15 +85,6 @@ function RequestQueuesPage() {
       window.alert(detailMessage); return
     }
     setReloadCounter((currentValue) => currentValue + 1)
-  }
-
-  // Placeholder for the review feature (US-20). The button renders on
-  // completed rows now so the flow is visible, but the review form itself is
-  // US-20's to build; until then the click explains that.
-  function handleLeaveReview() {
-    window.alert(
-      'Reviews are not built yet. Leaving a rating and review for a completed exchange arrives with user story US-20.',
-    )
   }
 
   useEffect(() => {
@@ -258,28 +250,53 @@ function RequestQueuesPage() {
         </button>
       )
     }
-    // Placeholder for the review feature (US-20): a completed row lets the
-    // poster review the other party, the recipient. The review form itself is
-    // US-20's to build; until then the click explains that.
+    // A completed row lets the poster review the other party, the recipient,
+    // on the shared /review screen (US-20). Same screen the recipient's own
+    // review link reaches; the backend works out the roles from the claim.
     let reviewButton = null
     if (item.status === 'completed') {
       let recipientFirstName = 'the recipient'
       if (item.claimant_name !== '') {
         recipientFirstName = item.claimant_name.split(' ')[0]
       }
+      // Once the caller has reviewed this exchange, the same link opens the
+      // pre-filled edit form, so the label says so instead of inviting a
+      // first review.
+      let reviewLinkLabel = 'Leave a Review for ' + recipientFirstName
+      if (item.reviewed_by_me === true) {
+        reviewLinkLabel = 'Edit Your Review for ' + recipientFirstName
+      }
       reviewButton = (
-        <button type="button" onClick={() => handleLeaveReview()}
+        <Link to={'/review?claim=' + item.id}
           className="inline-flex items-center px-3 py-1 text-xs font-medium text-primary-700 border border-border rounded-md hover:bg-primary-50 transition-colors">
-          Leave a Review for {recipientFirstName}
-        </button>
+          {reviewLinkLabel}
+        </Link>
       )
+    }
+
+    // The requestor's rating AS a requestor (US-20), inline right after the
+    // requestor's name, so the owner can weigh whose request to accept.
+    let claimantRequestorAverage = null
+    if (item.claimant_requestor_average !== undefined && item.claimant_requestor_average !== null) {
+      claimantRequestorAverage = item.claimant_requestor_average
+    }
+    let claimantRequestorCount = 0
+    if (item.claimant_requestor_count !== undefined) {
+      claimantRequestorCount = item.claimant_requestor_count
     }
 
     return (
       <li key={item.id} className="flex items-center justify-between py-3 border-b border-border last:border-0">
         <div className="min-w-0">
           <p className="text-sm text-text">
-            <span className="font-medium">{item.claimant_name}</span> requested {item.requested_quantity}
+            <span className="font-medium">{item.claimant_name}</span>{' '}
+            <MemberRatingChip
+              memberId={item.claimant_id}
+              role="requestor"
+              average={claimantRequestorAverage}
+              count={claimantRequestorCount}
+            />{' '}
+            requested {item.requested_quantity}
           </p>
           <div className="flex items-center gap-2 mt-1">
             <span className={'inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ' + badgeClasses}>

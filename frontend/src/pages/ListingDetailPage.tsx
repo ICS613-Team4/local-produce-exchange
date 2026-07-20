@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router'
 
 import { sendDeactivateListingRequest, sendGetListingRequest } from '../services/listingService'
 import type { ListingDetail, ListingResult } from '../services/listingService'
+import MemberRatingChip from '../components/MemberRatingChip'
 import {
   sendConfirmPickupRequest,
   sendCreateClaimRequest,
@@ -549,9 +550,23 @@ function ListingDetailPage() {
     const postedText = formatTimestamp(listing.created_at)
     // Say who posted the listing when the backend sent the owner's name. The
     // field is optional on the type, so check it is a real non-empty string.
-    let postedLine = 'Posted ' + postedText
+    // The line is split in two so the owner's rating chip can sit inline right
+    // after the name: "Posted by Carol Chen (star 4.0) on <date>".
+    let postedStartText = 'Posted ' + postedText
+    let postedEndText = ''
     if (typeof listing.owner_name === 'string' && listing.owner_name !== '') {
-      postedLine = 'Posted by ' + listing.owner_name + ' on ' + postedText
+      postedStartText = 'Posted by ' + listing.owner_name
+      postedEndText = ' on ' + postedText
+    }
+    // The owner's rating AS a listing owner (US-20). No reviews yet renders
+    // nothing, never a bare zero.
+    let ownerRatingAverage = null
+    if (listing.owner_rating_average !== undefined && listing.owner_rating_average !== null) {
+      ownerRatingAverage = listing.owner_rating_average
+    }
+    let ownerRatingCount = 0
+    if (listing.owner_rating_count !== undefined) {
+      ownerRatingCount = listing.owner_rating_count
     }
     // The first photo renders as one large cover image spanning the card, the
     // way listing sites such as Airbnb and Etsy lead with a big photo. Any
@@ -842,8 +857,19 @@ function ListingDetailPage() {
           )}
         </div>
         {/* The posted-by line shows under the title and again at the bottom of
-            the listing, so it is visible without scrolling past the photos. */}
-        <p className="text-xs text-text-muted mb-4">{postedLine}</p>
+            the listing, so it is visible without scrolling past the photos.
+            The owner's rating AS a listing owner (US-20) sits inline right
+            after the name in both spots. */}
+        <p className="text-xs text-text-muted mb-4">
+          {postedStartText}{' '}
+          <MemberRatingChip
+            memberId={listing.owner_id}
+            role="listing_owner"
+            average={ownerRatingAverage}
+            count={ownerRatingCount}
+          />
+          {postedEndText}
+        </p>
         {photoArea}
         <p className="text-text-muted leading-relaxed mb-6">{listing.description}</p>
 
@@ -874,7 +900,16 @@ function ListingDetailPage() {
           <p className="text-xs text-text-muted mt-1">{timeZoneNote}</p>
         </div>
 
-        <p className="text-xs text-text-muted">{postedLine}</p>
+        <p className="text-xs text-text-muted">
+          {postedStartText}{' '}
+          <MemberRatingChip
+            memberId={listing.owner_id}
+            role="listing_owner"
+            average={ownerRatingAverage}
+            count={ownerRatingCount}
+          />
+          {postedEndText}
+        </p>
 
         {requestArea}
         {requestMessageArea}

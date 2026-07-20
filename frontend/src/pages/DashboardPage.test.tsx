@@ -401,6 +401,11 @@ function makeIncomingGroup(canDecide: boolean) {
             requested_at: '2026-07-01T09:00:00.000Z',
             can_decide: canDecide,
             can_deny: canDecide,
+            // The requestor's requestor-side rating (US-20). null and 0 read
+            // as "(no requestor rating)"; a test that needs a rated requestor
+            // overwrites these.
+            claimant_requestor_average: null as number | null,
+            claimant_requestor_count: 0,
           },
         ],
       },
@@ -1230,4 +1235,42 @@ test('cancelling the decision confirm does not call the decide endpoint', async 
   await waitForStateUpdates()
 
   expect(decideCount).toBe(0)
+})
+
+// --- US-20: the requestor rating next to the incoming decision buttons ---
+
+test('an incoming request row shows the requestor rating chip', async () => {
+  setLoggedIn()
+  const incoming = makeIncomingGroup(true)
+  incoming.groups[0].pending[0].claimant_requestor_average = 4.5
+  incoming.groups[0].pending[0].claimant_requestor_count = 2
+  installDashboardFetch({
+    incoming: () => makeFakeResponse(true, 200, incoming),
+  })
+
+  renderDashboard()
+
+  // The rating sits inline in the requestor's own row line, with no count
+  // shown.
+  const bobLine = await screen.findByText('Bob requested 2')
+  const chip = screen.getByRole('button', {
+    name: "View the reviews behind this member's rating as a requestor",
+  })
+  expect(chip.textContent).toBe('(★ 4.5 requestor rating)')
+  expect(bobLine.contains(chip)).toBe(true)
+})
+
+test('an incoming request row says no rating for an unrated requestor', async () => {
+  setLoggedIn()
+  installDashboardFetch({
+    incoming: () => makeFakeResponse(true, 200, makeIncomingGroup(true)),
+  })
+
+  renderDashboard()
+
+  // No reviews renders plain non-clickable text: no star, no chip button.
+  expect(await screen.findByText('Bob requested 2')).toBeTruthy()
+  expect(screen.getByText('(no requestor rating)')).toBeTruthy()
+  expect(screen.queryByText(/★/)).toBeNull()
+  expect(screen.queryByRole('button', { name: /View the reviews/ })).toBeNull()
 })

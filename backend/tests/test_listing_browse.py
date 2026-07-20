@@ -18,9 +18,11 @@ from sqlalchemy.dialects.postgresql import Range
 from app.db import get_db_session
 from app.dependencies import get_current_member
 from app.main import app
+from app.models.claim import Claim
 from app.models.listing import Listing
 from app.models.listing_photo import ListingPhoto
 from app.models.member import Member
+from app.models.review import Review
 from app.routers.listing import browse_listings
 
 
@@ -553,3 +555,53 @@ def test_repeated_allergen_tags_query_params_bind_as_lists(db_session):
         assert titles == ["Both allergen"]
     finally:
         app.dependency_overrides.clear()
+
+
+# --- US-20: each card carries its owner's listing-owner rating ---------------
+
+
+def test_browse_carries_each_owners_listing_owner_rating(db_session):
+    """A rated owner's card carries the role-scoped average and count; an
+    unrated owner's card carries None and 0 (shown as "No rating yet")."""
+    rated_owner = insert_member(db_session, email="rated-owner@example.com")
+    unrated_owner = insert_member(db_session, email="unrated-owner@example.com")
+    rated_listing = insert_listing(db_session, rated_owner, title="Rated Tomatoes")
+    insert_listing(db_session, unrated_owner, title="Unrated Kale")
+
+    # One completed exchange on the rated owner's listing, reviewed 4 stars.
+    reviewer = insert_member(db_session, email="reviewer@example.com")
+    claim = Claim(
+        listing_id=rated_listing.id,
+        claimant_id=reviewer.id,
+        requested_quantity=1,
+        approved_quantity=1,
+        status="completed",
+        requested_at=datetime.now(timezone.utc),
+        completed_at=datetime.now(timezone.utc),
+    )
+    db_session.add(claim)
+    db_session.commit()
+    now = datetime.now(timezone.utc)
+    review = Review(
+        claim_id=claim.id,
+        reviewer_id=reviewer.id,
+        reviewee_id=rated_owner.id,
+        reviewee_role="listing_owner",
+        rating=4,
+        body="",
+        created_at=now,
+        updated_at=now,
+    )
+    db_session.add(review)
+    db_session.commit()
+
+    viewer = insert_member(db_session, email="viewer-two@example.com")
+    results = browse_listings(current_member=viewer, session=db_session)
+
+    items_by_title = {}
+    for item in results:
+        items_by_title[item.title] = item
+    assert items_by_title["Rated Tomatoes"].owner_rating_average == 4.0
+    assert items_by_title["Rated Tomatoes"].owner_rating_count == 1
+    assert items_by_title["Unrated Kale"].owner_rating_average is None
+    assert items_by_title["Unrated Kale"].owner_rating_count == 0

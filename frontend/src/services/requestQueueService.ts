@@ -29,6 +29,10 @@ export type QueueClaimItem = {
   requested_at: string
   can_decide: boolean
   can_deny: boolean
+  // The requestor's rating AS a requestor (US-20), shown next to Approve and
+  // Deny. Optional so stubbed shapes without the fields keep type-checking.
+  claimant_requestor_average?: number | null
+  claimant_requestor_count?: number
 }
 
 // One listing's queue: the listing's own details plus its pending rows.
@@ -66,6 +70,13 @@ export type AllRequestItem = {
   cancelled_at?: string | null
   can_decide: boolean
   can_deny: boolean
+  // True when the caller already reviewed this completed exchange (US-20).
+  // Optional so stubbed shapes without the field keep type-checking.
+  reviewed_by_me?: boolean
+  // The requestor's rating AS a requestor (US-20), shown next to Approve and
+  // Deny. Optional so stubbed shapes without the fields keep type-checking.
+  claimant_requestor_average?: number | null
+  claimant_requestor_count?: number
 }
 
 // One active listing's full request history: its title and remaining quantity,
@@ -117,6 +128,9 @@ export type MyRequestItem = {
   // The requested listing's photos; the first one is the cover. Optional so
   // stubbed shapes without the field keep type-checking.
   photos?: ListingPhotoRef[]
+  // True when the caller already reviewed this completed exchange (US-20).
+  // Optional so stubbed shapes without the field keep type-checking.
+  reviewed_by_me?: boolean
 }
 
 // The my-requests response: the caller's requests split into five sections,
