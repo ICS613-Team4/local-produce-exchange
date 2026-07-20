@@ -131,6 +131,40 @@ export type MyRequestsResponse = {
   withdrawn?: MyRequestItem[]
 }
 
+// One exchange the caller is part of, for the dashboard's Exchange History
+// section (US-24). side is "recipient" when the caller made the request and
+// "poster" when the request is on one of their listings; the side decides
+// which control the row gets, because a member can hold both sides at the
+// same status. other_party_name is the person on the other side.
+export type ExchangeHistoryItem = {
+  id: string
+  listing_id: string
+  listing_title: string
+  side: string
+  other_party_name: string
+  requested_quantity: number
+  approved_quantity: number | null
+  status: string
+  requested_at: string
+  approved_at: string | null
+  picked_up_at: string | null
+  completed_at: string | null
+  cancelled_at: string | null
+  denied_at: string | null
+}
+
+// The exchange-history response: the caller's exchanges grouped by claim
+// status in lifecycle order, each list newest first. A member with no
+// activity gets six empty lists.
+export type ExchangeHistoryResponse = {
+  requested: ExchangeHistoryItem[]
+  approved: ExchangeHistoryItem[]
+  picked_up: ExchangeHistoryItem[]
+  completed: ExchangeHistoryItem[]
+  cancelled: ExchangeHistoryItem[]
+  denied: ExchangeHistoryItem[]
+}
+
 export async function sendGetRequestQueuesRequest(
   memberId: string,
   listingId: string,
@@ -612,6 +646,56 @@ export async function sendGetAllRequestsRequest(
         'X-Member-Id': memberId,
       },
       // Cancel the request if the backend takes too long to answer.
+      signal: AbortSignal.timeout(requestQueueTimeoutMilliseconds),
+    })
+
+    const responseText = await response.text()
+    let data: unknown = ''
+    if (responseText !== '') {
+      try {
+        data = JSON.parse(responseText)
+      } catch {
+        // If a proxy or server problem returns plain text or HTML, keep the
+        // HTTP status and show the body instead of throwing it away.
+        data = responseText
+      }
+    }
+
+    return {
+      ok: response.ok,
+      status: response.status,
+      data: data,
+      errorMessage: '',
+    }
+  } catch (caughtError) {
+    let errorMessage: string
+    if (caughtError instanceof DOMException && caughtError.name === 'TimeoutError') {
+      errorMessage =
+        'Timeout: no answer from the backend after ' + requestQueueTimeoutMilliseconds + ' ms.'
+    } else {
+      errorMessage = 'Request failed: ' + String(caughtError)
+    }
+
+    return {
+      ok: false,
+      status: 0,
+      data: '',
+      errorMessage: errorMessage,
+    }
+  }
+}
+
+export async function sendGetExchangeHistoryRequest(memberId: string): Promise<RequestQueuesResult> {
+  // The caller's exchange history for the dashboard (US-24): every exchange
+  // they are part of on either side, grouped by claim status, each row
+  // carrying the caller's side. Same result shape and X-Member-Id header as
+  // the other calls. This is a GET, so there is no request body.
+  try {
+    const response = await fetch('/api/exchange-history', {
+      method: 'GET',
+      headers: {
+        'X-Member-Id': memberId,
+      },
       signal: AbortSignal.timeout(requestQueueTimeoutMilliseconds),
     })
 
