@@ -14,6 +14,7 @@ from app.routers import (
     listing,
     listing_photo,
     members,
+    notification,
     sample_endpoint,
     thread,
 )
@@ -54,5 +55,6 @@ app.include_router(invite.router, prefix="/api")
 app.include_router(listing.router, prefix="/api")
 app.include_router(listing_photo.router, prefix="/api")
 app.include_router(members.router, prefix="/api")
+app.include_router(notification.router, prefix="/api")
 app.include_router(sample_endpoint.router, prefix="/api")
 app.include_router(thread.router, prefix="/api")

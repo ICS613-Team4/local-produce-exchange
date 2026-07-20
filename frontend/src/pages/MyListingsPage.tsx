@@ -236,8 +236,11 @@ function MyListingsPage() {
 
     let titleNode
     if (listing.status === 'active') {
+      // No color classes on the link: the site's base link style in app.css
+      // colors every link and darkens it on hover, so this title matches the
+      // listing links on the my-requests and requests pages.
       titleNode = (
-        <Link to={'/listings/' + listing.id} className="text-base font-semibold text-text hover:text-primary-600 transition-colors">
+        <Link to={'/listings/' + listing.id} className="text-base font-semibold">
           {listing.title}
         </Link>
       )

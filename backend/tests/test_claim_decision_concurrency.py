@@ -21,6 +21,7 @@ from app.db import SessionLocal
 from app.models.claim import Claim
 from app.models.listing import Listing
 from app.models.member import Member
+from app.models.notification import Notification
 from app.routers.claim import approve_claim, create_claim
 from app.schemas.claim import CreateClaimPayload
 
@@ -178,9 +179,15 @@ def insert_committed_listing_and_two_claimants(remaining_quantity):
 
 def clean_up_members_by_id(member_ids):
     # Remove any leftover member rows (used when a request test creates members
-    # but, on an unexpected failure, no claims to find them through).
+    # but, on an unexpected failure, no claims to find them through). The routes
+    # these tests drive now save notifications (US-22), so delete those first or
+    # their foreign keys block the member deletes.
     session = SessionLocal()
     try:
+        for member_id in member_ids:
+            session.execute(
+                delete(Notification).where(Notification.member_id == member_id)
+            )
         for member_id in member_ids:
             session.execute(delete(Member).where(Member.id == member_id))
         session.commit()
@@ -198,12 +205,30 @@ def clean_up_listing(listing_id):
         ).first()
         if listing_row is not None:
             owner_id = listing_row.owner_id
+        claim_ids = []
         claimant_ids = []
         claim_rows = session.scalars(
             select(Claim).where(Claim.listing_id == listing_id)
         ).all()
         for claim_row in claim_rows:
+            claim_ids.append(claim_row.id)
             claimant_ids.append(claim_row.claimant_id)
+
+        # The routes these tests drive now save notifications (US-22). Delete
+        # them first: their foreign keys to claim and member would otherwise
+        # block the claim and member deletes below.
+        for claim_id in claim_ids:
+            session.execute(
+                delete(Notification).where(Notification.claim_id == claim_id)
+            )
+        for claimant_id in claimant_ids:
+            session.execute(
+                delete(Notification).where(Notification.member_id == claimant_id)
+            )
+        if owner_id is not None:
+            session.execute(
+                delete(Notification).where(Notification.member_id == owner_id)
+            )
 
         session.execute(delete(Claim).where(Claim.listing_id == listing_id))
         session.execute(delete(Listing).where(Listing.id == listing_id))

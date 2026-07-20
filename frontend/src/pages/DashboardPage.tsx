@@ -143,7 +143,7 @@ function DashboardPage() {
 
   // --- Quick actions --------------------------------------------------------
   const quickActions = (
-    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">
+    <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-8">
       <Link to="/browse" className="flex flex-col items-center gap-2 p-4 bg-surface rounded-xl border border-border shadow-sm hover:shadow-md hover:border-primary-200 transition-all duration-200 group">
         <span aria-hidden="true" className="text-2xl group-hover:scale-110 transition-transform">🔍</span>
         <span className="text-xs font-medium text-text-muted group-hover:text-primary-600">Browse</span>
@@ -159,6 +159,10 @@ function DashboardPage() {
       <Link to="/requests" className="flex flex-col items-center gap-2 p-4 bg-surface rounded-xl border border-border shadow-sm hover:shadow-md hover:border-primary-200 transition-all duration-200 group">
         <span aria-hidden="true" className="text-2xl group-hover:scale-110 transition-transform">📥</span>
         <span className="text-xs font-medium text-text-muted group-hover:text-primary-600">Incoming Requests</span>
+      </Link>
+      <Link to="/notifications" className="flex flex-col items-center gap-2 p-4 bg-surface rounded-xl border border-border shadow-sm hover:shadow-md hover:border-primary-200 transition-all duration-200 group">
+        <span aria-hidden="true" className="text-2xl group-hover:scale-110 transition-transform">🔔</span>
+        <span className="text-xs font-medium text-text-muted group-hover:text-primary-600">Notifications</span>
       </Link>
     </div>
   )
@@ -239,9 +243,20 @@ function DashboardPage() {
   }
 
   function buildIncomingGroup(group: ListingQueueGroup) {
-    let titleText = group.listing_title
+    // The listing title links to its own page. Same rule as the requests and
+    // my-requests pages: only an active listing has a page to show, so a
+    // deactivated one stays plain text and keeps its marker in the same text
+    // node (a separate span would drop the space before "(deactivated)" when a
+    // screen reader reads the heading). The link carries the dashboard's own
+    // link colors, dark text that turns primary on hover, so it matches the
+    // listing links in the two boxes above.
+    let titleNode = (
+      <Link to={'/listings/' + group.listing_id} className="text-text hover:text-primary-600 transition-colors">
+        {group.listing_title}
+      </Link>
+    )
     if (group.listing_status === 'deactivated') {
-      titleText = group.listing_title + ' (deactivated)'
+      titleNode = <>{group.listing_title + ' (deactivated)'}</>
     }
     const rowItems = []
     for (let index = 0; index < group.pending.length; index = index + 1) {
@@ -290,7 +305,7 @@ function DashboardPage() {
     }
     return (
       <article key={group.listing_id} className="mb-4">
-        <h3 className="text-sm font-semibold text-text mb-2">{titleText}</h3>
+        <h3 className="text-sm font-semibold text-text mb-2">{titleNode}</h3>
         <ul>{rowItems}</ul>
       </article>
     )
@@ -335,10 +350,20 @@ function DashboardPage() {
         const item = pending[index]
         const requestedAtText = formatTimestamp(item.requested_at)
         const isThisRowPending = withdrawingClaimId === item.id
+        // Same linking rule as the incoming groups above: an active listing's
+        // title links to its page, a deactivated one stays plain text.
+        let outgoingTitleNode = <>{item.listing_title}</>
+        if (item.listing_status !== 'deactivated') {
+          outgoingTitleNode = (
+            <Link to={'/listings/' + item.listing_id} className="text-text hover:text-primary-600 transition-colors">
+              {item.listing_title}
+            </Link>
+          )
+        }
         outgoingRows.push(
           <li key={item.id} className="flex items-center justify-between py-2.5 border-b border-border last:border-0">
             <div className="min-w-0">
-              <p className="text-sm text-text">{item.listing_title}: requested <span className="font-medium">{item.requested_quantity}</span></p>
+              <p className="text-sm text-text">{outgoingTitleNode}: requested <span className="font-medium">{item.requested_quantity}</span></p>
               <p className="text-xs text-text-muted">{requestedAtText}</p>
             </div>
             <button

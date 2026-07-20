@@ -10,12 +10,15 @@ from datetime import datetime, timezone
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import Range
 
 from app.models.claim import Claim
 from app.models.listing import Listing
 from app.models.listing_photo import ListingPhoto
 from app.models.member import Member
+from app.models.notification import Notification
+from app.models.thread import Message
 from app.routers.thread import (
     get_thread_endpoint,
     get_thread_for_claim,
@@ -276,6 +279,72 @@ def test_thread_accessible_for_requested_claim(db_session):
     result = get_thread_for_claim(claim.id, owner, db_session)
 
     assert result.claim_id == str(claim.id)
+
+
+# ── Completed exchanges lock the thread (US-22 follow-up) ────────────────────
+
+
+def test_thread_response_carries_the_claim_status(db_session):
+    # The page needs the claim's status to know when to lock the composer.
+    owner = insert_member(db_session, email="owner@example.com", name="Owner")
+    claimant = insert_member(db_session, email="claimant@example.com", name="Claimant")
+    listing = insert_listing(db_session, owner)
+    claim = insert_claim(db_session, listing, claimant, status="approved")
+
+    result = get_thread_for_claim(claim.id, claimant, db_session)
+
+    assert result.claim_status == "approved"
+
+
+def test_completed_thread_is_readable_but_rejects_new_messages(db_session):
+    # A completed exchange keeps its thread readable as history, but sending is
+    # locked: the route answers 409 and writes neither a message nor a
+    # notification.
+    owner = insert_member(db_session, email="owner@example.com", name="Owner")
+    claimant = insert_member(db_session, email="claimant@example.com", name="Claimant")
+    listing = insert_listing(db_session, owner)
+    claim = insert_claim(db_session, listing, claimant, status="completed")
+
+    result = get_thread_for_claim(claim.id, owner, db_session)
+    assert result.claim_status == "completed"
+
+    payload = SendMessagePayload(body="One more thing...")
+    with pytest.raises(HTTPException) as exc:
+        send_message_to_thread(claim.id, payload, claimant, db_session)
+
+    assert exc.value.status_code == 409
+    assert "locked" in exc.value.detail.lower()
+
+    saved_messages = db_session.scalars(select(Message)).all()
+    assert saved_messages == []
+    saved_notifications = db_session.scalars(select(Notification)).all()
+    assert saved_notifications == []
+
+
+def test_cancelled_thread_is_readable_but_rejects_new_messages(db_session):
+    # A cancelled exchange locks its thread the same way a completed one does:
+    # reading stays open as history, but sending answers 409 and writes
+    # neither a message nor a notification.
+    owner = insert_member(db_session, email="owner@example.com", name="Owner")
+    claimant = insert_member(db_session, email="claimant@example.com", name="Claimant")
+    listing = insert_listing(db_session, owner)
+    claim = insert_claim(db_session, listing, claimant, status="cancelled")
+
+    result = get_thread_for_claim(claim.id, owner, db_session)
+    assert result.claim_status == "cancelled"
+
+    payload = SendMessagePayload(body="Wait, one more question...")
+    with pytest.raises(HTTPException) as exc:
+        send_message_to_thread(claim.id, payload, claimant, db_session)
+
+    assert exc.value.status_code == 409
+    assert "cancelled" in exc.value.detail.lower()
+    assert "locked" in exc.value.detail.lower()
+
+    saved_messages = db_session.scalars(select(Message)).all()
+    assert saved_messages == []
+    saved_notifications = db_session.scalars(select(Notification)).all()
+    assert saved_notifications == []
 
 
 def test_thread_accessible_for_denied_claim(db_session):

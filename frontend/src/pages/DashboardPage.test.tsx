@@ -408,6 +408,32 @@ test('double-clicking Approve fires the decision only once', async () => {
   expect(decideCount).toBe(1)
 })
 
+test('an incoming group heading links to its listing', async () => {
+  setLoggedIn()
+  installDashboardFetch({ incoming: () => makeFakeResponse(true, 200, makeIncomingGroup(true)) })
+
+  renderDashboard()
+
+  const titleLink = await screen.findByRole('link', { name: 'Lemons' })
+  expect(titleLink.getAttribute('href')).toBe('/listings/lemons')
+})
+
+test('an incoming group on a deactivated listing keeps its heading as plain text', async () => {
+  setLoggedIn()
+  const body = makeIncomingGroup(true)
+  body.groups[0].listing_status = 'deactivated'
+  installDashboardFetch({ incoming: () => makeFakeResponse(true, 200, body) })
+
+  renderDashboard()
+
+  // A deactivated listing has no page to show, so the heading stays plain text
+  // and still reads as "Lemons (deactivated)".
+  expect(
+    await screen.findByRole('heading', { level: 3, name: 'Lemons (deactivated)' }),
+  ).toBeTruthy()
+  expect(screen.queryByRole('link', { name: 'Lemons' })).toBeNull()
+})
+
 test('Incoming requests shows the empty state when nothing is pending', async () => {
   setLoggedIn()
   installDashboardFetch({ incoming: () => makeFakeResponse(true, 200, { groups: [] }) })
@@ -426,6 +452,7 @@ function makeOutgoingBody() {
         id: 'r1',
         listing_id: 'l1',
         listing_title: 'Their Lemons',
+        listing_status: 'active',
         requested_quantity: 2,
         approved_quantity: null,
         status: 'requested',
@@ -440,16 +467,30 @@ function makeOutgoingBody() {
   return body
 }
 
-test('Outgoing requests shows only pending requests, with a plain title and a Withdraw button', async () => {
+test('Outgoing requests shows only pending requests, with a linked title and a Withdraw button', async () => {
   setLoggedIn()
   installDashboardFetch({ myRequests: () => makeFakeResponse(true, 200, makeOutgoingBody()) })
 
   renderDashboard()
 
   expect(await screen.findByText(/Their Lemons/)).toBeTruthy()
-  // The outgoing title is plain text, not a link.
-  expect(screen.queryByRole('link', { name: 'Their Lemons' })).toBeNull()
+  // The outgoing title links to the listing it was requested on.
+  const titleLink = screen.getByRole('link', { name: 'Their Lemons' })
+  expect(titleLink.getAttribute('href')).toBe('/listings/l1')
   expect(screen.getByRole('button', { name: 'Withdraw' })).toBeTruthy()
+})
+
+test('an outgoing request on a deactivated listing shows its title as plain text', async () => {
+  setLoggedIn()
+  const body = makeOutgoingBody()
+  body.pending[0].listing_status = 'deactivated'
+  installDashboardFetch({ myRequests: () => makeFakeResponse(true, 200, body) })
+
+  renderDashboard()
+
+  // The title still shows, but a deactivated listing has no page to show.
+  expect(await screen.findByText(/Their Lemons/)).toBeTruthy()
+  expect(screen.queryByRole('link', { name: 'Their Lemons' })).toBeNull()
 })
 
 test('clicking Withdraw calls the withdraw endpoint and reloads', async () => {

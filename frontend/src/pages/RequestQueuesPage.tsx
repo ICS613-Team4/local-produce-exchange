@@ -388,10 +388,17 @@ function RequestQueuesPage() {
       )
     }
     // A deactivated listing still shows while it has exchanges in flight; the
-    // heading marks it the same way the dashboard's incoming queue does.
-    let titleText = group.listing_title
+    // heading marks it the same way the dashboard's incoming queue does, and
+    // its title stays plain text because a deactivated listing has no page to
+    // show. An active listing's title links to that page. A group without the
+    // field reads as active.
+    // No color classes on the link: the site's base link style in app.css
+    // colors every link and darkens it on hover.
+    let titleNode = <Link to={'/listings/' + group.listing_id}>{group.listing_title}</Link>
     if (group.listing_status === 'deactivated') {
-      titleText = group.listing_title + ' (deactivated)'
+      // One text node, not a title plus a separate marker span, so the heading
+      // still reads as "Title (deactivated)" to a screen reader.
+      titleNode = <>{group.listing_title + ' (deactivated)'}</>
     }
     // The thumbnail sits in the header row next to the title; the request
     // rows below span the card's full width, flush left under the photo.
@@ -401,7 +408,7 @@ function RequestQueuesPage() {
           {thumbnailArea}
           <div className="flex-1 min-w-0 flex items-start justify-between">
             <div className="min-w-0">
-              <h2 className="text-base font-semibold text-text">{titleText}</h2>
+              <h2 className="text-base font-semibold text-text">{titleNode}</h2>
               {postedLine}
             </div>
             <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary-50 text-primary-700 shrink-0 ml-3">

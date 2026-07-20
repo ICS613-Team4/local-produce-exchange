@@ -99,6 +99,11 @@ export type MyRequestItem = {
   id: string
   listing_id: string
   listing_title: string
+  // The listing's own status, "active" or "deactivated". The page links the
+  // title only on an active listing, because a deactivated one has no page to
+  // show. Optional so stubbed shapes without the field keep type-checking; a
+  // missing value reads as active.
+  listing_status?: string
   owner_name: string
   requested_quantity: number
   approved_quantity: number | null

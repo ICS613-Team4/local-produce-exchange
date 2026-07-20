@@ -153,16 +153,26 @@ function MyRequestsPage() {
   function buildRequestRow(item: MyRequestItem) {
     const badgeClasses = getStatusBadge(item.status)
 
-    // The produce title, with the provider named after it in smaller muted
-    // text (for example "Backyard Meyer Lemons from Dave"), so the row shows
-    // who posted the listing without changing the title itself. When no owner
-    // name came back, only the title shows.
-    let titleNode = <>{item.listing_title}</>
+    // The produce title links to the listing's own page, but only while the
+    // listing is active. A deactivated listing has no page to show (the
+    // backend returns "This listing is unavailable."), so its title stays
+    // plain text. A row without the field reads as active. The provider is
+    // named after the title in smaller muted text (for example "Backyard Meyer
+    // Lemons from Dave"), so the row shows who posted the listing without
+    // pulling that name inside the link. When no owner name came back, only
+    // the title shows.
+    let titleLink = <>{item.listing_title}</>
+    if (item.listing_status !== 'deactivated') {
+      // No color classes: the site's base link style in app.css colors every
+      // link and darkens it on hover.
+      titleLink = <Link to={'/listings/' + item.listing_id}>{item.listing_title}</Link>
+    }
+    let titleNode = titleLink
     if (item.owner_name !== '') {
       const ownerFirstName = item.owner_name.split(' ')[0]
       titleNode = (
         <>
-          {item.listing_title}
+          {titleLink}
           <span className="text-xs font-normal text-text-muted"> from {ownerFirstName}</span>
         </>
       )

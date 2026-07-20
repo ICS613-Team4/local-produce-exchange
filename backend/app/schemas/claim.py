@@ -83,6 +83,11 @@ class MyRequestItem(BaseModel):
     id: str
     listing_id: str
     listing_title: str
+    # The listing's own status ("active", "deactivated", and so on). The page
+    # uses it to decide whether the title links to the listing: only an active
+    # listing has a page to show, so only an active one is linked. The default
+    # keeps older construction sites working.
+    listing_status: str = "active"
     owner_name: str
     requested_quantity: int
     approved_quantity: Optional[int] = None

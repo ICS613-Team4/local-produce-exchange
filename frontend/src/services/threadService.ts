@@ -31,6 +31,9 @@ export type ThreadData = {
   claimant_id?: string
   owner_name?: string
   claimant_name?: string
+  // The claim's workflow status; the page locks the composer when it is
+  // "completed". Optional so stubbed shapes keep type-checking.
+  claim_status?: string
   listing_created_at?: string | null
   pickup_start?: string | null
   pickup_end?: string | null

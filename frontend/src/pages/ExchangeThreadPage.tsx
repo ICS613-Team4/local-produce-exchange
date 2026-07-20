@@ -3,6 +3,10 @@ import { Link, useLocation } from 'react-router'
 
 import { getThread, sendMessage } from '../services/threadService'
 import type { MessageData, ThreadData } from '../services/threadService'
+import {
+  sendCompleteExchangeRequest,
+  sendConfirmPickupRequest,
+} from '../services/requestQueueService'
 import { authStateChangedEventName } from '../services/authService'
 import { formatTimestamp, getLocalTimeZoneNote } from '../utils/formatTimestamp'
 
@@ -22,6 +26,16 @@ function ExchangeThreadPage() {
   const [messageBody, setMessageBody] = useState('')
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState('')
+
+  // Workflow actions offered inside the thread: the requester confirms the
+  // pickup while the exchange is approved, and the poster marks it complete
+  // once picked up. Same guards as My Requests and Incoming Requests: a ref
+  // blocks a same-tick double click before the dialog opens, and the busy
+  // flag disables the button while the call runs.
+  const pickupInFlightRef = useRef(false)
+  const [confirmingPickup, setConfirmingPickup] = useState(false)
+  const completeInFlightRef = useRef(false)
+  const [completingExchange, setCompletingExchange] = useState(false)
 
   // Load the thread whenever the page mounts or a message is sent.
   useEffect(() => {
@@ -91,6 +105,96 @@ function ExchangeThreadPage() {
     }
   }
 
+  // Confirm pickup on this exchange. Same shape as the handler on My
+  // Requests: the double-click guard, a confirm, the call, then the result
+  // handling. On success the thread reloads, the status moves to picked up,
+  // and the button goes away. The backend is the final gate: it checks the
+  // caller is the claimant and the claim is still approved.
+  async function handleConfirmPickup() {
+    if (pickupInFlightRef.current) {
+      return
+    }
+    pickupInFlightRef.current = true
+
+    const confirmed = window.confirm('Confirm that you picked up this item? This cannot be undone.')
+    if (confirmed === false) {
+      pickupInFlightRef.current = false
+      return
+    }
+
+    setConfirmingPickup(true)
+    const pickupResult = await sendConfirmPickupRequest(memberId, claimId)
+    pickupInFlightRef.current = false
+    setConfirmingPickup(false)
+
+    if (pickupResult.errorMessage !== '') {
+      window.alert(pickupResult.errorMessage)
+      return
+    }
+    if (pickupResult.ok === false) {
+      let detailMessage = 'Could not confirm pickup. Please try again.'
+      if (typeof pickupResult.data === 'object' && pickupResult.data !== null) {
+        const dataObject = pickupResult.data as { detail?: unknown }
+        if (typeof dataObject.detail === 'string') {
+          detailMessage = dataObject.detail
+        }
+      }
+      window.alert(detailMessage)
+      return
+    }
+    setReloadCounter((c) => c + 1)
+  }
+
+  // Mark this exchange complete. Same shape as the handler on Incoming
+  // Requests: the double-click guard, a confirm, the call, then the result
+  // handling. On success the thread reloads as completed, which locks the
+  // composer and shows the review button. The backend is the final gate: it
+  // checks the caller is the listing owner and the claim is picked up.
+  async function handleCompleteExchange() {
+    if (completeInFlightRef.current) {
+      return
+    }
+    completeInFlightRef.current = true
+
+    const confirmed = window.confirm('Mark this exchange complete? This is final.')
+    if (confirmed === false) {
+      completeInFlightRef.current = false
+      return
+    }
+
+    setCompletingExchange(true)
+    const completeResult = await sendCompleteExchangeRequest(memberId, claimId)
+    completeInFlightRef.current = false
+    setCompletingExchange(false)
+
+    if (completeResult.errorMessage !== '') {
+      window.alert(completeResult.errorMessage)
+      return
+    }
+    if (completeResult.ok === false) {
+      let detailMessage = 'Could not complete the exchange. Please try again.'
+      if (typeof completeResult.data === 'object' && completeResult.data !== null) {
+        const dataObject = completeResult.data as { detail?: unknown }
+        if (typeof dataObject.detail === 'string') {
+          detailMessage = dataObject.detail
+        }
+      }
+      window.alert(detailMessage)
+      return
+    }
+    setReloadCounter((c) => c + 1)
+  }
+
+  // Placeholder for the review feature (US-20). The button renders on a
+  // completed exchange now so the flow is visible, the same as the completed
+  // rows on My Requests and Incoming Requests, but the review form itself is
+  // US-20's to build; until then the click explains that.
+  function handleLeaveReview() {
+    window.alert(
+      'Reviews are not built yet. Leaving a rating and review for a completed exchange arrives with user story US-20.',
+    )
+  }
+
   // One chat row. The viewer's own messages sit on the right in the primary
   // green; the other member's messages sit on the left in the neutral bubble.
   // The sender name always shows so a reloaded thread stays readable.
@@ -134,7 +238,7 @@ function ExchangeThreadPage() {
       'This is your private conversation with the requester. You posted this listing, so say where the pickup happens and when you are available within the pickup window, and answer any questions the requester has.'
   } else if (thread !== null && thread.claimant_id !== undefined && thread.claimant_id === memberId) {
     instructionsText =
-      'This is your private conversation with the poster. You requested these items, so agree on a pickup time, ask any questions, and after you have the items in hand, confirm the pickup from your My Requests page.'
+      'This is your private conversation with the poster. You requested these items, so agree on a pickup time, ask any questions, and after you have the items in hand, confirm the pickup with the button below.'
   }
 
   let content
@@ -253,6 +357,127 @@ function ExchangeThreadPage() {
       )
     }
 
+    // When the poster has marked this exchange complete, the thread is locked:
+    // a banner says who completed it, the composer below stays visible but
+    // disabled (the backend also refuses new messages), and the viewer can
+    // review the other party instead. Only the listing owner can complete an
+    // exchange, so the completer named here is always the owner.
+    const exchangeIsComplete = thread.claim_status === 'completed'
+    let completedBanner = null
+    if (exchangeIsComplete) {
+      let completerName = 'the poster'
+      if (typeof thread.owner_name === 'string' && thread.owner_name !== '') {
+        completerName = thread.owner_name
+      }
+      // The review goes to the OTHER party: the poster reviews the requester
+      // and the requester reviews the poster, the same rule the completed rows
+      // on My Requests and Incoming Requests use. The form itself is US-20's
+      // (see handleLeaveReview).
+      let reviewTargetFirstName = 'the poster'
+      if (thread.owner_id !== undefined && thread.owner_id === memberId) {
+        reviewTargetFirstName = 'the recipient'
+        if (typeof thread.claimant_name === 'string' && thread.claimant_name !== '') {
+          reviewTargetFirstName = thread.claimant_name.split(' ')[0]
+        }
+      } else {
+        if (typeof thread.owner_name === 'string' && thread.owner_name !== '') {
+          reviewTargetFirstName = thread.owner_name.split(' ')[0]
+        }
+      }
+      completedBanner = (
+        <div className="rounded-lg bg-success-bg border border-green-200 px-4 py-3 mb-4">
+          <p className="text-sm font-medium text-success">
+            This exchange was marked complete by {completerName}.
+          </p>
+          <p className="text-sm text-text-muted mt-1">
+            The thread is locked, so no new messages can be sent.
+          </p>
+          <div className="mt-3">
+            <button
+              type="button"
+              onClick={() => handleLeaveReview()}
+              className="inline-flex items-center px-3 py-1.5 text-xs font-medium text-primary-600 border border-primary-200 rounded-md hover:bg-primary-50 transition-colors"
+            >
+              Leave a Review for {reviewTargetFirstName}
+            </button>
+          </div>
+        </div>
+      )
+    }
+
+    // A cancelled exchange locks its thread the same way, minus the review
+    // button (nothing was exchanged, so there is nobody to review). Only the
+    // listing owner can cancel after approval, so when the claim carries an
+    // approved quantity the canceller is the poster. A request withdrawn
+    // before approval also ends as "cancelled"; that one names nobody. The
+    // gray box matches how the request pages badge cancelled rows.
+    const exchangeIsCancelled = thread.claim_status === 'cancelled'
+    let cancelledBanner = null
+    if (exchangeIsCancelled) {
+      let cancelledTitle = 'This exchange was cancelled.'
+      if (thread.approved_quantity !== null && thread.approved_quantity !== undefined) {
+        let posterName = 'the poster'
+        if (typeof thread.owner_name === 'string' && thread.owner_name !== '') {
+          posterName = thread.owner_name
+        }
+        cancelledTitle = 'This exchange was cancelled by ' + posterName + '.'
+      }
+      cancelledBanner = (
+        <div className="rounded-lg bg-background-alt border border-border px-4 py-3 mb-4">
+          <p className="text-sm font-medium text-text">{cancelledTitle}</p>
+          <p className="text-sm text-text-muted mt-1">
+            The thread is locked, so no new messages can be sent.
+          </p>
+        </div>
+      )
+    }
+
+    // Either lock disables the composer; the backend refuses the send too.
+    const threadIsLocked = exchangeIsComplete || exchangeIsCancelled
+
+    // The workflow button for the viewer's next step, shown above the
+    // composer. While the exchange is approved the requester can confirm the
+    // pickup here, the same action My Requests offers; once it is picked up
+    // the poster can mark it complete, the same action Incoming Requests
+    // offers. Each button renders only for the right party, and the backend
+    // checks the caller and the claim status again on the call itself.
+    let actionButtonArea = null
+    if (
+      thread.claim_status === 'approved' &&
+      thread.claimant_id !== undefined &&
+      thread.claimant_id === memberId
+    ) {
+      actionButtonArea = (
+        <div className="mb-4">
+          <button
+            type="button"
+            disabled={confirmingPickup}
+            onClick={() => handleConfirmPickup()}
+            className="inline-flex items-center px-3 py-1.5 text-xs font-medium text-primary-600 border border-primary-200 rounded-md hover:bg-primary-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Confirm the Pickup
+          </button>
+        </div>
+      )
+    } else if (
+      thread.claim_status === 'picked_up' &&
+      thread.owner_id !== undefined &&
+      thread.owner_id === memberId
+    ) {
+      actionButtonArea = (
+        <div className="mb-4">
+          <button
+            type="button"
+            disabled={completingExchange}
+            onClick={() => handleCompleteExchange()}
+            className="inline-flex items-center px-3 py-1 text-xs font-medium text-primary-700 border border-border rounded-md hover:bg-primary-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Mark exchange complete
+          </button>
+        </div>
+      )
+    }
+
     content = (
       <div>
       {listingCard}
@@ -261,6 +486,9 @@ function ExchangeThreadPage() {
           {messageList}
         </div>
         <div className="border-t border-border p-6">
+          {completedBanner}
+          {cancelledBanner}
+          {actionButtonArea}
           <form onSubmit={handleSend}>
             <label htmlFor="message-body" className="block text-sm font-semibold text-text mb-2">
               Send a message
@@ -271,7 +499,7 @@ function ExchangeThreadPage() {
               maxLength={MESSAGE_MAX_LENGTH}
               value={messageBody}
               onChange={(e) => setMessageBody(e.target.value)}
-              disabled={sending}
+              disabled={sending || threadIsLocked}
               placeholder="Type your message here…"
               className="w-full px-4 py-2.5 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-150 resize-y disabled:opacity-50 disabled:cursor-not-allowed"
             />
@@ -284,7 +512,7 @@ function ExchangeThreadPage() {
             <div className="flex justify-end mt-3">
               <button
                 type="submit"
-                disabled={sending}
+                disabled={sending || threadIsLocked}
                 className="px-6 py-2.5 text-sm font-semibold text-text-inverse bg-primary-600 rounded-lg hover:bg-primary-700 shadow-sm transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {sending ? 'Sending…' : 'Send'}
