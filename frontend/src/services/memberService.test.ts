@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from 'vitest'
-import { getMemberProfile, updateMemberProfile } from './memberService'
+import { getMemberProfile, getPublicMemberProfile, updateMemberProfile } from './memberService'
 
 type FakeResponse = {
   ok: boolean
@@ -90,6 +90,37 @@ test('getMemberProfile returns errorMessage on generic network failure', async (
   expect(result.ok).toBe(false)
   expect(result.status).toBe(0)
   expect(result.errorMessage).toContain('Request failed')
+})
+
+// ── getPublicMemberProfile ────────────────────────────────────────────────────
+
+test('getPublicMemberProfile requests the target id but authenticates as the acting member', async () => {
+  let requestUrl = ''
+  let requestOptions: RequestInit = {}
+  vi.stubGlobal('fetch', async (url: string | URL | Request, options: RequestInit | undefined) => {
+    requestUrl = String(url)
+    if (options !== undefined) requestOptions = options
+    return makeFakeResponse(true, 200, JSON.stringify(fakeMember))
+  })
+
+  const result = await getPublicMemberProfile('member-2', 'member-1')
+
+  expect(result.ok).toBe(true)
+  expect(requestUrl).toBe('/api/members/member-2')
+  expect(requestOptions.method).toBe('GET')
+  const headers = requestOptions.headers as Record<string, string>
+  expect(headers['X-Member-Id']).toBe('member-1')
+})
+
+test('getPublicMemberProfile returns ok:false on non-200 response', async () => {
+  vi.stubGlobal('fetch', async () =>
+    makeFakeResponse(false, 404, JSON.stringify({ detail: 'Member not found.' })),
+  )
+
+  const result = await getPublicMemberProfile('member-2', 'member-1')
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(404)
 })
 
 // ── updateMemberProfile ───────────────────────────────────────────────────────

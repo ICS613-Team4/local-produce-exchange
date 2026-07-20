@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { MemoryRouter } from 'react-router'
+import { MemoryRouter, Route, Routes } from 'react-router'
 import { afterEach, expect, test, vi } from 'vitest'
 
 import ProfilePage from './ProfilePage'
@@ -49,6 +49,18 @@ function renderProfilePage() {
   render(
     <MemoryRouter>
       <ProfilePage />
+    </MemoryRouter>,
+  )
+}
+
+// Renders ProfilePage at /profile/:id, the US-08 public-view route, so
+// useParams() actually resolves an id the way it would through App.tsx.
+function renderPublicProfilePage(viewedMemberId: string) {
+  render(
+    <MemoryRouter initialEntries={['/profile/' + viewedMemberId]}>
+      <Routes>
+        <Route path="/profile/:id" element={<ProfilePage />} />
+      </Routes>
     </MemoryRouter>,
   )
 }
@@ -220,4 +232,83 @@ test('shows an error message when the profile fetch fails', async () => {
   expect(errorArea).toBeTruthy()
   // The page-level home link was removed; the shared nav covers it now.
   expect(screen.queryByRole('link', { name: 'Go to home page' })).toBeNull()
+})
+
+// --- public view (US-08: view another member's public profile) ---
+
+const OTHER_MEMBER_ID = 'b4c135d8-0000-0000-0000-000000000000'
+
+const OTHER_PROFILE_RESPONSE = {
+  id: OTHER_MEMBER_ID,
+  name: 'Bob Baker',
+  email: 'bob@example.com',
+  status: 'active',
+  role: 'member',
+  created_at: '2026-02-01T00:00:00+00:00',
+  profile: {
+    display_name: 'Bobby',
+    contact_preference: 'message',
+    neighborhood: 'Kaimuki',
+  },
+}
+
+test('shows a login prompt for a guest visiting a member profile URL', () => {
+  renderPublicProfilePage(OTHER_MEMBER_ID)
+
+  expect(screen.getByText(/this profile/)).toBeTruthy()
+  expect(screen.getByRole('link', { name: 'log in' })).toBeTruthy()
+})
+
+test('shows only the display name and a reviews placeholder for another member', async () => {
+  window.localStorage.setItem('memberId', MEMBER_ID)
+  vi.stubGlobal('fetch', async () => makeFakeResponse(true, 200, OTHER_PROFILE_RESPONSE))
+
+  renderPublicProfilePage(OTHER_MEMBER_ID)
+
+  expect(await screen.findByRole('heading', { name: 'Bobby' })).toBeTruthy()
+  expect(screen.getByText('No reviews yet.')).toBeTruthy()
+  expect(screen.queryByText('bob@example.com')).toBeNull()
+  expect(screen.queryByText('Kaimuki')).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Edit profile' })).toBeNull()
+})
+
+test('shows the read-only public view, not the editable one, when viewing your own profile through /profile/:id', async () => {
+  // Scenario 2: opening your own profile through this view renders the same
+  // way another member would see it, with no edit control.
+  window.localStorage.setItem('memberId', MEMBER_ID)
+  vi.stubGlobal('fetch', async () => makeFakeResponse(true, 200, PROFILE_RESPONSE))
+
+  renderPublicProfilePage(MEMBER_ID)
+
+  expect(await screen.findByRole('heading', { name: 'Alice' })).toBeTruthy()
+  expect(screen.getByText('No reviews yet.')).toBeTruthy()
+  expect(screen.queryByText('alice@example.com')).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Edit profile' })).toBeNull()
+})
+
+test('requests the target member id in the URL but the viewer id in the X-Member-Id header', async () => {
+  window.localStorage.setItem('memberId', MEMBER_ID)
+  let requestUrl = ''
+  let requestHeaders: Record<string, string> = {}
+  vi.stubGlobal('fetch', async (url: string | URL | Request, options?: RequestInit) => {
+    requestUrl = String(url)
+    requestHeaders = (options?.headers ?? {}) as Record<string, string>
+    return makeFakeResponse(true, 200, OTHER_PROFILE_RESPONSE)
+  })
+
+  renderPublicProfilePage(OTHER_MEMBER_ID)
+  await screen.findByRole('heading', { name: 'Bobby' })
+
+  expect(requestUrl).toBe('/api/members/' + OTHER_MEMBER_ID)
+  expect(requestHeaders['X-Member-Id']).toBe(MEMBER_ID)
+})
+
+test('shows a profile-specific error message when the public profile fetch fails', async () => {
+  window.localStorage.setItem('memberId', MEMBER_ID)
+  vi.stubGlobal('fetch', async () => makeFakeResponse(false, 404, { detail: 'Member not found.' }))
+
+  renderPublicProfilePage(OTHER_MEMBER_ID)
+
+  const errorArea = await screen.findByRole('alert')
+  expect(errorArea.textContent).toContain('Could not load this profile.')
 })

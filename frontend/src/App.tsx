@@ -36,6 +36,10 @@ function App() {
               "please log in" message instead of the page. */}
           <Route element={<RequireAuth />}>
             <Route path="/profile" element={<ProfilePage />} />
+            {/* US-08: view another member's public profile. Same page component
+                as /profile; the presence of :id switches it to a read-only view,
+                even when :id is the viewer's own id (see Scenario 2). */}
+            <Route path="/profile/:id" element={<ProfilePage />} />
             <Route path="/invite" element={<InvitePage />} />
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/requests" element={<RequestQueuesPage />} />

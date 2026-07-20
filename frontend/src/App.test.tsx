@@ -223,3 +223,45 @@ test('guards the /my-listings route, showing the log-in message when logged out'
   const loginLink = screen.getByRole('link', { name: 'log in' })
   expect(loginLink.getAttribute('href')).toBe('/login')
 })
+
+test('wires the /profile/:id route inside RequireAuth for a logged-in member', async () => {
+  window.history.pushState({}, '', '/profile/other-member-456')
+  window.localStorage.setItem('memberId', 'member-123')
+  window.localStorage.setItem('memberName', 'Bob Baker')
+
+  const otherMember = {
+    id: 'other-member-456',
+    name: 'Carla Carrot',
+    email: 'carla@example.com',
+    status: 'active',
+    role: 'member',
+    created_at: '2026-01-01T00:00:00Z',
+    profile: { display_name: 'Carla', contact_preference: 'email', neighborhood: 'Manoa' },
+  }
+  // RequireAuth first validates member-123 (fetch for member-123), then the
+  // page fetches the profile being viewed (other-member-456). Both hit the
+  // same GET /api/members/:id shape, so one stub answers either.
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    const urlText = String(url)
+    if (urlText.includes('other-member-456')) {
+      return makeFakeResponse(true, 200, otherMember)
+    }
+    return makeFakeResponse(true, 200, { ...otherMember, id: 'member-123' })
+  })
+
+  render(<App />)
+
+  // The read-only public view renders with the viewed member's display name,
+  // which only happens if App registered the route inside RequireAuth and let
+  // a logged-in member through.
+  expect(await screen.findByRole('heading', { name: 'Carla' })).toBeTruthy()
+})
+
+test('guards the /profile/:id route, showing the log-in message when logged out', () => {
+  window.history.pushState({}, '', '/profile/other-member-456')
+  render(<App />)
+
+  expect(screen.queryByRole('heading', { name: 'Carla' })).toBeNull()
+  const loginLink = screen.getByRole('link', { name: 'log in' })
+  expect(loginLink.getAttribute('href')).toBe('/login')
+})

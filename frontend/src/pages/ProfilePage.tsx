@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router'
+import { Link, useParams } from 'react-router'
 
 import {
-  getMemberProfile,
+  getPublicMemberProfile,
   updateMemberProfile,
   type MemberData,
   type ProfileUpdatePayload,
@@ -19,6 +19,17 @@ function isOwnProfile(profileId: string): boolean {
 function ProfilePage() {
   const memberId = window.localStorage.getItem('memberId')
 
+  // A route param (/profile/:id) means "view another member's public profile"
+  // (US-08). Its absence (/profile) means the existing "view/edit my own
+  // profile" page (US-05). Scenario 2 requires that viewing your own profile
+  // through the /profile/:id route still renders the read-only public view,
+  // not the editable one, so this flag - not an id comparison - decides which
+  // view renders.
+  const params = useParams()
+  const routeMemberId = params.id ?? ''
+  const isPublicView = routeMemberId !== ''
+  const targetMemberId = isPublicView ? routeMemberId : memberId
+
   const [member, setMember] = useState<MemberData | null>(null)
   // Only load when there is a memberId to fetch; no memberId means nothing to load.
   const [loading, setLoading] = useState(memberId !== null)
@@ -33,19 +44,26 @@ function ProfilePage() {
   const [rawResponseText, setRawResponseText] = useState('')
 
   useEffect(() => {
-    if (memberId === null) {
+    // No logged-in viewer means nothing to load; the guest gate below covers
+    // both the self and public-view cases (Scenario 3: guests are denied).
+    if (memberId === null || targetMemberId === null) {
       return
     }
 
-    getMemberProfile(memberId).then((result) => {
+    // The path id is the profile being viewed; the header id is always the
+    // logged-in viewer making the request, even when viewing someone else's
+    // profile.
+    getPublicMemberProfile(targetMemberId, memberId).then((result) => {
       setLoading(false)
       if (result.ok) {
         setMember(result.data as MemberData)
+      } else if (isPublicView) {
+        setPageError('Could not load this profile.')
       } else {
         setPageError('Could not load your profile.')
       }
     })
-  }, [memberId])
+  }, [memberId, targetMemberId, isPublicView])
 
   function handleEditClick() {
     if (member === null) return
@@ -132,7 +150,7 @@ function ProfilePage() {
         <div className="bg-surface rounded-xl border border-border p-8 shadow-sm">
           <h1 className="text-2xl font-bold text-text mb-4">Profile</h1>
           <p className="text-text-muted">
-            Please <Link to="/login" className="font-medium text-primary-600 hover:text-primary-700">log in</Link> to view your profile.
+            Please <Link to="/login" className="font-medium text-primary-600 hover:text-primary-700">log in</Link> to view {isPublicView ? 'this profile' : 'your profile'}.
           </p>
         </div>
       </div>
@@ -164,6 +182,30 @@ function ProfilePage() {
   }
 
   if (member === null) return null
+
+  // US-08, Scenario 1 & 2: the public view always shows display name and
+  // review history read-only, with no edit control - even for your own
+  // profile viewed through this route. Reviews (US-20/US-21) have no backend
+  // yet, so this renders a placeholder until that story ships.
+  if (isPublicView) {
+    return (
+      <div className="max-w-lg mx-auto">
+        <div className="bg-surface rounded-xl border border-border p-8 shadow-sm">
+          <h1 className="text-2xl font-bold text-text mb-6">{member.profile?.display_name ?? 'Member'}</h1>
+          <dl className="space-y-4">
+            <div>
+              <dt className="text-xs font-medium text-text-muted uppercase tracking-wide">Display name</dt>
+              <dd className="mt-1 text-sm text-text">{member.profile?.display_name ?? '—'}</dd>
+            </div>
+          </dl>
+          <div className="border-t border-border mt-6 pt-4">
+            <h2 className="text-base font-semibold text-text mb-1">Reviews</h2>
+            <p className="text-sm text-text-muted">No reviews yet.</p>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   const canEdit = isOwnProfile(member.id)
 
