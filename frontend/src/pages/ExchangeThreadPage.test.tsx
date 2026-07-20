@@ -63,13 +63,6 @@ function makeThreadWithMessages() {
   }
 }
 
-// ── not logged in ──────────────────────────────────────────────────────────
-
-test('shows not-logged-in message when memberId is absent', () => {
-  renderPage()
-  expect(screen.getByRole('alert').textContent).toContain('logged in')
-})
-
 // ── no claim param ─────────────────────────────────────────────────────────
 
 test('shows error when no claim query param is present', () => {
@@ -394,9 +387,8 @@ test('the requester is offered a review of the poster', async () => {
 
   // The viewer is the requester, so the review target is the poster, by first
   // name, matching the completed rows on My Requests.
-  expect(
-    await screen.findByRole('button', { name: 'Leave a Review for Bob' }),
-  ).toBeTruthy()
+  const reviewLink = await screen.findByRole('link', { name: 'Leave a Review for Bob' })
+  expect(reviewLink.getAttribute('href')).toBe('/review?claim=claim-1')
 })
 
 test('the poster is offered a review of the requester', async () => {
@@ -405,9 +397,25 @@ test('the poster is offered a review of the requester', async () => {
 
   renderPage()
 
-  expect(
-    await screen.findByRole('button', { name: 'Leave a Review for Carol' }),
-  ).toBeTruthy()
+  const reviewLink = await screen.findByRole('link', { name: 'Leave a Review for Carol' })
+  expect(reviewLink.getAttribute('href')).toBe('/review?claim=claim-1')
+})
+
+test('an exchange the viewer already reviewed offers the edit wording', async () => {
+  window.localStorage.setItem('memberId', 'claimant-1')
+  const thread = { ...makeCompletedThread(), reviewed_by_me: true }
+  vi.stubGlobal('fetch', async () => makeFakeResponse(true, 200, thread))
+
+  renderPage()
+
+  // The same link now opens the pre-filled edit form, so the label says so
+  // instead of inviting a first review.
+  const editLink = await screen.findByRole('link', { name: 'Edit Your Review for Bob' })
+  expect(editLink.getAttribute('href')).toBe('/review?claim=claim-1')
+  expect(screen.queryByRole('link', { name: /Leave a Review/ })).toBeNull()
+
+  // Reading both sides' reviews stays available next to it.
+  expect(screen.getByRole('link', { name: 'View Reviews' })).toBeTruthy()
 })
 
 // ── cancelled exchange locks the thread ────────────────────────────────────
@@ -460,7 +468,54 @@ test('a request withdrawn before approval shows the plain cancelled title', asyn
   expect(textbox.disabled).toBe(true)
 })
 
-test('the review button shows the placeholder alert', async () => {
+// ── denied request locks the thread ────────────────────────────────────────
+
+function makeDeniedThread() {
+  return {
+    ...makeEmptyThread(),
+    owner_id: 'owner-1',
+    claimant_id: 'claimant-1',
+    owner_name: 'Bob Baker',
+    claimant_name: 'Carol Chen',
+    claim_status: 'denied',
+    approved_quantity: null,
+  }
+}
+
+test('a denied request shows the denied banner and disables the composer', async () => {
+  window.localStorage.setItem('memberId', 'claimant-1')
+  vi.stubGlobal('fetch', async () => makeFakeResponse(true, 200, makeDeniedThread()))
+
+  renderPage()
+
+  // Only the poster can deny, so the banner names the listing owner.
+  const bannerTitle = await screen.findByText('This request was denied by Bob Baker.')
+  expect(bannerTitle.className).toContain('font-medium')
+  expect(
+    screen.getByText('The thread is locked, so no new messages can be sent.'),
+  ).toBeTruthy()
+
+  const textbox = screen.getByLabelText('Send a message') as HTMLTextAreaElement
+  expect(textbox.disabled).toBe(true)
+  const sendButton = screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement
+  expect(sendButton.disabled).toBe(true)
+
+  // Nothing was exchanged, so there is nobody to review.
+  expect(screen.queryByRole('link', { name: /Leave a Review/ })).toBeNull()
+})
+
+test('the denied banner locks the thread for the poster too', async () => {
+  window.localStorage.setItem('memberId', 'owner-1')
+  vi.stubGlobal('fetch', async () => makeFakeResponse(true, 200, makeDeniedThread()))
+
+  renderPage()
+
+  expect(await screen.findByText('This request was denied by Bob Baker.')).toBeTruthy()
+  const textbox = screen.getByLabelText('Send a message') as HTMLTextAreaElement
+  expect(textbox.disabled).toBe(true)
+})
+
+test('the completed banner links to writing a review and to reading them', async () => {
   window.localStorage.setItem('memberId', 'claimant-1')
   vi.stubGlobal('fetch', async () => makeFakeResponse(true, 200, makeCompletedThread()))
   const alertSpy = vi.fn()
@@ -468,11 +523,15 @@ test('the review button shows the placeholder alert', async () => {
 
   renderPage()
 
-  const reviewButton = await screen.findByRole('button', { name: 'Leave a Review for Bob' })
-  fireEvent.click(reviewButton)
+  // Both are plain links to the shared pages, the same targets the completed
+  // rows on My Requests and Incoming Requests use. Nothing pops an alert.
+  const reviewLink = await screen.findByRole('link', { name: 'Leave a Review for Bob' })
+  expect(reviewLink.getAttribute('href')).toBe('/review?claim=claim-1')
+  const viewLink = screen.getByRole('link', { name: 'View Reviews' })
+  expect(viewLink.getAttribute('href')).toBe('/exchange-reviews?claim=claim-1')
 
-  expect(alertSpy).toHaveBeenCalledTimes(1)
-  expect(String(alertSpy.mock.calls[0][0])).toContain('US-20')
+  fireEvent.click(reviewLink)
+  expect(alertSpy).not.toHaveBeenCalled()
 })
 
 test('an exchange that is not completed keeps the composer open', async () => {
@@ -726,7 +785,7 @@ test('Mark exchange complete asks, calls the complete endpoint, and locks the th
   expect(
     await screen.findByText('This exchange was marked complete by Bob Baker.'),
   ).toBeTruthy()
-  expect(screen.getByRole('button', { name: 'Leave a Review for Carol' })).toBeTruthy()
+  expect(screen.getByRole('link', { name: 'Leave a Review for Carol' })).toBeTruthy()
   expect(screen.queryByRole('button', { name: 'Mark exchange complete' })).toBeNull()
   expect(confirmSpy).toHaveBeenCalledWith('Mark this exchange complete? This is final.')
   expect(actionCalls.length).toBe(1)

@@ -12,14 +12,13 @@ import type {
   MyRequestsResponse,
   RequestQueuesResult,
 } from '../services/requestQueueService'
-import { authStateChangedEventName } from '../services/authService'
+import { clearStoredLogin } from '../services/authService'
 import { formatTimestamp, getLocalTimeZoneNote } from '../utils/formatTimestamp'
-
-const notLoggedInMessage = 'You need to be logged in to see this page.'
+import ReviewLinks from '../components/ReviewLinks'
 
 function MyRequestsPage() {
   const latestRequestNumber = useRef(0)
-  const [memberId, setMemberId] = useState(window.localStorage.getItem('memberId') ?? '')
+  const memberId = window.localStorage.getItem('memberId') ?? ''
   const [result, setResult] = useState<RequestQueuesResult | null>(null)
   const [reloadCounter, setReloadCounter] = useState(0)
   const [withdrawingClaimId, setWithdrawingClaimId] = useState('')
@@ -37,17 +36,12 @@ function MyRequestsPage() {
   // and again whenever reloadCounter changes after a successful action.
   useEffect(() => {
     latestRequestNumber.current = latestRequestNumber.current + 1
-    if (memberId === '') { return }
     const requestNumber = latestRequestNumber.current
     async function loadMyRequests() {
       const loadedResult = await sendGetMyRequestsRequest(memberId)
       if (requestNumber !== latestRequestNumber.current) { return }
       if (loadedResult.status === 401) {
-        window.localStorage.removeItem('memberId')
-        window.localStorage.removeItem('memberName')
-        window.localStorage.removeItem('memberEmail')
-        setMemberId('')
-        window.dispatchEvent(new Event(authStateChangedEventName))
+        clearStoredLogin()
         return
       }
       setResult(loadedResult)
@@ -310,25 +304,17 @@ function MyRequestsPage() {
       // completed row also loses its link. The review link reviews the other
       // party, the poster, on the shared /review screen (US-20).
       detailLine = <>Your exchange for {approvedQuantity} was completed on {completedAtText}</>
-      let posterFirstName = 'the poster'
-      if (item.owner_name !== '') {
-        posterFirstName = item.owner_name.split(' ')[0]
-      }
-      // Once the caller has reviewed this exchange, the same link opens the
-      // pre-filled edit form, so the label says so instead of inviting a
-      // first review.
-      let reviewLinkLabel = 'Leave a Review for ' + posterFirstName
-      if (item.reviewed_by_me === true) {
-        reviewLinkLabel = 'Edit Your Review for ' + posterFirstName
-      }
+      // The shared pair: write the caller's own review of the poster (US-20),
+      // and read both sides' reviews of the exchange (US-21).
       controlsArea = (
         <div className="flex flex-wrap items-center gap-2 mt-3">
-          <Link
-            to={'/review?claim=' + item.id}
-            className="inline-flex items-center px-3 py-1.5 text-xs font-medium text-primary-600 border border-primary-200 rounded-md hover:bg-primary-50 transition-colors"
-          >
-            {reviewLinkLabel}
-          </Link>
+          <ReviewLinks
+            claimId={item.id}
+            otherPartyName={item.owner_name}
+            fallbackName="the poster"
+            reviewedByMe={item.reviewed_by_me}
+            onDeleted={() => setReloadCounter((c) => c + 1)}
+          />
         </div>
       )
     } else if (item.status === 'denied') {
@@ -408,13 +394,7 @@ function MyRequestsPage() {
   const timeZoneNote = getLocalTimeZoneNote()
 
   let contentArea
-  if (memberId === '') {
-    contentArea = (
-      <div className="rounded-lg bg-error-bg border border-red-200 px-4 py-3 text-sm text-error" role="alert">
-        {notLoggedInMessage}
-      </div>
-    )
-  } else if (result === null) {
+  if (result === null) {
     contentArea = <p className="text-text-muted text-sm py-8 text-center">Loading your requests...</p>
   } else if (result.errorMessage !== '') {
     contentArea = (

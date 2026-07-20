@@ -12,17 +12,16 @@ import type {
   ListingAllRequestsGroup,
   RequestQueuesResult,
 } from '../services/requestQueueService'
-import { authStateChangedEventName } from '../services/authService'
+import { clearStoredLogin } from '../services/authService'
 import { formatTimestamp, getLocalTimeZoneNote } from '../utils/formatTimestamp'
 import MemberRatingChip from '../components/MemberRatingChip'
-
-const notLoggedInMessage = 'You need to be logged in to see this page.'
+import ReviewLinks from '../components/ReviewLinks'
 
 function RequestQueuesPage() {
   const latestRequestNumber = useRef(0)
   const [searchParams] = useSearchParams()
   const listingFilter = searchParams.get('listing') ?? ''
-  const [memberId, setMemberId] = useState(window.localStorage.getItem('memberId') ?? '')
+  const memberId = window.localStorage.getItem('memberId') ?? ''
   const [result, setResult] = useState<RequestQueuesResult | null>(null)
   const [resultFilter, setResultFilter] = useState('')
   const [reloadCounter, setReloadCounter] = useState(0)
@@ -89,17 +88,12 @@ function RequestQueuesPage() {
 
   useEffect(() => {
     latestRequestNumber.current = latestRequestNumber.current + 1
-    if (memberId === '') { return }
     const requestNumber = latestRequestNumber.current
     async function loadAllRequests() {
       const loadedResult = await sendGetAllRequestsRequest(memberId, listingFilter)
       if (requestNumber !== latestRequestNumber.current) { return }
       if (loadedResult.status === 401) {
-        window.localStorage.removeItem('memberId')
-        window.localStorage.removeItem('memberName')
-        window.localStorage.removeItem('memberEmail')
-        setMemberId('')
-        window.dispatchEvent(new Event(authStateChangedEventName))
+        clearStoredLogin()
         return
       }
       setResult(loadedResult)
@@ -255,22 +249,18 @@ function RequestQueuesPage() {
     // review link reaches; the backend works out the roles from the claim.
     let reviewButton = null
     if (item.status === 'completed') {
-      let recipientFirstName = 'the recipient'
-      if (item.claimant_name !== '') {
-        recipientFirstName = item.claimant_name.split(' ')[0]
-      }
-      // Once the caller has reviewed this exchange, the same link opens the
-      // pre-filled edit form, so the label says so instead of inviting a
-      // first review.
-      let reviewLinkLabel = 'Leave a Review for ' + recipientFirstName
-      if (item.reviewed_by_me === true) {
-        reviewLinkLabel = 'Edit Your Review for ' + recipientFirstName
-      }
+      // The shared pair, in this page's own button variant: write the caller's
+      // own review of the recipient (US-20), and read both sides' reviews of
+      // the exchange (US-21).
       reviewButton = (
-        <Link to={'/review?claim=' + item.id}
-          className="inline-flex items-center px-3 py-1 text-xs font-medium text-primary-700 border border-border rounded-md hover:bg-primary-50 transition-colors">
-          {reviewLinkLabel}
-        </Link>
+        <ReviewLinks
+          claimId={item.id}
+          otherPartyName={item.claimant_name}
+          fallbackName="the recipient"
+          reviewedByMe={item.reviewed_by_me}
+          onDeleted={() => setReloadCounter((c) => c + 1)}
+          linkClasses="inline-flex items-center px-3 py-1 text-xs font-medium text-primary-700 border border-border rounded-md hover:bg-primary-50 transition-colors"
+        />
       )
     }
 
@@ -286,9 +276,16 @@ function RequestQueuesPage() {
     }
 
     return (
-      <li key={item.id} className="flex items-center justify-between py-3 border-b border-border last:border-0">
+      // The row stacks on a phone and goes side by side from the small
+      // breakpoint up, the same pattern the dashboard history rows use. A
+      // completed row carries three controls, which do not fit one line on a
+      // narrow screen, so the controls block below wraps too.
+      <li
+        key={item.id}
+        className="flex flex-col gap-2 py-3 border-b border-border last:border-0 sm:flex-row sm:items-center sm:justify-between sm:gap-3"
+      >
         <div className="min-w-0">
-          <p className="text-sm text-text">
+          <p className="text-sm text-text break-words">
             <span className="font-medium">{item.claimant_name}</span>{' '}
             <MemberRatingChip
               memberId={item.claimant_id}
@@ -307,7 +304,7 @@ function RequestQueuesPage() {
           <ul className="mt-1">{statusOutcomeItems}</ul>
         </div>
         {(approveButton || denyButton || completeButton || reviewButton || threadLink) && (
-          <div className="flex items-center gap-2 shrink-0 ml-3">
+          <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
             {approveButton}
             {denyButton}
             {completeButton}
@@ -391,13 +388,7 @@ function RequestQueuesPage() {
   const timeZoneNote = getLocalTimeZoneNote()
 
   let contentArea
-  if (memberId === '') {
-    contentArea = (
-      <div className="rounded-lg bg-error-bg border border-red-200 px-4 py-3 text-sm text-error" role="alert">
-        {notLoggedInMessage}
-      </div>
-    )
-  } else if (result === null || resultFilter !== listingFilter) {
+  if (result === null || resultFilter !== listingFilter) {
     contentArea = <p className="text-text-muted text-sm py-8 text-center">Loading your requests...</p>
   } else if (result.errorMessage !== '') {
     contentArea = (

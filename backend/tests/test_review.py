@@ -21,9 +21,12 @@ from app.models.listing import Listing
 from app.models.member import Member
 from app.models.review import Review
 from app.routers.review import (
+    DISABLED_REVIEW_DELETE_MESSAGE,
     DISABLED_REVIEW_MESSAGE,
     create_review,
     create_review_endpoint,
+    delete_review,
+    delete_review_endpoint,
     edit_review,
     edit_review_endpoint,
     get_review_context,
@@ -143,6 +146,9 @@ class DiesMidRequestSession:
 
     def add(self, *args, **kwargs):
         self.real_session.add(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        self.real_session.delete(*args, **kwargs)
 
     def flush(self, *args, **kwargs):
         if self.flush_error is not None:
@@ -1010,3 +1016,300 @@ def test_edit_commit_failure_is_503(db_session):
         edit_review(claim_id, make_edit_payload(), owner, dying)
 
     assert raised.value.status_code == 503
+
+
+# ── DELETE: Rule 4, a reviewer removes their own review ───────────────────────
+
+
+def test_delete_removes_the_acting_members_review(db_session):
+    owner, requestor, listing, claim_id = make_completed_exchange(db_session)
+    create_review(claim_id, make_review_payload(), owner, db_session)
+
+    result = delete_review(claim_id, owner, db_session)
+
+    assert result is None
+    assert count_reviews(db_session) == 0
+
+
+def test_delete_only_removes_the_acting_members_own_row(db_session):
+    """Rule 4, author only: the owner's delete takes the owner's row and
+    leaves the requestor's row exactly as it was."""
+    owner, requestor, listing, claim_id = make_completed_exchange(db_session)
+    create_review(
+        claim_id, CreateReviewPayload(rating=2, body="owner wrote this"), owner, db_session
+    )
+    create_review(
+        claim_id,
+        CreateReviewPayload(rating=3, body="requestor wrote this"),
+        requestor,
+        db_session,
+    )
+
+    delete_review(claim_id, owner, db_session)
+
+    owner_row = db_session.scalars(
+        select(Review)
+        .where(Review.claim_id == claim_id)
+        .where(Review.reviewer_id == owner.id)
+    ).first()
+    requestor_row = db_session.scalars(
+        select(Review)
+        .where(Review.claim_id == claim_id)
+        .where(Review.reviewer_id == requestor.id)
+    ).first()
+
+    assert owner_row is None
+    assert requestor_row is not None
+    assert requestor_row.rating == 3
+    assert requestor_row.body == "requestor wrote this"
+    assert count_reviews(db_session) == 1
+
+
+def test_delete_is_idempotent(db_session):
+    """The double-click case: the second and third deletes are quiet
+    successes, and neither reaches the other member's row."""
+    owner, requestor, listing, claim_id = make_completed_exchange(db_session)
+    create_review(claim_id, make_review_payload(), owner, db_session)
+    create_review(claim_id, make_review_payload(), requestor, db_session)
+
+    first = delete_review(claim_id, owner, db_session)
+    second = delete_review(claim_id, owner, db_session)
+    third = delete_review(claim_id, owner, db_session)
+
+    assert first is None
+    assert second is None
+    assert third is None
+    assert count_reviews(db_session) == 1
+
+
+def test_delete_with_no_review_at_all_is_a_quiet_success(db_session):
+    owner, requestor, listing, claim_id = make_completed_exchange(db_session)
+
+    result = delete_review(claim_id, owner, db_session)
+
+    assert result is None
+    assert count_reviews(db_session) == 0
+
+
+def test_a_participant_cannot_delete_the_other_partys_review(db_session):
+    """The forged-request case: the requestor asks to delete on an exchange
+    where only the owner has written a review. The query is scoped to the
+    caller, so it finds nothing and the owner's review survives."""
+    owner, requestor, listing, claim_id = make_completed_exchange(db_session)
+    create_review(claim_id, make_review_payload(), owner, db_session)
+
+    result = delete_review(claim_id, requestor, db_session)
+
+    assert result is None
+    owner_row = db_session.scalars(
+        select(Review)
+        .where(Review.claim_id == claim_id)
+        .where(Review.reviewer_id == owner.id)
+    ).first()
+    assert owner_row is not None
+    assert owner_row.rating == 4
+    assert count_reviews(db_session) == 1
+
+
+def test_non_participant_cannot_delete(db_session):
+    """A member who took no part in the exchange is refused, and both reviews
+    survive."""
+    owner, requestor, listing, claim_id = make_completed_exchange(db_session)
+    create_review(claim_id, make_review_payload(), owner, db_session)
+    create_review(claim_id, make_review_payload(), requestor, db_session)
+    outsider = insert_member(db_session, email="outsider@example.com", name="Oscar Outsider")
+
+    with pytest.raises(HTTPException) as raised:
+        delete_review(claim_id, outsider, db_session)
+
+    assert raised.value.status_code == 403
+    assert count_reviews(db_session) == 2
+
+
+def test_suspended_member_cannot_delete(db_session):
+    owner, requestor, listing, claim_id = make_completed_exchange(db_session)
+    create_review(claim_id, make_review_payload(), owner, db_session)
+    suspended = insert_member(db_session, status="suspended", email="sus@example.com")
+
+    with pytest.raises(HTTPException) as raised:
+        delete_review(claim_id, suspended, db_session)
+
+    assert raised.value.status_code == 403
+    assert "suspended" in raised.value.detail
+    assert count_reviews(db_session) == 1
+
+
+def test_delete_a_disabled_review_is_blocked_with_403(db_session):
+    """Rule 3 wins over Rule 4: a review an administrator disabled stays as
+    the record of what happened."""
+    owner, requestor, listing, claim_id = make_completed_exchange(db_session)
+    insert_review(
+        db_session,
+        claim_id,
+        owner,
+        requestor,
+        "requestor",
+        rating=4,
+        body="original text",
+        disabled_at=datetime.now(timezone.utc),
+    )
+
+    with pytest.raises(HTTPException) as raised:
+        delete_review(claim_id, owner, db_session)
+
+    assert raised.value.status_code == 403
+    assert raised.value.detail == DISABLED_REVIEW_DELETE_MESSAGE
+    assert "administrator" in raised.value.detail
+    assert "disabled" in raised.value.detail
+
+    row = db_session.scalars(select(Review).where(Review.claim_id == claim_id)).first()
+    assert row is not None
+    assert row.body == "original text"
+
+
+def test_the_disabled_blocks_share_one_opening_sentence(db_session):
+    """The edit refusal and the delete refusal explain the reason with the
+    same words, so a member reads one story whichever action they try."""
+    owner, requestor, listing, claim_id = make_completed_exchange(db_session)
+    insert_review(
+        db_session,
+        claim_id,
+        owner,
+        requestor,
+        "requestor",
+        disabled_at=datetime.now(timezone.utc),
+    )
+
+    with pytest.raises(HTTPException) as edit_raised:
+        edit_review(claim_id, make_edit_payload(), owner, db_session)
+    with pytest.raises(HTTPException) as delete_raised:
+        delete_review(claim_id, owner, db_session)
+
+    shared = "An administrator disabled your review for this exchange"
+    assert edit_raised.value.detail.startswith(shared)
+    assert delete_raised.value.detail.startswith(shared)
+    assert DISABLED_REVIEW_MESSAGE != DISABLED_REVIEW_DELETE_MESSAGE
+
+
+def test_after_a_delete_the_member_may_write_a_new_review(db_session):
+    """Deleting frees the member's one slot for the exchange, so the unique
+    constraint no longer stands in the way of a fresh review."""
+    owner, requestor, listing, claim_id = make_completed_exchange(db_session)
+    create_review(
+        claim_id, CreateReviewPayload(rating=1, body="first try"), owner, db_session
+    )
+
+    delete_review(claim_id, owner, db_session)
+    again = create_review(
+        claim_id, CreateReviewPayload(rating=5, body="second try"), owner, db_session
+    )
+
+    assert again.rating == 5
+    assert again.body == "second try"
+    assert count_reviews(db_session) == 1
+
+
+def test_context_after_a_delete_offers_the_empty_form_again(db_session):
+    owner, requestor, listing, claim_id = make_completed_exchange(db_session)
+    create_review(claim_id, make_review_payload(), owner, db_session)
+
+    delete_review(claim_id, owner, db_session)
+    context = get_review_context(claim_id, owner, db_session)
+
+    assert context.already_reviewed is False
+    assert context.existing_review is None
+    assert context.can_edit is False
+
+
+def test_delete_review_unknown_claim_is_404(db_session):
+    member = insert_member(db_session, email="member@example.com")
+
+    with pytest.raises(HTTPException) as raised:
+        delete_review(uuid.uuid4(), member, db_session)
+
+    assert raised.value.status_code == 404
+
+
+def test_delete_review_non_uuid_claim_is_404(db_session):
+    member = insert_member(db_session, email="member@example.com")
+
+    with pytest.raises(HTTPException) as raised:
+        delete_review_endpoint("not-a-uuid", member, db_session)
+
+    assert raised.value.status_code == 404
+
+
+def test_delete_review_non_completed_claim_is_409(db_session):
+    owner = insert_member(db_session, email="owner@example.com", name="Owen Owner")
+    requestor = insert_member(db_session, email="requestor@example.com", name="Rita Requestor")
+    listing = insert_listing(db_session, owner)
+    claim_id = insert_claim(db_session, listing.id, requestor, status="picked_up")
+
+    with pytest.raises(HTTPException) as raised:
+        delete_review(claim_id, requestor, db_session)
+
+    assert raised.value.status_code == 409
+
+
+def test_delete_review_endpoint_deletes_with_a_valid_claim_id(db_session):
+    owner, requestor, listing, claim_id = make_completed_exchange(db_session)
+    create_review(claim_id, make_review_payload(), owner, db_session)
+
+    result = delete_review_endpoint(str(claim_id), owner, db_session)
+
+    assert result is None
+    assert count_reviews(db_session) == 0
+
+
+def test_delete_review_database_failure_is_503(broken_session):
+    member = Member(
+        id=uuid.uuid4(),
+        name="Member",
+        email="member@example.com",
+        password_hash="not-a-real-hash",
+        status="active",
+    )
+
+    with pytest.raises(HTTPException) as raised:
+        delete_review(uuid.uuid4(), member, broken_session)
+
+    assert raised.value.status_code == 503
+
+
+def test_delete_review_load_failure_is_503(db_session):
+    owner, requestor, listing, claim_id = make_completed_exchange(db_session)
+    create_review(claim_id, make_review_payload(), owner, db_session)
+    dying = DiesMidRequestSession(db_session, allowed_reads=2)
+
+    with pytest.raises(HTTPException) as raised:
+        delete_review(claim_id, owner, dying)
+
+    assert raised.value.status_code == 503
+
+
+def test_delete_commit_failure_is_503(db_session):
+    owner, requestor, listing, claim_id = make_completed_exchange(db_session)
+    create_review(claim_id, make_review_payload(), owner, db_session)
+    dying = DiesMidRequestSession(db_session, allowed_reads=99, fail_commit=True)
+
+    with pytest.raises(HTTPException) as raised:
+        delete_review(claim_id, owner, dying)
+
+    assert raised.value.status_code == 503
+
+
+def test_delete_review_route_is_wired():
+    from fastapi.routing import APIRoute
+
+    from app.main import app
+
+    found = False
+    status_code = 0
+    for route in app.routes:
+        if isinstance(route, APIRoute):
+            if route.path == "/api/claims/{claim_id}/review":
+                if "DELETE" in route.methods:
+                    found = True
+                    status_code = route.status_code
+    assert found
+    assert status_code == 204

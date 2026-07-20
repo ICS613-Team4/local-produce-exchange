@@ -9,7 +9,13 @@
 // A member has TWO separate reputations, one as a listing owner and one as a
 // requestor, and this chip shows exactly one of them, named by props.role.
 // The chip is presentational only: it renders the numbers passed in and
-// computes no average itself. US-21 wires the click.
+// computes no average itself.
+//
+// Clicking the chip opens the reviews behind that average (US-21). The link is
+// built from props.role, so every place the chip is rendered sends the role its
+// own chip was showing and the two reputations can never be crossed.
+
+import { Link } from 'react-router'
 
 type MemberRatingChipProps = {
   // Whose reputation this is.
@@ -37,28 +43,21 @@ function MemberRatingChip(props: MemberRatingChipProps) {
     return <span>{'(no ' + roleWord + ' rating)'}</span>
   }
 
-  function handleOpenReviews() {
-    // US-21 PLACEHOLDER: clicking a member's rating should open the reviews that
-    // produced this average, scoped to props.role (listing_owner or requestor)
-    // for props.memberId. US-21 (view reviews for a completed exchange) wires this
-    // navigation. It is intentionally a no-op for now.
-    // Search "US-21 PLACEHOLDER" to find every spot that needs wiring.
-    return
-  }
-
   const averageText = props.average.toFixed(1)
 
+  // A link, not a button with a handler: the back button and a middle-click
+  // then work the way they do anywhere else on the web, with no handler to
+  // write.
   return (
-    <button
-      type="button"
-      onClick={handleOpenReviews}
+    <Link
+      to={'/member-reviews?member=' + props.memberId + '&role=' + props.role}
       aria-label={"View the reviews behind this member's rating as a " + roleWord}
       className="hover:underline focus:outline-none focus:ring-2 focus:ring-primary-500 rounded"
     >
       {'('}
       <span className="text-amber-500" aria-hidden="true">★</span>
       {' ' + averageText + ' ' + roleWord + ' rating)'}
-    </button>
+    </Link>
   )
 }
 

@@ -7,10 +7,10 @@ import {
   sendCompleteExchangeRequest,
   sendConfirmPickupRequest,
 } from '../services/requestQueueService'
-import { authStateChangedEventName } from '../services/authService'
+import { clearStoredLogin } from '../services/authService'
 import { formatTimestamp, getLocalTimeZoneNote } from '../utils/formatTimestamp'
+import ReviewLinks from '../components/ReviewLinks'
 
-const notLoggedInMessage = 'You need to be logged in to view this exchange thread.'
 const MESSAGE_MAX_LENGTH = 2000
 
 function ExchangeThreadPage() {
@@ -18,7 +18,7 @@ function ExchangeThreadPage() {
   const claimId = new URLSearchParams(location.search).get('claim') ?? ''
 
   const latestRequestNumber = useRef(0)
-  const [memberId] = useState(window.localStorage.getItem('memberId') ?? '')
+  const memberId = window.localStorage.getItem('memberId') ?? ''
   const [thread, setThread] = useState<ThreadData | null>(null)
   const [loadError, setLoadError] = useState('')
   const [reloadCounter, setReloadCounter] = useState(0)
@@ -40,7 +40,7 @@ function ExchangeThreadPage() {
   // Load the thread whenever the page mounts or a message is sent.
   useEffect(() => {
     latestRequestNumber.current = latestRequestNumber.current + 1
-    if (memberId === '' || claimId === '') {
+    if (claimId === '') {
       return
     }
     const requestNumber = latestRequestNumber.current
@@ -50,10 +50,7 @@ function ExchangeThreadPage() {
         return
       }
       if (result.status === 401) {
-        window.localStorage.removeItem('memberId')
-        window.localStorage.removeItem('memberName')
-        window.localStorage.removeItem('memberEmail')
-        window.dispatchEvent(new Event(authStateChangedEventName))
+        clearStoredLogin()
         return
       }
       if (result.errorMessage !== '') {
@@ -185,16 +182,6 @@ function ExchangeThreadPage() {
     setReloadCounter((c) => c + 1)
   }
 
-  // Placeholder for the review feature (US-20). The button renders on a
-  // completed exchange now so the flow is visible, the same as the completed
-  // rows on My Requests and Incoming Requests, but the review form itself is
-  // US-20's to build; until then the click explains that.
-  function handleLeaveReview() {
-    window.alert(
-      'Reviews are not built yet. Leaving a rating and review for a completed exchange arrives with user story US-20.',
-    )
-  }
-
   // One chat row. The viewer's own messages sit on the right in the primary
   // green; the other member's messages sit on the left in the neutral bubble.
   // The sender name always shows so a reloaded thread stays readable.
@@ -242,13 +229,7 @@ function ExchangeThreadPage() {
   }
 
   let content
-  if (memberId === '') {
-    content = (
-      <div className="rounded-lg bg-error-bg border border-red-200 px-4 py-3 text-sm text-error" role="alert">
-        {notLoggedInMessage}
-      </div>
-    )
-  } else if (claimId === '') {
+  if (claimId === '') {
     content = (
       <div className="rounded-lg bg-error-bg border border-red-200 px-4 py-3 text-sm text-error" role="alert">
         No exchange specified. Try navigating here from a request page.
@@ -371,18 +352,13 @@ function ExchangeThreadPage() {
       }
       // The review goes to the OTHER party: the poster reviews the requester
       // and the requester reviews the poster, the same rule the completed rows
-      // on My Requests and Incoming Requests use. The form itself is US-20's
-      // (see handleLeaveReview).
-      let reviewTargetFirstName = 'the poster'
+      // on My Requests and Incoming Requests use. The shared ReviewLinks pair
+      // below points at the same two screens those rows use.
+      let reviewTargetName = thread.owner_name
+      let reviewTargetFallback = 'the poster'
       if (thread.owner_id !== undefined && thread.owner_id === memberId) {
-        reviewTargetFirstName = 'the recipient'
-        if (typeof thread.claimant_name === 'string' && thread.claimant_name !== '') {
-          reviewTargetFirstName = thread.claimant_name.split(' ')[0]
-        }
-      } else {
-        if (typeof thread.owner_name === 'string' && thread.owner_name !== '') {
-          reviewTargetFirstName = thread.owner_name.split(' ')[0]
-        }
+        reviewTargetName = thread.claimant_name
+        reviewTargetFallback = 'the recipient'
       }
       completedBanner = (
         <div className="rounded-lg bg-success-bg border border-green-200 px-4 py-3 mb-4">
@@ -392,14 +368,14 @@ function ExchangeThreadPage() {
           <p className="text-sm text-text-muted mt-1">
             The thread is locked, so no new messages can be sent.
           </p>
-          <div className="mt-3">
-            <button
-              type="button"
-              onClick={() => handleLeaveReview()}
-              className="inline-flex items-center px-3 py-1.5 text-xs font-medium text-primary-600 border border-primary-200 rounded-md hover:bg-primary-50 transition-colors"
-            >
-              Leave a Review for {reviewTargetFirstName}
-            </button>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <ReviewLinks
+              claimId={claimId}
+              otherPartyName={reviewTargetName}
+              fallbackName={reviewTargetFallback}
+              reviewedByMe={thread.reviewed_by_me}
+              onDeleted={() => setReloadCounter((c) => c + 1)}
+            />
           </div>
         </div>
       )
@@ -432,8 +408,32 @@ function ExchangeThreadPage() {
       )
     }
 
-    // Either lock disables the composer; the backend refuses the send too.
-    const threadIsLocked = exchangeIsComplete || exchangeIsCancelled
+    // A denied request locks its thread the same way a cancelled one does. The
+    // poster turned the request down, so nothing was exchanged and there is
+    // nobody to review; only the listing owner can deny, so the denier named
+    // here is always the owner.
+    const exchangeIsDenied = thread.claim_status === 'denied'
+    let deniedBanner = null
+    if (exchangeIsDenied) {
+      let posterName = 'the poster'
+      if (typeof thread.owner_name === 'string' && thread.owner_name !== '') {
+        posterName = thread.owner_name
+      }
+      deniedBanner = (
+        <div className="rounded-lg bg-background-alt border border-border px-4 py-3 mb-4">
+          <p className="text-sm font-medium text-text">
+            This request was denied by {posterName}.
+          </p>
+          <p className="text-sm text-text-muted mt-1">
+            The thread is locked, so no new messages can be sent.
+          </p>
+        </div>
+      )
+    }
+
+    // Any of the three locks disables the composer; the backend refuses the
+    // send too.
+    const threadIsLocked = exchangeIsComplete || exchangeIsCancelled || exchangeIsDenied
 
     // The workflow button for the viewer's next step, shown above the
     // composer. While the exchange is approved the requester can confirm the
@@ -488,6 +488,7 @@ function ExchangeThreadPage() {
         <div className="border-t border-border p-6">
           {completedBanner}
           {cancelledBanner}
+          {deniedBanner}
           {actionButtonArea}
           <form onSubmit={handleSend}>
             <label htmlFor="message-body" className="block text-sm font-semibold text-text mb-2">

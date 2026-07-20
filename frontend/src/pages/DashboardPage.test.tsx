@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { MemoryRouter, Route, Routes } from 'react-router'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { afterEach, expect, test, vi } from 'vitest'
 
 import DashboardPage from './DashboardPage'
@@ -183,10 +183,26 @@ function makeHistoryItem(id: string, title: string, status: string, side: string
   }
   if (status === 'cancelled') {
     item.cancelled_at = '2026-07-04T09:00:00.000Z'
+    // A "cancelled" row from this helper stands for the poster calling off an
+    // exchange they had already approved, so it carries the approval. The
+    // other ending behind the same status, a requestor withdrawing a request
+    // that was never approved, comes from makeWithdrawnItem below.
+    item.approved_quantity = 2
+    item.approved_at = '2026-07-02T09:00:00.000Z'
   }
   if (status === 'denied') {
     item.denied_at = '2026-07-04T09:00:00.000Z'
   }
+  return item
+}
+
+// A withdrawn row: the requestor pulled a request the poster had not approved
+// yet. The backend stores it under the same "cancelled" status, with no
+// approval recorded, which is what tells the two endings apart.
+function makeWithdrawnItem(id: string, title: string, side: string) {
+  const item = makeHistoryItem(id, title, 'cancelled', side)
+  item.approved_quantity = null
+  item.approved_at = null
   return item
 }
 
@@ -210,7 +226,10 @@ function makeFullHistory() {
     makeHistoryItem('p-recipient', 'Picked Up Waiting On Them', 'picked_up', 'recipient'),
   ]
   body.completed = [makeHistoryItem('f-completed', 'Completed One', 'completed', 'recipient')]
-  body.cancelled = [makeHistoryItem('f-cancelled', 'Cancelled One', 'cancelled', 'poster')]
+  body.cancelled = [
+    makeHistoryItem('f-cancelled', 'Cancelled One', 'cancelled', 'poster'),
+    makeWithdrawnItem('f-withdrawn', 'Withdrawn One', 'recipient'),
+  ]
   body.denied = [makeHistoryItem('f-denied', 'Denied One', 'denied', 'recipient')]
   return body
 }
@@ -225,11 +244,25 @@ function getHistoryPanels() {
   return { needsYouPanel, inProgressPanel, finishedPanel }
 }
 
-function renderDashboard() {
+// Shows the current URL, so a test can check what the page put in it. The
+// Exchange History tab is stored there, which is what makes the browser's Back
+// button return to the tab the member was reading.
+function LocationDisplay() {
+  const location = useLocation()
+  return <p data-testid="location-display">{location.pathname + location.search}</p>
+}
+
+// startingUrl lets a test open the dashboard the way the browser would after a
+// Back button press, with the Exchange History tab already in the URL.
+function renderDashboard(startingUrl = '/dashboard') {
   render(
-    <MemoryRouter initialEntries={['/dashboard']}>
+    <MemoryRouter initialEntries={[startingUrl]}>
+      <LocationDisplay />
       <Routes>
         <Route path="/dashboard" element={<DashboardPage />} />
+        {/* A second page to navigate to, so a test can leave the dashboard
+            and come back and see what the tab does. */}
+        <Route path="/browse" element={<p>Browse page</p>} />
       </Routes>
     </MemoryRouter>,
   )
@@ -304,19 +337,6 @@ test('shows the latest-listings preview for a logged-in member', async () => {
   expect(listingsUrl).toBe('/api/listings?limit=5')
   expect(JSON.stringify(listingsOptions.headers)).toContain('X-Member-Id')
   expect(JSON.stringify(listingsOptions.headers)).toContain('me')
-})
-
-test('does not request anything when logged out', () => {
-  let fetchWasCalled = false
-  vi.stubGlobal('fetch', async () => {
-    fetchWasCalled = true
-    return makeFakeResponse(true, 200, [])
-  })
-
-  renderDashboard()
-
-  // No stored memberId, so every section's request is skipped.
-  expect(fetchWasCalled).toBe(false)
 })
 
 test('shows the empty preview message when there are no listings', async () => {
@@ -665,6 +685,84 @@ test('the section links point to the requests, my-requests, and my-listings page
   expect(browseMineLinks[0].getAttribute('href')).toBe('/my-listings')
 })
 
+// --- US-24: the exchange-history tab is remembered in the URL ---
+
+test('clicking a history tab records it in the page URL', async () => {
+  setLoggedIn()
+  installDashboardFetch({ history: () => makeFakeResponse(true, 200, makeEmptyHistory()) })
+
+  renderDashboard()
+
+  // The plain /dashboard URL carries no tab, and the page opens on Needs you.
+  await screen.findByRole('tab', { name: /Needs you/ })
+  expect(screen.getByTestId('location-display').textContent).toBe('/dashboard')
+
+  fireEvent.click(screen.getByRole('tab', { name: /Finished/ }))
+
+  // The URL now names the tab. That is what the browser stores for this
+  // history entry, so a later Back button press lands here again.
+  expect(screen.getByTestId('location-display').textContent).toBe('/dashboard?history=finished')
+  expect(screen.getByRole('tab', { name: /Finished/ }).getAttribute('aria-selected')).toBe('true')
+
+  // A second tab click overwrites the value rather than piling another one on.
+  fireEvent.click(screen.getByRole('tab', { name: /In progress/ }))
+  expect(screen.getByTestId('location-display').textContent).toBe(
+    '/dashboard?history=in_progress',
+  )
+})
+
+test('opening a URL that names a tab starts on that tab', async () => {
+  // What the browser does after the member leaves the dashboard and presses
+  // Back: it reopens the page at the URL it stored, tab and all.
+  setLoggedIn()
+  installDashboardFetch({ history: () => makeFakeResponse(true, 200, makeFullHistory()) })
+
+  renderDashboard('/dashboard?history=finished')
+
+  const finishedTab = await screen.findByRole('tab', { name: /Finished/ })
+  expect(finishedTab.getAttribute('aria-selected')).toBe('true')
+  expect(screen.getByRole('tab', { name: /Needs you/ }).getAttribute('aria-selected')).toBe('false')
+
+  // The matching panel is the one showing, with its own rows in it.
+  const { needsYouPanel, finishedPanel } = getHistoryPanels()
+  expect(finishedPanel.hasAttribute('hidden')).toBe(false)
+  expect(needsYouPanel.hasAttribute('hidden')).toBe(true)
+  expect(within(finishedPanel).getByText('Completed One')).toBeTruthy()
+})
+
+test('a URL with no tab, or an unknown one, opens on Needs you', async () => {
+  setLoggedIn()
+  installDashboardFetch({ history: () => makeFakeResponse(true, 200, makeEmptyHistory()) })
+
+  // A hand-edited or stale value is not a tab name, so the page opens the way
+  // a plain /dashboard link does instead of showing no tab at all.
+  renderDashboard('/dashboard?history=not-a-real-tab')
+
+  const needsYouTab = await screen.findByRole('tab', { name: /Needs you/ })
+  expect(needsYouTab.getAttribute('aria-selected')).toBe('true')
+  const { needsYouPanel } = getHistoryPanels()
+  expect(needsYouPanel.hasAttribute('hidden')).toBe(false)
+})
+
+test('the remembered tab survives leaving the dashboard and coming back', async () => {
+  setLoggedIn()
+  installDashboardFetch({ history: () => makeFakeResponse(true, 200, makeFullHistory()) })
+
+  renderDashboard()
+
+  await screen.findByRole('tab', { name: /Needs you/ })
+  fireEvent.click(screen.getByRole('tab', { name: /Finished/ }))
+  const urlWhenLeaving = screen.getByTestId('location-display').textContent
+
+  // Leave for another page, then come back to the URL the browser kept for
+  // the dashboard entry. That round trip is what the Back button does.
+  cleanup()
+  renderDashboard(urlWhenLeaving ?? '/dashboard')
+
+  const finishedTab = await screen.findByRole('tab', { name: /Finished/ })
+  expect(finishedTab.getAttribute('aria-selected')).toBe('true')
+})
+
 // --- US-24: the exchange-history section ---
 
 test('the exchange history opens on the Needs you tab with every subheading rendered empty', async () => {
@@ -691,7 +789,8 @@ test('the exchange history opens on the Needs you tab with every subheading rend
 
   // Scenario 2: with no activity, every eligible subheading still renders in
   // its tab (the two open tabs carry the three open statuses each, and the
-  // Finished tab carries the three terminal ones), each with the empty note.
+  // Finished tab carries the four terminal groups: the two endings behind the
+  // "cancelled" status count separately), each with the empty note.
   expect(within(needsYouPanel).getByText('Requested')).toBeTruthy()
   expect(within(needsYouPanel).getByText('Approved')).toBeTruthy()
   expect(within(needsYouPanel).getByText('Picked up')).toBeTruthy()
@@ -700,8 +799,9 @@ test('the exchange history opens on the Needs you tab with every subheading rend
   expect(within(inProgressPanel).getByText('Picked up')).toBeTruthy()
   expect(within(finishedPanel).getByText('Completed')).toBeTruthy()
   expect(within(finishedPanel).getByText('Cancelled')).toBeTruthy()
+  expect(within(finishedPanel).getByText('Withdrawn')).toBeTruthy()
   expect(within(finishedPanel).getByText('Denied')).toBeTruthy()
-  expect(screen.getAllByText('Nothing here yet.').length).toBe(9)
+  expect(screen.getAllByText('Nothing here yet.').length).toBe(10)
 })
 
 test('each history tab shows its row count', async () => {
@@ -710,14 +810,15 @@ test('each history tab shows its row count', async () => {
 
   renderDashboard()
 
-  // Three rows land in each tab (see makeFullHistory), and the count rides in
-  // the tab's badge, so it is part of the tab's text.
+  // Three rows land in each open tab and four in Finished (see
+  // makeFullHistory), and the count rides in the tab's badge, so it is part of
+  // the tab's text.
   const needsYouTab = await screen.findByRole('tab', { name: /Needs you/ })
   const inProgressTab = screen.getByRole('tab', { name: /In progress/ })
   const finishedTab = screen.getByRole('tab', { name: /Finished/ })
   expect(needsYouTab.textContent).toContain('3')
   expect(inProgressTab.textContent).toContain('3')
-  expect(finishedTab.textContent).toContain('3')
+  expect(finishedTab.textContent).toContain('4')
 })
 
 test('clicking a tab reveals its panel and hides the previous one without a second fetch', async () => {
@@ -779,11 +880,141 @@ test('each history row lands in the tab the grouping table specifies', async () 
   expect(within(inProgressPanel).getByText('Picked Up Waiting On Them')).toBeTruthy()
   expect(within(inProgressPanel).queryByText('Requested For Me To Decide')).toBeNull()
 
-  // Finished: the three terminal statuses, whichever side the member was on.
+  // Finished: every terminal row, whichever side the member was on.
   expect(within(finishedPanel).getByText('Completed One')).toBeTruthy()
   expect(within(finishedPanel).getByText('Cancelled One')).toBeTruthy()
+  expect(within(finishedPanel).getByText('Withdrawn One')).toBeTruthy()
   expect(within(finishedPanel).getByText('Denied One')).toBeTruthy()
   expect(within(finishedPanel).queryByText('Requested For Me To Decide')).toBeNull()
+})
+
+test('a completed history row links to the reviews for that exchange', async () => {
+  setLoggedIn()
+  const body = makeEmptyHistory()
+  body.completed = [makeHistoryItem('f-completed', 'Completed One', 'completed', 'recipient')]
+  installDashboardFetch({ history: () => makeFakeResponse(true, 200, body) })
+
+  renderDashboard()
+
+  await screen.findByRole('tab', { name: /Needs you/ })
+  // The history opens on the Needs you tab, so switch to Finished the way a
+  // member would before reading the completed row.
+  fireEvent.click(screen.getByRole('tab', { name: /Finished/ }))
+  const { finishedPanel } = getHistoryPanels()
+
+  // US-21: a finished exchange has nothing left to act on, but both sides can
+  // read what was written about it.
+  const viewLink = within(finishedPanel).getByRole('link', { name: 'View Reviews' })
+  expect(viewLink.getAttribute('href')).toBe('/exchange-reviews?claim=f-completed')
+})
+
+test('a history row stacks on a phone and its controls wrap', async () => {
+  // The controls sit under the listing text on a narrow screen and beside it
+  // from the small breakpoint up. Without this the row scrolls sideways once a
+  // completed exchange carries three controls (write, read, delete).
+  setLoggedIn()
+  const body = makeEmptyHistory()
+  const reviewedItem = {
+    ...makeHistoryItem('f-completed', 'Completed One', 'completed', 'recipient'),
+    reviewed_by_me: true,
+  }
+  body.completed = [reviewedItem]
+  installDashboardFetch({ history: () => makeFakeResponse(true, 200, body) })
+
+  renderDashboard()
+
+  await screen.findByRole('tab', { name: /Needs you/ })
+  fireEvent.click(screen.getByRole('tab', { name: /Finished/ }))
+  const { finishedPanel } = getHistoryPanels()
+
+  const viewLink = within(finishedPanel).getByRole('link', { name: 'View Reviews' })
+  const controls = viewLink.parentElement as HTMLElement
+  expect(controls.className).toContain('flex-wrap')
+  expect(controls.className).not.toContain(' shrink-0')
+
+  const row = controls.parentElement as HTMLElement
+  expect(row.className).toContain('flex-col')
+  expect(row.className).toContain('sm:flex-row')
+})
+
+test('a withdrawn row sits in its own Finished group, apart from a cancelled one', async () => {
+  setLoggedIn()
+  const body = makeEmptyHistory()
+  body.cancelled = [
+    makeHistoryItem('f-cancelled', 'Cancelled One', 'cancelled', 'poster'),
+    makeWithdrawnItem('f-withdrawn', 'Withdrawn One', 'recipient'),
+  ]
+  installDashboardFetch({ history: () => makeFakeResponse(true, 200, body) })
+
+  renderDashboard()
+
+  await screen.findByRole('tab', { name: /Needs you/ })
+  fireEvent.click(screen.getByRole('tab', { name: /Finished/ }))
+  const { finishedPanel } = getHistoryPanels()
+
+  // Both rows are in the Finished tab, and both count toward its badge.
+  expect(screen.getByRole('tab', { name: /Finished/ }).textContent).toContain('2')
+
+  // The two endings behind the one "cancelled" status get their own groups.
+  // The list order is Completed, Cancelled, Withdrawn, Denied, so the poster's
+  // cancellation lands in the group before the requestor's withdrawal.
+  const headings = within(finishedPanel).getAllByRole('heading', { level: 3 })
+  const headingTexts = headings.map((heading) => heading.textContent)
+  expect(headingTexts).toEqual(['Completed', 'Cancelled', 'Withdrawn', 'Denied'])
+
+  const rows = within(finishedPanel).getAllByRole('listitem')
+  expect(rows.length).toBe(2)
+  expect(rows[0].textContent).toContain('Cancelled One')
+  expect(rows[1].textContent).toContain('Withdrawn One')
+
+  // Each row's status line names its own ending, not the raw claim status.
+  expect(rows[0].textContent).toContain('Cancelled')
+  expect(rows[1].textContent).toContain('Withdrawn')
+  expect(rows[1].textContent).not.toContain('Cancelled')
+})
+
+test('a completed history row offers the review link, worded by side', async () => {
+  setLoggedIn()
+  const body = makeEmptyHistory()
+  // The member is the recipient here, so the review goes to the poster, whose
+  // name the row already carries as the other party.
+  body.completed = [makeHistoryItem('f-completed', 'Completed One', 'completed', 'recipient')]
+  installDashboardFetch({ history: () => makeFakeResponse(true, 200, body) })
+
+  renderDashboard()
+
+  await screen.findByRole('tab', { name: /Needs you/ })
+  fireEvent.click(screen.getByRole('tab', { name: /Finished/ }))
+  const { finishedPanel } = getHistoryPanels()
+
+  // US-20: the member has not reviewed this exchange yet, so the link invites
+  // a first review and points at the shared /review screen.
+  const reviewLink = within(finishedPanel).getByRole('link', {
+    name: 'Leave a Review for Pat',
+  })
+  expect(reviewLink.getAttribute('href')).toBe('/review?claim=f-completed')
+})
+
+test('a completed history row already reviewed offers the edit wording', async () => {
+  setLoggedIn()
+  const body = makeEmptyHistory()
+  const completedItem = makeHistoryItem('f-completed', 'Completed One', 'completed', 'poster')
+  const reviewedItem = { ...completedItem, reviewed_by_me: true }
+  body.completed = [reviewedItem]
+  installDashboardFetch({ history: () => makeFakeResponse(true, 200, body) })
+
+  renderDashboard()
+
+  await screen.findByRole('tab', { name: /Needs you/ })
+  fireEvent.click(screen.getByRole('tab', { name: /Finished/ }))
+  const { finishedPanel } = getHistoryPanels()
+
+  // The same link now opens the pre-filled edit form, so the label says so.
+  const editLink = within(finishedPanel).getByRole('link', {
+    name: 'Edit Your Review for Pat',
+  })
+  expect(editLink.getAttribute('href')).toBe('/review?claim=f-completed')
+  expect(within(finishedPanel).queryByRole('link', { name: /Leave a Review/ })).toBeNull()
 })
 
 test('an empty subheading still shows its empty note next to one with rows', async () => {
@@ -1253,7 +1484,7 @@ test('an incoming request row shows the requestor rating chip', async () => {
   // The rating sits inline in the requestor's own row line, with no count
   // shown.
   const bobLine = await screen.findByText('Bob requested 2')
-  const chip = screen.getByRole('button', {
+  const chip = screen.getByRole('link', {
     name: "View the reviews behind this member's rating as a requestor",
   })
   expect(chip.textContent).toBe('(★ 4.5 requestor rating)')
@@ -1272,5 +1503,5 @@ test('an incoming request row says no rating for an unrated requestor', async ()
   expect(await screen.findByText('Bob requested 2')).toBeTruthy()
   expect(screen.getByText('(no requestor rating)')).toBeTruthy()
   expect(screen.queryByText(/★/)).toBeNull()
-  expect(screen.queryByRole('button', { name: /View the reviews/ })).toBeNull()
+  expect(screen.queryByRole('link', { name: /View the reviews/ })).toBeNull()
 })

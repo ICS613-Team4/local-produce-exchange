@@ -273,7 +273,7 @@ test('creates a claim with a POST, the quantity body, and the member id header',
 })
 
 test('create claim maps a 409 duplicate response into the result object', async () => {
-  const responseBody = { detail: 'You have already made a request on this listing.' }
+  const responseBody = { detail: 'You already have an open request on this listing.' }
   vi.stubGlobal('fetch', async () => {
     return makeFakeResponse(false, 409, JSON.stringify(responseBody))
   })

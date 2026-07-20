@@ -9,6 +9,18 @@ export const authTimeoutMilliseconds = 3000
 // a literal would fail silently: the listener would just never run.
 export const authStateChangedEventName = "auth-state-changed"
 
+// Clear the stored login and tell the rest of the app. Call this when an API
+// call comes back 401, which means the stored member id is missing, malformed,
+// or unknown. RequireAuth listens for the event and shows the log-in message,
+// and the nav listens and flips to the logged-out links, so a caller does not
+// need to render anything itself.
+export function clearStoredLogin() {
+  window.localStorage.removeItem('memberId')
+  window.localStorage.removeItem('memberName')
+  window.localStorage.removeItem('memberEmail')
+  window.dispatchEvent(new Event(authStateChangedEventName))
+}
+
 export type AuthResult = {
   ok: boolean
   status: number

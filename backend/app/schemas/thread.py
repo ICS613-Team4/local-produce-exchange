@@ -49,3 +49,7 @@ class ThreadResponse(BaseModel):
     requested_quantity: Optional[int] = None
     approved_quantity: Optional[int] = None
     photos: list[ListingPhotoRef] = Field(default_factory=list)
+    # True when the viewer has already written their review of the other party
+    # on this exchange, so the completed banner's link can say "Edit Your
+    # Review" instead of "Leave a Review". Only a completed claim can be true.
+    reviewed_by_me: bool = False

@@ -27,7 +27,8 @@ function ShowsListingId() {
 }
 
 // Renders the create page plus the detail stand-in (the success target) and a
-// stand-in login route (the redirect-guard target).
+// stand-in login route, which the logged-in test uses to prove the page shows
+// the form instead of sending the member to /login.
 function renderCreatePage() {
   render(
     <MemoryRouter initialEntries={['/listings/create']}>
@@ -315,14 +316,6 @@ test('shows a fallback message when the error body has no detail', async () => {
 
   const errorArea = await screen.findByRole('alert')
   expect(errorArea.textContent).toBe('Could not create the listing (HTTP 500).')
-})
-
-test('redirects to login when no member is logged in', () => {
-  // localStorage has no memberId, so the guard sends the visitor to login.
-  renderCreatePage()
-
-  expect(screen.getByText('login page')).toBeTruthy()
-  expect(screen.queryByRole('heading', { name: 'Create a listing' })).toBeNull()
 })
 
 test('renders the form when a member is logged in', () => {

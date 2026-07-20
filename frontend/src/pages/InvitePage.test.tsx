@@ -113,14 +113,6 @@ test('shows the backend error message on a failed create', async () => {
   expect(errorArea.textContent).toBe('Your account is suspended, so you cannot create invites.')
 })
 
-test('shows a please-log-in message and no create button when not logged in', () => {
-  // localStorage has no memberId, so the page treats this as not logged in.
-  renderInvitePage()
-
-  expect(screen.getByText('Please log in to create an invite.')).toBeTruthy()
-  expect(screen.queryByRole('button', { name: 'Create an invite' })).toBeNull()
-})
-
 test('shows the transport error message when the request times out', async () => {
   window.localStorage.setItem('memberId', 'member-123')
   vi.stubGlobal('fetch', async () => {

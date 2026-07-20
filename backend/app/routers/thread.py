@@ -22,6 +22,7 @@ from app.models.claim import Claim
 from app.models.listing import Listing
 from app.models.listing_photo import ListingPhoto
 from app.models.member import Member
+from app.models.review import Review
 from app.models.thread import Message, MessageThread
 from app.notifications import create_notification
 from app.schemas.listing import ListingPhotoRef
@@ -227,6 +228,26 @@ def get_thread_for_claim(
         pickup_start = listing.pickup_window.lower
         pickup_end = listing.pickup_window.upper
 
+    # Whether the viewer has already reviewed this exchange, so the completed
+    # banner's link can say "Edit Your Review" instead of "Leave a Review".
+    # Same one-query lookup the my-requests endpoint runs, and only a completed
+    # claim can carry a review, so the other statuses skip the query.
+    reviewed_by_me = False
+    if claim.status == "completed":
+        try:
+            existing_review = session.scalars(
+                select(Review)
+                .where(Review.claim_id == claim.id)
+                .where(Review.reviewer_id == acting_member.id)
+            ).first()
+            if existing_review is not None:
+                reviewed_by_me = True
+        except Exception as error:
+            # A lookup failure leaves the label at "Leave a Review" rather than
+            # failing the whole thread read; the review form itself still
+            # refuses a second review.
+            logger.error("Thread: loading the viewer's review failed: %s", error)
+
     return ThreadResponse(
         id=str(thread.id),
         claim_id=str(thread.claim_id),
@@ -245,6 +266,7 @@ def get_thread_for_claim(
         requested_quantity=claim.requested_quantity,
         approved_quantity=claim.approved_quantity,
         photos=photos,
+        reviewed_by_me=reviewed_by_me,
     )
 
 
@@ -272,6 +294,15 @@ def send_message_to_thread(
         raise HTTPException(
             status_code=409,
             detail="This exchange was cancelled, so its thread is locked.",
+        )
+
+    # A denied request never became an exchange, so its thread is locked too.
+    # The poster turning the request down ends the conversation; reading stays
+    # open as history, but neither party can send anything new.
+    if claim.status == "denied":
+        raise HTTPException(
+            status_code=409,
+            detail="This request was denied, so its thread is locked.",
         )
 
     thread = _get_or_create_thread(claim_id, session)

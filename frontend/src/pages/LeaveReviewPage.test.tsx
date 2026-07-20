@@ -93,20 +93,7 @@ function makeDisabledContext(): ReviewContext {
   return context
 }
 
-// ── not logged in / no claim ─────────────────────────────────────────────────
-
-test('shows the logged-out line and calls no service without a member id', () => {
-  let fetchCallCount = 0
-  vi.stubGlobal('fetch', async () => {
-    fetchCallCount = fetchCallCount + 1
-    return makeFakeResponse(true, 200, makeRecipientContext())
-  })
-
-  renderPage()
-
-  expect(screen.getByRole('alert').textContent).toContain('logged in')
-  expect(fetchCallCount).toBe(0)
-})
+// ── no claim ─────────────────────────────────────────────────────────────────
 
 test('shows the no-exchange line and calls no service without a claim param', () => {
   window.localStorage.setItem('memberId', 'member-1')
@@ -435,4 +422,160 @@ test('the title reads Review Saved after a save', async () => {
 
   await waitFor(() => screen.getByText('Thanks. Your review has been saved.'))
   expect(screen.getByRole('heading', { level: 1, name: 'Review Saved' })).toBeTruthy()
+})
+
+// ── deleting your own review (Rule 4) ────────────────────────────────────────
+
+// A 204 comes back with no body at all, which the JSON helper above cannot
+// build.
+function makeEmptyResponse(status: number): FakeResponse {
+  return { ok: true, status: status, text: async () => '' }
+}
+
+test('the create form offers no delete button', async () => {
+  window.localStorage.setItem('memberId', 'member-1')
+  vi.stubGlobal('fetch', async () => makeFakeResponse(true, 200, makeRecipientContext()))
+
+  renderPage()
+
+  await waitFor(() => screen.getByText('Fresh Manoa Lettuce'))
+  expect(screen.queryByRole('button', { name: 'Delete My Review' })).toBeNull()
+})
+
+test('the frozen panel offers no delete button', async () => {
+  window.localStorage.setItem('memberId', 'member-1')
+  vi.stubGlobal('fetch', async () => makeFakeResponse(true, 200, makeDisabledContext()))
+
+  renderPage()
+
+  await waitFor(() => screen.getByRole('alert'))
+  expect(screen.queryByRole('button', { name: 'Delete My Review' })).toBeNull()
+})
+
+test('saying no at the confirm dialog leaves the review alone', async () => {
+  window.localStorage.setItem('memberId', 'member-1')
+  let deleteCallCount = 0
+  vi.stubGlobal('fetch', async (_url: string | URL | Request, options: RequestInit | undefined) => {
+    if (options !== undefined && options.method === 'DELETE') {
+      deleteCallCount = deleteCallCount + 1
+      return makeEmptyResponse(204)
+    }
+    return makeFakeResponse(true, 200, makeEditableContext())
+  })
+  vi.stubGlobal('confirm', () => false)
+
+  renderPage()
+
+  await waitFor(() => screen.getByRole('heading', { name: 'Edit Your Review' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Delete My Review' }))
+
+  await waitFor(() => screen.getByRole('button', { name: 'Save Changes' }))
+  expect(deleteCallCount).toBe(0)
+  expect(screen.getByRole('heading', { level: 1, name: 'Edit Your Review' })).toBeTruthy()
+})
+
+test('the edit form deletes through DELETE and confirms it', async () => {
+  window.localStorage.setItem('memberId', 'member-1')
+  let deleteUrl = ''
+  let deleteCallCount = 0
+  vi.stubGlobal('fetch', async (url: string | URL | Request, options: RequestInit | undefined) => {
+    if (options !== undefined && options.method === 'DELETE') {
+      deleteUrl = String(url)
+      deleteCallCount = deleteCallCount + 1
+      return makeEmptyResponse(204)
+    }
+    // Before the delete the exchange has the caller's review; afterwards the
+    // context comes back empty, the way the backend answers once the row is
+    // gone.
+    if (deleteCallCount === 0) {
+      return makeFakeResponse(true, 200, makeEditableContext())
+    }
+    return makeFakeResponse(true, 200, makeRecipientContext())
+  })
+  vi.stubGlobal('confirm', () => true)
+
+  renderPage()
+
+  await waitFor(() => screen.getByRole('heading', { name: 'Edit Your Review' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Delete My Review' }))
+
+  await waitFor(() => screen.getByText('Your review has been deleted.'))
+  expect(deleteUrl).toBe('/api/claims/claim-1/review')
+  expect(deleteCallCount).toBe(1)
+  expect(screen.getByRole('heading', { level: 1, name: 'Review Deleted' })).toBeTruthy()
+
+  // The way back to an empty form, since the member may write a new review.
+  fireEvent.click(screen.getByRole('button', { name: 'Write a new review' }))
+  await waitFor(() => screen.getByRole('button', { name: 'Submit Review' }))
+  expect(screen.queryByRole('button', { name: 'Delete My Review' })).toBeNull()
+})
+
+test('a double click on delete sends one request', async () => {
+  window.localStorage.setItem('memberId', 'member-1')
+  let deleteCallCount = 0
+  vi.stubGlobal('fetch', async (_url: string | URL | Request, options: RequestInit | undefined) => {
+    if (options !== undefined && options.method === 'DELETE') {
+      deleteCallCount = deleteCallCount + 1
+      return makeEmptyResponse(204)
+    }
+    if (deleteCallCount === 0) {
+      return makeFakeResponse(true, 200, makeEditableContext())
+    }
+    return makeFakeResponse(true, 200, makeRecipientContext())
+  })
+  vi.stubGlobal('confirm', () => true)
+
+  renderPage()
+
+  await waitFor(() => screen.getByRole('heading', { name: 'Edit Your Review' }))
+  const deleteButton = screen.getByRole('button', { name: 'Delete My Review' })
+  fireEvent.click(deleteButton)
+  fireEvent.click(deleteButton)
+
+  await waitFor(() => screen.getByText('Your review has been deleted.'))
+  expect(deleteCallCount).toBe(1)
+})
+
+test('a refused delete shows the server sentence and keeps the form', async () => {
+  window.localStorage.setItem('memberId', 'member-1')
+  const refusal = {
+    detail:
+      'An administrator disabled your review for this exchange because it broke ' +
+      'the community rules. You cannot delete it.',
+  }
+  vi.stubGlobal('fetch', async (_url: string | URL | Request, options: RequestInit | undefined) => {
+    if (options !== undefined && options.method === 'DELETE') {
+      return { ok: false, status: 403, text: async () => JSON.stringify(refusal) }
+    }
+    return makeFakeResponse(true, 200, makeEditableContext())
+  })
+  vi.stubGlobal('confirm', () => true)
+
+  renderPage()
+
+  await waitFor(() => screen.getByRole('heading', { name: 'Edit Your Review' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Delete My Review' }))
+
+  await waitFor(() => screen.getByRole('alert'))
+  expect(screen.getByRole('alert').textContent).toContain('You cannot delete it.')
+  expect(screen.getByRole('button', { name: 'Save Changes' })).toBeTruthy()
+})
+
+test('a network failure on delete shows the error message', async () => {
+  window.localStorage.setItem('memberId', 'member-1')
+  vi.stubGlobal('fetch', async (_url: string | URL | Request, options: RequestInit | undefined) => {
+    if (options !== undefined && options.method === 'DELETE') {
+      throw new TypeError('Failed to fetch')
+    }
+    return makeFakeResponse(true, 200, makeEditableContext())
+  })
+  vi.stubGlobal('confirm', () => true)
+
+  renderPage()
+
+  await waitFor(() => screen.getByRole('heading', { name: 'Edit Your Review' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Delete My Review' }))
+
+  await waitFor(() => screen.getByRole('alert'))
+  expect(screen.getByRole('alert').textContent).toContain('Request failed')
 })

@@ -8,13 +8,11 @@ import {
   sendReactivateListingRequest,
 } from '../services/listingService'
 import type { ListingDetail, ListingResult } from '../services/listingService'
-import { authStateChangedEventName } from '../services/authService'
+import { clearStoredLogin } from '../services/authService'
 import { formatTimestamp, getLocalTimeZoneNote } from '../utils/formatTimestamp'
 
 // One shared message for the not-logged-in case, declared at module scope so the
 // wording is the same everywhere and it is not a useEffect dependency.
-const notLoggedInMessage = 'You need to be logged in to see this page.'
-
 // "Browse My Listings": every listing the logged-in member owns, active and
 // deactivated, newest first. The owner can deactivate an active listing here.
 // Deactivated listings are shown read-only.
@@ -26,7 +24,7 @@ function MyListingsPage() {
   // memberId is the auth truth: logged in means it is not empty. It lives in
   // state so a stale-session 401 can flip the page to logged-out without a
   // reload, the same as MyRequestsPage.
-  const [memberId, setMemberId] = useState(window.localStorage.getItem('memberId') ?? '')
+  const memberId = window.localStorage.getItem('memberId') ?? ''
 
   // Holds the whole response. null means it has not loaded yet, which doubles as
   // the loading state.
@@ -60,9 +58,6 @@ function MyListingsPage() {
   // whenever reloadCounter changes after a successful status change.
   useEffect(() => {
     latestRequestNumber.current = latestRequestNumber.current + 1
-    if (memberId === '') {
-      return
-    }
     const requestNumber = latestRequestNumber.current
     async function loadMyListings() {
       const loadedResult = await sendGetMyListingsRequest(memberId)
@@ -72,11 +67,7 @@ function MyListingsPage() {
       if (loadedResult.status === 401) {
         // The saved memberId no longer works. Clear the stale credentials exactly
         // like logout, so the nav and the content both fall back to logged-out.
-        window.localStorage.removeItem('memberId')
-        window.localStorage.removeItem('memberName')
-        window.localStorage.removeItem('memberEmail')
-        setMemberId('')
-        window.dispatchEvent(new Event(authStateChangedEventName))
+        clearStoredLogin()
         return
       }
       setResult(loadedResult)
@@ -149,11 +140,7 @@ function MyListingsPage() {
     setDeactivatingId('')
 
     if (deactivateResult.status === 401) {
-      window.localStorage.removeItem('memberId')
-      window.localStorage.removeItem('memberName')
-      window.localStorage.removeItem('memberEmail')
-      setMemberId('')
-      window.dispatchEvent(new Event(authStateChangedEventName))
+      clearStoredLogin()
       return
     }
 
@@ -204,11 +191,7 @@ function MyListingsPage() {
     setReactivatingId('')
 
     if (reactivateResult.status === 401) {
-      window.localStorage.removeItem('memberId')
-      window.localStorage.removeItem('memberName')
-      window.localStorage.removeItem('memberEmail')
-      setMemberId('')
-      window.dispatchEvent(new Event(authStateChangedEventName))
+      clearStoredLogin()
       return
     }
 
@@ -340,13 +323,7 @@ function MyListingsPage() {
 
   // Build the content area with a plain if/else chain, checked in a set order.
   let contentArea
-  if (memberId === '') {
-    contentArea = (
-      <div className="rounded-lg bg-error-bg border border-red-200 px-4 py-3 text-sm text-error" role="alert">
-        {notLoggedInMessage}
-      </div>
-    )
-  } else if (result === null) {
+  if (result === null) {
     contentArea = <p className="text-text-muted text-sm py-8 text-center">Loading your listings...</p>
   } else if (result.errorMessage !== '') {
     contentArea = (

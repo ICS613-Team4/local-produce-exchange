@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link, Navigate } from 'react-router'
+import { Link } from 'react-router'
 
 import { sendBrowseListingsRequest } from '../services/listingService'
 import type { BrowseListingFilters, ListingDetail, ListingResult } from '../services/listingService'
@@ -35,9 +35,6 @@ function BrowsePage() {
   // Load the full active list when the page opens. The request number keeps an
   // older response from replacing a newer one.
   useEffect(() => {
-    if (memberId === '') {
-      return
-    }
     latestRequestNumber.current = latestRequestNumber.current + 1
     const requestNumber = latestRequestNumber.current
     async function loadAllListings() {
@@ -122,12 +119,6 @@ function BrowsePage() {
     setSelectedDietary([])
     setSelectedAllergen([])
     runSearch({})
-  }
-
-  // Not logged in: send the visitor to the login page, the same guard the create
-  // page uses. Returning <Navigate> from render is the correct way.
-  if (memberId === '') {
-    return <Navigate to="/login" replace />
   }
 
   // Build the category dropdown options, with a blank "all categories" first.

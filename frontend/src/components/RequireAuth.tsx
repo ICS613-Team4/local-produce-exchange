@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, Outlet } from 'react-router'
 
-import { authStateChangedEventName } from '../services/authService'
+import { authStateChangedEventName, clearStoredLogin } from '../services/authService'
 import { getMemberProfile } from '../services/memberService'
 
 // Route guard for member-only pages. It wraps a group of routes in App.tsx, so
@@ -15,9 +15,17 @@ import { getMemberProfile } from '../services/memberService'
 //   2. A stored memberId the backend rejects (HTTP 401) -> the id is not a real
 //      member, so log out (clear the stored login) and show the same message.
 // Anything else lets the guarded page render.
+// This guard is the ONLY place that decides whether a member is logged in, and
+// the only place that renders the log-in message. Pages behind it never check
+// again: they read the stored id for the X-Member-Id header and, on a 401, call
+// clearStoredLogin() and return. That dispatches the auth event this component
+// listens for, so the guard blocks the page and the nav flips to its
+// logged-out links at the same moment.
 function RequireAuth() {
-  // Read the stored login once during render. Empty means nobody is logged in.
-  const memberId = window.localStorage.getItem('memberId') ?? ''
+  // The stored login, held in state so a logout partway through the session
+  // takes effect without a navigation or a reload. Empty means nobody is
+  // logged in.
+  const [memberId, setMemberId] = useState(window.localStorage.getItem('memberId') ?? '')
 
   // The guard's state, as a plain string:
   //   "checking" - still asking the backend whether the stored id is valid
@@ -31,6 +39,25 @@ function RequireAuth() {
     }
     return 'checking'
   })
+
+  // Re-read the stored login whenever any code clears it (a 401 anywhere in
+  // the app) or sets it (a fresh login). Same shape as the listener in
+  // Layout.tsx, which flips the nav on the same event.
+  useEffect(function listenForAuthStateChange() {
+    function handleAuthStateChange() {
+      const storedMemberId = window.localStorage.getItem('memberId') ?? ''
+      setMemberId(storedMemberId)
+      if (storedMemberId === '') {
+        // Block right away rather than waiting for the validation effect,
+        // so the page never lingers after the login is gone.
+        setAuthStatus('blocked')
+      }
+    }
+    window.addEventListener(authStateChangedEventName, handleAuthStateChange)
+    return function removeAuthStateListener() {
+      window.removeEventListener(authStateChangedEventName, handleAuthStateChange)
+    }
+  }, [])
 
   useEffect(
     function validateStoredLogin() {
@@ -54,11 +81,10 @@ function RequireAuth() {
         // the shared nav to re-read it so it flips to the logged-out links, and
         // show the message.
         if (result.status === 401) {
-          window.localStorage.removeItem('memberId')
-          window.localStorage.removeItem('memberName')
-          window.localStorage.removeItem('memberEmail')
-          window.dispatchEvent(new Event(authStateChangedEventName))
-          setAuthStatus('blocked')
+          // The same helper every page calls on a 401, so the guard and the
+          // pages clear a login the same way. The event it fires comes back
+          // to the listener above, which blocks the page.
+          clearStoredLogin()
           return
         }
         // Any other answer, including a transient network error, lets the page

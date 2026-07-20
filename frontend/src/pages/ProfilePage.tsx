@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router'
 
 import {
   getMemberProfile,
@@ -17,11 +16,11 @@ function isOwnProfile(profileId: string): boolean {
 }
 
 function ProfilePage() {
-  const memberId = window.localStorage.getItem('memberId')
+  const memberId = window.localStorage.getItem('memberId') ?? ''
 
   const [member, setMember] = useState<MemberData | null>(null)
   // Only load when there is a memberId to fetch; no memberId means nothing to load.
-  const [loading, setLoading] = useState(memberId !== null)
+  const [loading, setLoading] = useState(memberId !== '')
   const [pageError, setPageError] = useState('')
 
   const [editing, setEditing] = useState(false)
@@ -33,10 +32,6 @@ function ProfilePage() {
   const [rawResponseText, setRawResponseText] = useState('')
 
   useEffect(() => {
-    if (memberId === null) {
-      return
-    }
-
     getMemberProfile(memberId).then((result) => {
       setLoading(false)
       if (result.ok) {
@@ -66,7 +61,7 @@ function ProfilePage() {
   async function handleSaveSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
 
-    if (memberId === null || member === null) return
+    if (member === null) return
 
     // Frontend auth check: confirm this is still the member's own profile
     // before sending the request. The backend enforces the same rule.
@@ -125,19 +120,6 @@ function ProfilePage() {
 
   const inputClasses = 'w-full px-4 py-2.5 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-150'
   const labelClasses = 'block text-sm font-medium text-text mb-1.5'
-
-  if (memberId === null) {
-    return (
-      <div className="max-w-lg mx-auto">
-        <div className="bg-surface rounded-xl border border-border p-8 shadow-sm">
-          <h1 className="text-2xl font-bold text-text mb-4">Profile</h1>
-          <p className="text-text-muted">
-            Please <Link to="/login" className="font-medium text-primary-600 hover:text-primary-700">log in</Link> to view your profile.
-          </p>
-        </div>
-      </div>
-    )
-  }
 
   if (loading) {
     return (

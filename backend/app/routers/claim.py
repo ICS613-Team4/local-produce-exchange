@@ -183,18 +183,23 @@ def create_claim(
         )
 
     # ------------------------------------------------------------------
-    # One-request-per-listing check. A member may make only a single request on
-    # a listing, ever. The state of any earlier request does not matter
-    # (requested, approved, denied, or withdrawn): if this member already has any
-    # claim on this listing, a second one is refused with a 409. This is checked
-    # first so the common case gets a clear message; the database race backstop
-    # below covers two requests that slip past this check at the same time.
+    # One-open-request-per-listing check. A member may have only one request in
+    # flight on a listing at a time. "In flight" means the request still has
+    # somewhere to go: it is waiting on the poster (requested), approved and
+    # waiting on the pickup (approved), or picked up and waiting on the poster
+    # to close it out (picked_up). Once a request has finished, whichever way
+    # it ended (completed, cancelled, or denied), it no longer blocks anything
+    # and the member may ask for this listing again. This is checked first so
+    # the common case gets a clear message; the database race backstop below
+    # covers two requests that slip past this check at the same time.
     # ------------------------------------------------------------------
+    open_statuses = ["requested", "approved", "picked_up"]
     try:
         existing = session.scalars(
             select(Claim).where(
                 Claim.listing_id == listing_uuid,
                 Claim.claimant_id == claimant_id,
+                Claim.status.in_(open_statuses),
             )
         ).first()
     except Exception as error:
@@ -210,7 +215,7 @@ def create_claim(
     if existing is not None:
         raise HTTPException(
             status_code=409,
-            detail="You have already made a request on this listing.",
+            detail="You already have an open request on this listing.",
         )
 
     # ------------------------------------------------------------------
@@ -249,12 +254,12 @@ def create_claim(
         # insert. Every claim is inserted as "requested", so the unique index on
         # (listing_id, claimant_id) where status = 'requested' lets only one in
         # and rejects this one. No duplicate row was created; report the same
-        # clean 409 as the duplicate case above instead of a generic 503.
+        # 409 as the open-request case above instead of a generic 503.
         session.rollback()
         logger.info("Duplicate claim insert blocked by the unique index: %s", error)
         raise HTTPException(
             status_code=409,
-            detail="You have already made a request on this listing.",
+            detail="You already have an open request on this listing.",
         )
     except Exception as error:
         session.rollback()
@@ -283,9 +288,11 @@ def get_my_claim_for_listing(
     session: Session = Depends(get_db_session),
 ) -> Optional[ClaimResponse]:
     # The viewer's own request on one listing, whatever its status (requested,
-    # approved, denied, or withdrawn). The listing detail page uses this so a
-    # requester sees their current status across reloads. Returns null (no body
-    # object) when the viewer has not requested this listing.
+    # approved, picked up, completed, denied, or cancelled). The listing detail
+    # page uses this so a requester sees their current status across reloads,
+    # and it names each status honestly, so every timestamp column comes back.
+    # Returns null (no body object) when the viewer has not requested this
+    # listing.
 
     # ------------------------------------------------------------------
     # Active-member gate, the same rule as the other claim endpoints.
@@ -308,13 +315,17 @@ def get_my_claim_for_listing(
     except (ValueError, AttributeError, TypeError):
         return None
 
-    # Load the viewer's claim on this listing. A member may make only one request
-    # per listing ever, so there is at most one row; first() returns it or None.
+    # Load the viewer's claim on this listing. A member who has finished a
+    # request may ask again, so there can be several rows over time: take the
+    # newest, which is the one the listing page should speak about. At most one
+    # of them is open, and an open one is always the newest, so this returns the
+    # open request whenever there is one.
     try:
         claim = session.scalars(
             select(Claim)
             .where(Claim.listing_id == listing_uuid)
             .where(Claim.claimant_id == current_member.id)
+            .order_by(Claim.requested_at.desc(), Claim.id.desc())
         ).first()
     except Exception as error:
         logger.error("Loading the viewer's claim failed: %s", error)
@@ -338,6 +349,8 @@ def get_my_claim_for_listing(
         status=claim.status,
         requested_at=claim.requested_at,
         approved_at=claim.approved_at,
+        picked_up_at=claim.picked_up_at,
+        completed_at=claim.completed_at,
         denied_at=claim.denied_at,
         cancelled_at=claim.cancelled_at,
     )

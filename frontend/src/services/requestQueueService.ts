@@ -165,6 +165,10 @@ export type ExchangeHistoryItem = {
   completed_at: string | null
   cancelled_at: string | null
   denied_at: string | null
+  // True when the caller already reviewed this exchange, so the dashboard's
+  // review link reads "Edit Your Review" instead of "Leave a Review". Only a
+  // completed row can be true. Optional so older cached responses still parse.
+  reviewed_by_me?: boolean
 }
 
 // The exchange-history response: the caller's exchanges grouped by claim
@@ -255,6 +259,8 @@ export type ClaimDecisionResponse = {
   requested_at: string
   approved_at: string | null
   picked_up_at: string | null
+  completed_at: string | null
+  cancelled_at: string | null
   denied_at: string | null
 }
 

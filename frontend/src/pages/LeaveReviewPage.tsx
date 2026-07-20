@@ -2,15 +2,15 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation } from 'react-router'
 
 import {
+  confirmAndDeleteMyReview,
   sendCreateReviewRequest,
   sendEditReviewRequest,
   sendGetReviewContextRequest,
 } from '../services/reviewService'
 import type { ReviewContext } from '../services/reviewService'
-import { authStateChangedEventName } from '../services/authService'
+import { clearStoredLogin } from '../services/authService'
 import { formatTimestamp } from '../utils/formatTimestamp'
 
-const notLoggedInMessage = 'You need to be logged in to leave a review.'
 const REVIEW_BODY_MAX_LENGTH = 1000
 
 // The one sentence shown when an administrator disabled the caller's review.
@@ -70,13 +70,17 @@ type ReviewFormProps = {
   initialBody: string
   lastUpdatedAt: string
   submitting: boolean
+  deleting: boolean
   submitError: string
   onSubmit: (rating: number, body: string) => void
+  onDelete: () => void
 }
 
 // The one form both sides and both modes use (create and edit), so they can
 // never drift apart. Only the initial values, the heading, the button label,
 // and which service call runs on submit differ, and the parent decides those.
+// In edit mode the footer also carries the delete button, so the one place a
+// member can write or change a review is the one place they can remove it.
 function ReviewForm(props: ReviewFormProps) {
   const [rating, setRating] = useState(props.initialRating)
   const [hoverRating, setHoverRating] = useState(0)
@@ -125,12 +129,35 @@ function ReviewForm(props: ReviewFormProps) {
 
   // On the create form the rating starts at 0 (nothing chosen), and submit
   // stays disabled until a star is picked. The server still enforces 1 to 5.
+  // Either request in flight greys both buttons, so a member cannot save and
+  // delete the same review at once.
   let submitDisabled = false
-  if (props.submitting) {
+  if (props.submitting || props.deleting) {
     submitDisabled = true
   }
   if (rating === 0) {
     submitDisabled = true
+  }
+
+  // The delete button belongs to the edit form only: with no saved review
+  // there is nothing to delete. It sits on the left, away from the save
+  // button, so a hurried click does not land on it by accident.
+  let deleteButton = null
+  if (props.isEdit) {
+    let deleteLabel = 'Delete My Review'
+    if (props.deleting) {
+      deleteLabel = 'Deleting...'
+    }
+    deleteButton = (
+      <button
+        type="button"
+        disabled={props.submitting || props.deleting}
+        onClick={props.onDelete}
+        className="px-6 py-2.5 text-sm font-semibold text-error border border-red-200 rounded-lg hover:bg-error-bg transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        {deleteLabel}
+      </button>
+    )
   }
 
   let lastUpdatedLine = null
@@ -183,7 +210,8 @@ function ReviewForm(props: ReviewFormProps) {
               {props.submitError}
             </div>
           )}
-          <div className="flex justify-end mt-3">
+          <div className="flex items-center justify-between gap-3 mt-3">
+            <div>{deleteButton}</div>
             <button
               type="submit"
               disabled={submitDisabled}
@@ -204,7 +232,7 @@ function LeaveReviewPage() {
   const claimId = new URLSearchParams(location.search).get('claim') ?? ''
 
   const latestRequestNumber = useRef(0)
-  const [memberId] = useState(window.localStorage.getItem('memberId') ?? '')
+  const memberId = window.localStorage.getItem('memberId') ?? ''
   const [context, setContext] = useState<ReviewContext | null>(null)
   const [loadError, setLoadError] = useState('')
   const [reloadCounter, setReloadCounter] = useState(0)
@@ -214,11 +242,13 @@ function LeaveReviewPage() {
   const [submitted, setSubmitted] = useState(false)
   const [lastAction, setLastAction] = useState('')
   const submitInFlightRef = useRef(false)
+  const [deleting, setDeleting] = useState(false)
+  const deleteInFlightRef = useRef(false)
 
   // Load the review context whenever the page mounts or a review is saved.
   useEffect(() => {
     latestRequestNumber.current = latestRequestNumber.current + 1
-    if (memberId === '' || claimId === '') {
+    if (claimId === '') {
       return
     }
     const requestNumber = latestRequestNumber.current
@@ -228,10 +258,7 @@ function LeaveReviewPage() {
         return
       }
       if (result.status === 401) {
-        window.localStorage.removeItem('memberId')
-        window.localStorage.removeItem('memberName')
-        window.localStorage.removeItem('memberEmail')
-        window.dispatchEvent(new Event(authStateChangedEventName))
+        clearStoredLogin()
         return
       }
       if (result.errorMessage !== '') {
@@ -303,6 +330,41 @@ function LeaveReviewPage() {
     }
   }
 
+  async function handleDeleteReview() {
+    // The confirm dialog, the request, and the wording of a refusal all live
+    // in confirmAndDeleteMyReview, shared with the delete button on the
+    // request pages, the exchange thread, and the dashboard. This page only
+    // decides what its own screen shows afterwards.
+    //
+    // Three guards against a double click: the ref blocks a second click in
+    // the same tick, the confirm dialog needs a deliberate yes, and the
+    // disabled button covers the time the request is in flight. Past all
+    // three, a repeat delete is answered as another success by the backend.
+    if (deleteInFlightRef.current) {
+      return
+    }
+    deleteInFlightRef.current = true
+    setDeleting(true)
+    setSubmitError('')
+
+    const outcome = await confirmAndDeleteMyReview(memberId, claimId)
+
+    deleteInFlightRef.current = false
+    setDeleting(false)
+
+    if (outcome.cancelled) {
+      return
+    }
+    if (outcome.deleted) {
+      setLastAction('delete')
+      setSubmitted(true)
+      // Reload the context so the page knows the review is gone.
+      setReloadCounter((c) => c + 1)
+      return
+    }
+    setSubmitError(outcome.errorMessage)
+  }
+
   // The subtitle names the other party once the context is loaded.
   let subtitleText = 'Tell other members how this exchange went.'
   if (context !== null) {
@@ -315,6 +377,9 @@ function LeaveReviewPage() {
   let pageTitle = 'Leave a Review'
   if (submitted) {
     pageTitle = 'Review Saved'
+    if (lastAction === 'delete') {
+      pageTitle = 'Review Deleted'
+    }
   } else if (context !== null && context.already_reviewed && context.existing_review !== null) {
     if (context.existing_review.is_disabled) {
       pageTitle = 'Your Review'
@@ -324,13 +389,7 @@ function LeaveReviewPage() {
   }
 
   let content
-  if (memberId === '') {
-    content = (
-      <div className="rounded-lg bg-error-bg border border-red-200 px-4 py-3 text-sm text-error" role="alert">
-        {notLoggedInMessage}
-      </div>
-    )
-  } else if (claimId === '') {
+  if (claimId === '') {
     content = (
       <div className="rounded-lg bg-error-bg border border-red-200 px-4 py-3 text-sm text-error" role="alert">
         No exchange specified. Try navigating here from a request page.
@@ -349,11 +408,36 @@ function LeaveReviewPage() {
     if (lastAction === 'edit') {
       successMessage = 'Your review has been updated.'
     }
+    if (lastAction === 'delete') {
+      successMessage = 'Your review has been deleted.'
+    }
+
+    // After a delete the member can start over on this same page, so the
+    // confirmation offers a way back to the empty form.
+    let writeAgainLine = null
+    if (lastAction === 'delete') {
+      writeAgainLine = (
+        <p className="mt-3">
+          <button
+            type="button"
+            onClick={() => {
+              setSubmitted(false)
+              setLastAction('')
+            }}
+            className="text-sm font-semibold text-primary-600 hover:text-primary-700"
+          >
+            Write a new review
+          </button>
+        </p>
+      )
+    }
+
     content = (
       <div className="bg-surface rounded-xl border border-border p-6 shadow-sm">
         <p role="status" className="text-sm text-text">
           {successMessage}
         </p>
+        {writeAgainLine}
         <p className="mt-3">
           <Link
             to="/dashboard"
@@ -397,8 +481,10 @@ function LeaveReviewPage() {
         initialBody={context.existing_review.body}
         lastUpdatedAt={context.existing_review.updated_at}
         submitting={submitting}
+        deleting={deleting}
         submitError={submitError}
         onSubmit={handleSubmitReview}
+        onDelete={handleDeleteReview}
       />
     )
   } else {
@@ -410,8 +496,10 @@ function LeaveReviewPage() {
         initialBody=""
         lastUpdatedAt=""
         submitting={submitting}
+        deleting={deleting}
         submitError={submitError}
         onSubmit={handleSubmitReview}
+        onDelete={handleDeleteReview}
       />
     )
   }

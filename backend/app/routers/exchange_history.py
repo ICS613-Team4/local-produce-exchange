@@ -19,6 +19,7 @@ from app.dependencies import get_current_member
 from app.models.claim import Claim
 from app.models.listing import Listing
 from app.models.member import Member
+from app.models.review import Review
 from app.schemas.exchange_history import ExchangeHistoryItem, ExchangeHistoryResponse
 
 logger = logging.getLogger(__name__)
@@ -26,11 +27,18 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def build_exchange_history_items(claims, member_id):
+def build_exchange_history_items(claims, member_id, reviewed_claim_ids=None):
     # Turn claim rows into ExchangeHistoryItem rows. Each claim's listing and
     # names are read through the relationships, the same way the my-requests
     # endpoint builds its rows. A claim whose listing is missing is skipped
     # rather than failing the whole response.
+    #
+    # reviewed_claim_ids holds the claim ids the caller has already reviewed.
+    # Only the completed group passes it; the other groups leave it out, so
+    # their rows come back with reviewed_by_me False.
+    if reviewed_claim_ids is None:
+        reviewed_claim_ids = set()
+
     items = []
     for claim_row in claims:
         listing_row = claim_row.listing
@@ -69,6 +77,7 @@ def build_exchange_history_items(claims, member_id):
                 completed_at=claim_row.completed_at,
                 cancelled_at=claim_row.cancelled_at,
                 denied_at=claim_row.denied_at,
+                reviewed_by_me=claim_row.id in reviewed_claim_ids,
             )
         )
     return items
@@ -143,10 +152,29 @@ def get_exchange_history(
             .order_by(Claim.denied_at.desc(), Claim.id.desc())
         ).all()
 
+        # Which completed exchanges the caller has already reviewed, so the
+        # dashboard's review link can say "Edit Your Review" instead of "Leave
+        # a Review". Same one-query lookup the my-requests endpoint runs. Only
+        # a completed claim can carry a review, so only those ids are checked.
+        completed_claim_ids = []
+        for claim_row in completed_claims:
+            completed_claim_ids.append(claim_row.id)
+        reviewed_claim_ids = set()
+        if completed_claim_ids:
+            reviewed_rows = session.scalars(
+                select(Review.claim_id)
+                .where(Review.claim_id.in_(completed_claim_ids))
+                .where(Review.reviewer_id == member_id)
+            ).all()
+            for reviewed_claim_id in reviewed_rows:
+                reviewed_claim_ids.add(reviewed_claim_id)
+
         requested_items = build_exchange_history_items(requested_claims, member_id)
         approved_items = build_exchange_history_items(approved_claims, member_id)
         picked_up_items = build_exchange_history_items(picked_up_claims, member_id)
-        completed_items = build_exchange_history_items(completed_claims, member_id)
+        completed_items = build_exchange_history_items(
+            completed_claims, member_id, reviewed_claim_ids
+        )
         cancelled_items = build_exchange_history_items(cancelled_claims, member_id)
         denied_items = build_exchange_history_items(denied_claims, member_id)
     except Exception as error:

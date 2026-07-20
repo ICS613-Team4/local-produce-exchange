@@ -1,7 +1,15 @@
+// @vitest-environment jsdom
+//
+// jsdom, not the default environment: clearStoredLogin reads window,
+// localStorage, and dispatches a DOM event. The fetch-based tests below stub
+// fetch themselves, so they run the same either way.
+
 import { afterEach, expect, test, vi } from 'vitest'
 
 import {
+  authStateChangedEventName,
   authTimeoutMilliseconds,
+  clearStoredLogin,
   sendLoginRequest,
   sendLogoutRequest,
   sendRegisterRequest,
@@ -255,3 +263,42 @@ test('returns a timeout message when logout fetch times out', async () => {
   )
 })
 
+
+// ── clearStoredLogin ─────────────────────────────────────────────────────────
+
+test('clearStoredLogin removes the three stored keys and fires the event once', () => {
+  window.localStorage.setItem('memberId', 'member-1')
+  window.localStorage.setItem('memberName', 'Bob Baker')
+  window.localStorage.setItem('memberEmail', 'bob@example.com')
+
+  let eventCount = 0
+  function handleAuthEvent() {
+    eventCount = eventCount + 1
+  }
+  window.addEventListener(authStateChangedEventName, handleAuthEvent)
+
+  clearStoredLogin()
+
+  expect(window.localStorage.getItem('memberId')).toBeNull()
+  expect(window.localStorage.getItem('memberName')).toBeNull()
+  expect(window.localStorage.getItem('memberEmail')).toBeNull()
+  expect(eventCount).toBe(1)
+
+  window.removeEventListener(authStateChangedEventName, handleAuthEvent)
+})
+
+test('clearStoredLogin still fires the event when nothing was stored', () => {
+  window.localStorage.clear()
+
+  let eventCount = 0
+  function handleAuthEvent() {
+    eventCount = eventCount + 1
+  }
+  window.addEventListener(authStateChangedEventName, handleAuthEvent)
+
+  clearStoredLogin()
+
+  expect(eventCount).toBe(1)
+
+  window.removeEventListener(authStateChangedEventName, handleAuthEvent)
+})

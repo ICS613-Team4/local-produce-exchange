@@ -313,6 +313,42 @@ test('the review link on a completed request points at the shared review page', 
   expect(reviewLink.getAttribute('href')).toBe('/review?claim=c3')
 })
 
+test('a completed request also links to the reviews for that exchange', async () => {
+  setLoggedIn()
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, makeCompletedBody())
+  })
+
+  renderRequestsPage('/requests')
+
+  // US-21: reading the reviews sits beside writing one.
+  const viewLink = await screen.findByRole('link', { name: 'View Reviews' })
+  expect(viewLink.getAttribute('href')).toBe('/exchange-reviews?claim=c3')
+})
+
+test('a row stacks on a phone and its controls wrap', async () => {
+  // A completed row carries three controls (write, read, delete), which do not
+  // fit one line on a narrow screen. The row must stack and the controls must
+  // wrap, or the page scrolls sideways. Found in a browser walk at 375px wide,
+  // where the delete button hung 100px past the right edge.
+  setLoggedIn()
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, makeCompletedBody())
+  })
+
+  renderRequestsPage('/requests')
+
+  const viewLink = await screen.findByRole('link', { name: 'View Reviews' })
+  const controls = viewLink.parentElement as HTMLElement
+  expect(controls.className).toContain('flex-wrap')
+  // No unconditional shrink-0: that is what pushed the controls off screen.
+  expect(controls.className).not.toContain(' shrink-0')
+
+  const row = controls.parentElement as HTMLElement
+  expect(row.className).toContain('flex-col')
+  expect(row.className).toContain('sm:flex-row')
+})
+
 test('a deactivated listing group is marked in its heading', async () => {
   setLoggedIn()
   const body = makePickedUpBody()
@@ -679,8 +715,11 @@ test('a stale-session 401 clears the credentials and fires the auth event', asyn
 
   renderRequestsPage('/requests')
 
-  expect(await screen.findByText('You need to be logged in to see this page.')).toBeTruthy()
-  expect(window.localStorage.getItem('memberId')).toBeNull()
+  // The shared route guard renders the logged-out message now, so the only
+  // thing this page owns is clearing the stored login and firing the event.
+  await waitFor(() => {
+    expect(window.localStorage.getItem('memberId')).toBeNull()
+  })
   expect(window.localStorage.getItem('memberName')).toBeNull()
   expect(window.localStorage.getItem('memberEmail')).toBeNull()
   expect(authEventFired).toBe(true)
@@ -722,20 +761,6 @@ test('shows the fallback message on a non-200 failure that carries no detail', a
 
   const alert = await screen.findByRole('alert')
   expect(alert.textContent).toBe('Could not load your requests. Please try again.')
-})
-
-test('renders the not-logged-in message and does not fetch when logged out', async () => {
-  let fetchCallCount = 0
-  vi.stubGlobal('fetch', async () => {
-    fetchCallCount = fetchCallCount + 1
-    return makeFakeResponse(true, 200, { groups: [] })
-  })
-
-  renderRequestsPage('/requests')
-
-  expect(screen.getByText('You need to be logged in to see this page.')).toBeTruthy()
-  await waitForStateUpdates()
-  expect(fetchCallCount).toBe(0)
 })
 
 test('drops a late response after the listing filter changes', async () => {
@@ -885,7 +910,7 @@ test('a request row shows the requestor rating inline after the name', async () 
 
   // Bob's rating sits inline in his own row line, with no count shown.
   const bobName = await screen.findByText('Bob Baker')
-  const chip = screen.getByRole('button', {
+  const chip = screen.getByRole('link', {
     name: "View the reviews behind this member's rating as a requestor",
   })
   expect(chip.textContent).toBe('(★ 4.3 requestor rating)')

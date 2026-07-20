@@ -285,6 +285,58 @@ def test_create_claim_rejects_duplicate_open_claim(db_session):
     assert count_claims(db_session) == 1
 
 
+def test_create_claim_rejects_a_second_claim_while_one_is_in_flight(db_session):
+    """Approved and picked-up requests still count as in flight."""
+    # A request is only finished once it is completed, cancelled, or denied.
+    # Until then the member has one going, so a second one is refused.
+    poster = insert_member(db_session, email="poster@example.com", name="Poster")
+    claimant = insert_member(db_session, email="claimant@example.com")
+
+    for open_status in ["approved", "picked_up"]:
+        listing_id = insert_listing(db_session, poster, remaining_quantity=10)
+        claim_response = create_claim(str(listing_id), make_payload(2), claimant, db_session)
+        claim = db_session.scalars(
+            select(Claim).where(Claim.id == uuid.UUID(claim_response.id))
+        ).first()
+        claim.status = open_status
+        db_session.commit()
+
+        with pytest.raises(HTTPException) as raised:
+            create_claim(str(listing_id), make_payload(1), claimant, db_session)
+
+        assert raised.value.status_code == 409
+        assert "open request" in raised.value.detail.lower()
+
+
+def test_create_claim_allows_a_new_request_after_the_last_one_finished(db_session):
+    """A finished request does not block the next one."""
+    # Each of the three endings (completed, cancelled, denied) leaves the
+    # member free to ask for the same listing again.
+    poster = insert_member(db_session, email="poster@example.com", name="Poster")
+    claimant = insert_member(db_session, email="claimant@example.com")
+
+    for finished_status in ["completed", "cancelled", "denied"]:
+        listing_id = insert_listing(db_session, poster, remaining_quantity=10)
+        first_response = create_claim(str(listing_id), make_payload(2), claimant, db_session)
+        first_claim = db_session.scalars(
+            select(Claim).where(Claim.id == uuid.UUID(first_response.id))
+        ).first()
+        first_claim.status = finished_status
+        db_session.commit()
+
+        second_response = create_claim(str(listing_id), make_payload(3), claimant, db_session)
+
+        assert second_response.status == "requested"
+        assert second_response.id != first_response.id
+        # Both rows are kept: the finished one stays as history.
+        both = db_session.scalars(
+            select(Claim)
+            .where(Claim.listing_id == listing_id)
+            .where(Claim.claimant_id == claimant.id)
+        ).all()
+        assert len(both) == 2
+
+
 # --- Scenario 5: suspended member ------------------------------------------
 
 
@@ -407,10 +459,12 @@ def test_create_claim_route_is_wired_with_201_status():
     assert found_status == 201
 
 
-# --- one request per listing, whatever the earlier state ---------------------
-# A member may make only a single request on a listing, ever. The earlier
-# request's state does not matter: approved, denied, or withdrawn all block a
-# second request, so no duplicate ever enters the queue.
+# --- one OPEN request per listing --------------------------------------------
+# A member may have only one request in flight on a listing at a time. An
+# in-flight request (requested, approved, or picked_up) blocks a new one. A
+# request that has finished (completed, cancelled, or denied) blocks nothing:
+# the member may ask for the same listing again, and the finished row stays as
+# history next to the new request.
 
 
 def test_create_claim_rejects_second_request_after_approved(db_session):
@@ -429,32 +483,31 @@ def test_create_claim_rejects_second_request_after_approved(db_session):
     assert count_claims(db_session) == 1
 
 
-def test_create_claim_rejects_second_request_after_denied(db_session):
-    """A denied earlier request blocks a new request from the same member."""
+def test_create_claim_allows_a_new_request_after_denied(db_session):
+    """A denied earlier request is finished, so it blocks nothing."""
     poster = insert_member(db_session, email="poster@example.com", name="Poster")
     listing_id = insert_listing(db_session, poster, remaining_quantity=10)
     claimant = insert_member(db_session, email="claimant@example.com")
     insert_claim(db_session, listing_id, claimant, quantity=2, status="denied")
 
-    with pytest.raises(HTTPException) as raised:
-        create_claim(str(listing_id), make_payload(3), claimant, db_session)
+    result = create_claim(str(listing_id), make_payload(3), claimant, db_session)
 
-    assert raised.value.status_code == 409
-    assert count_claims(db_session) == 1
+    assert result.status == "requested"
+    # The denied row stays as history alongside the new request.
+    assert count_claims(db_session) == 2
 
 
-def test_create_claim_rejects_second_request_after_withdrawn(db_session):
-    """A withdrawn (cancelled) earlier request still blocks a new request."""
+def test_create_claim_allows_a_new_request_after_withdrawn(db_session):
+    """A withdrawn (cancelled) earlier request is finished too."""
     poster = insert_member(db_session, email="poster@example.com", name="Poster")
     listing_id = insert_listing(db_session, poster, remaining_quantity=10)
     claimant = insert_member(db_session, email="claimant@example.com")
     insert_claim(db_session, listing_id, claimant, quantity=2, status="cancelled")
 
-    with pytest.raises(HTTPException) as raised:
-        create_claim(str(listing_id), make_payload(3), claimant, db_session)
+    result = create_claim(str(listing_id), make_payload(3), claimant, db_session)
 
-    assert raised.value.status_code == 409
-    assert count_claims(db_session) == 1
+    assert result.status == "requested"
+    assert count_claims(db_session) == 2
 
 
 def test_create_claim_allows_different_members_on_same_listing(db_session):

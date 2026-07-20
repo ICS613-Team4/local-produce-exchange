@@ -80,12 +80,6 @@ async function waitForStateUpdates() {
   })
 }
 
-test('shows the not-logged-in message when logged out', () => {
-  renderMyListings()
-
-  expect(screen.getByText('You need to be logged in to see this page.')).toBeTruthy()
-})
-
 test('shows the loading message before the listings arrive', () => {
   setLoggedIn()
   // A fetch that never resolves keeps the page in its loading state.
@@ -301,7 +295,7 @@ test('a reactivate transport error shows its message and keeps the row deactivat
   expect(screen.queryByRole('link', { name: 'Banana' })).toBeNull()
 })
 
-test('a 401 on reactivate clears the credentials and shows the logged-out message', async () => {
+test('a 401 on reactivate clears the credentials', async () => {
   setLoggedIn()
   vi.stubGlobal('confirm', () => {
     return true
@@ -319,8 +313,11 @@ test('a 401 on reactivate clears the credentials and shows the logged-out messag
   const activateButton = await screen.findByRole('button', { name: 'Activate listing' })
   fireEvent.click(activateButton)
 
-  expect(await screen.findByText('You need to be logged in to see this page.')).toBeTruthy()
-  expect(window.localStorage.getItem('memberId')).toBeNull()
+  // The shared route guard renders the logged-out message now, so the only
+  // thing this page owns is clearing the stored login.
+  await waitFor(() => {
+    expect(window.localStorage.getItem('memberId')).toBeNull()
+  })
 })
 
 test('an admin-deactivated row shows no edit, no buttons, and the explanation', async () => {
@@ -468,7 +465,7 @@ test('cancelling the deactivate confirm does not call the endpoint', async () =>
   expect(deactivateCalled).toBe(false)
 })
 
-test('a 401 on deactivate clears the credentials and shows the logged-out message', async () => {
+test('a 401 on deactivate clears the credentials', async () => {
   setLoggedIn()
   vi.stubGlobal('confirm', () => {
     return true
@@ -486,6 +483,9 @@ test('a 401 on deactivate clears the credentials and shows the logged-out messag
   const deactivateButton = await screen.findByRole('button', { name: 'Deactivate' })
   fireEvent.click(deactivateButton)
 
-  expect(await screen.findByText('You need to be logged in to see this page.')).toBeTruthy()
-  expect(window.localStorage.getItem('memberId')).toBeNull()
+  // The shared route guard renders the logged-out message now, so the only
+  // thing this page owns is clearing the stored login.
+  await waitFor(() => {
+    expect(window.localStorage.getItem('memberId')).toBeNull()
+  })
 })

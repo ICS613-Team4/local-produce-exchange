@@ -108,12 +108,6 @@ function setLoggedIn() {
   window.localStorage.setItem('memberEmail', 'dave@example.com')
 }
 
-async function waitForStateUpdates() {
-  await new Promise<void>((resolve) => {
-    setTimeout(resolve, 0)
-  })
-}
-
 test('renders Pending, Approved, and Denied sections with their requests', async () => {
   setLoggedIn()
   vi.stubGlobal('fetch', async () => {
@@ -317,6 +311,40 @@ test('the review link on a completed exchange points at the shared review page',
   expect(reviewLink.getAttribute('href')).toBe('/review?claim=completed-1')
 })
 
+test('a completed row also links to the reviews for that exchange', async () => {
+  setLoggedIn()
+  const body = {
+    pending: [],
+    approved: [],
+    completed: [
+      {
+        id: 'completed-1',
+        listing_id: 'l2',
+        listing_title: 'Bananas',
+        owner_name: 'Bob Baker',
+        requested_quantity: 5,
+        approved_quantity: 2,
+        status: 'completed',
+        requested_at: '2026-07-01T08:00:00.000Z',
+        approved_at: '2026-07-02T10:00:00.000Z',
+        picked_up_at: '2026-07-03T09:00:00.000Z',
+        completed_at: '2026-07-04T09:00:00.000Z',
+        denied_at: null,
+      },
+    ],
+    denied: [],
+  }
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, body)
+  })
+
+  renderMyRequestsPage()
+
+  // US-21: reading the reviews sits beside writing one.
+  const viewLink = await screen.findByRole('link', { name: 'View Reviews' })
+  expect(viewLink.getAttribute('href')).toBe('/exchange-reviews?claim=completed-1')
+})
+
 test('a response without a completed list treats the section as empty', async () => {
   setLoggedIn()
   vi.stubGlobal('fetch', async () => {
@@ -454,8 +482,11 @@ test('a stale-session 401 clears the credentials and fires the auth event', asyn
 
   renderMyRequestsPage()
 
-  expect(await screen.findByText('You need to be logged in to see this page.')).toBeTruthy()
-  expect(window.localStorage.getItem('memberId')).toBeNull()
+  // The shared route guard renders the logged-out message now, so the only
+  // thing this page owns is clearing the stored login and firing the event.
+  await waitFor(() => {
+    expect(window.localStorage.getItem('memberId')).toBeNull()
+  })
   expect(window.localStorage.getItem('memberName')).toBeNull()
   expect(window.localStorage.getItem('memberEmail')).toBeNull()
   expect(authEventFired).toBe(true)
@@ -777,20 +808,6 @@ test('clicking Confirm the Pickup calls the pickup endpoint and shows the picked
   // The picked-up row shows its own badge, and the confirm button is gone.
   expect(screen.getByText('Picked up')).toBeTruthy()
   expect(screen.queryByRole('button', { name: 'Confirm the Pickup' })).toBeNull()
-})
-
-test('renders the not-logged-in message and does not fetch when logged out', async () => {
-  let fetchCallCount = 0
-  vi.stubGlobal('fetch', async () => {
-    fetchCallCount = fetchCallCount + 1
-    return makeFakeResponse(true, 200, makeEmptyBody())
-  })
-
-  renderMyRequestsPage()
-
-  expect(screen.getByText('You need to be logged in to see this page.')).toBeTruthy()
-  await waitForStateUpdates()
-  expect(fetchCallCount).toBe(0)
 })
 
 test('a completed exchange the caller reviewed offers the edit label', async () => {

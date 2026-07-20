@@ -57,25 +57,16 @@ function makeListing(id: string, title: string) {
   return listing
 }
 
-// Render the browse page with routes for /browse and /login, so the redirect
-// guard has somewhere to land.
+// Render the browse page on its own route.
 function renderBrowse() {
   render(
     <MemoryRouter initialEntries={['/browse']}>
       <Routes>
         <Route path="/browse" element={<BrowsePage />} />
-        <Route path="/login" element={<p>Login page</p>} />
       </Routes>
     </MemoryRouter>,
   )
 }
-
-test('redirects to the login page when not logged in', () => {
-  // No memberId in localStorage, so the page must send the visitor to /login.
-  renderBrowse()
-
-  expect(screen.getByText('Login page')).toBeTruthy()
-})
 
 test('renders the controls and lists the active listings on open', async () => {
   window.localStorage.setItem('memberId', 'member-123')
@@ -271,7 +262,7 @@ test('a card shows the owner rating chip when the owner has reviews', async () =
 
   await screen.findByRole('link', { name: 'Rated Lemons' })
   // The rating sits inline in the posted-by line itself, with no count shown.
-  const chip = screen.getByRole('button', {
+  const chip = screen.getByRole('link', {
     name: "View the reviews behind this member's rating as a listing owner",
   })
   expect(chip.textContent).toBe('(★ 4.0 listing owner rating)')
@@ -279,7 +270,7 @@ test('a card shows the owner rating chip when the owner has reviews', async () =
   expect(postedLine.contains(chip)).toBe(true)
 })
 
-test('a card says no rating, without a button, for an unrated owner', async () => {
+test('a card says no rating, without a link, for an unrated owner', async () => {
   window.localStorage.setItem('memberId', 'member-123')
   vi.stubGlobal('fetch', async () => {
     return makeFakeResponse(true, 200, [makeListing('l1', 'Unrated Kale')])
@@ -292,5 +283,5 @@ test('a card says no rating, without a button, for an unrated owner', async () =
   expect(screen.getByText('Posted by Olivia Owner')).toBeTruthy()
   expect(screen.getByText('(no listing owner rating)')).toBeTruthy()
   expect(screen.queryByText(/★/)).toBeNull()
-  expect(screen.queryByRole('button', { name: /View the reviews/ })).toBeNull()
+  expect(screen.queryByRole('link', { name: /View the reviews/ })).toBeNull()
 })
