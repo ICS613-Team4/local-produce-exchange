@@ -506,6 +506,68 @@ test('a Pending request shows a Withdraw Request button', async () => {
   expect(pendingRow?.querySelector('button')).toBeTruthy()
 })
 
+test('only an approved request shows a Cancel request button', async () => {
+  setLoggedIn()
+  const standardBody = makeMyRequestsBody()
+  const body = {
+    pending: standardBody.pending,
+    approved: [
+      standardBody.approved[0],
+      {
+        id: 'picked-1',
+        listing_id: 'l4',
+        listing_title: 'Picked Bananas',
+        owner_name: 'Bob Baker',
+        requested_quantity: 1,
+        approved_quantity: 1,
+        status: 'picked_up',
+        requested_at: '2026-07-01T08:00:00.000Z',
+        approved_at: '2026-07-02T10:00:00.000Z',
+        picked_up_at: '2026-07-03T10:00:00.000Z',
+        denied_at: null,
+      },
+    ],
+    denied: standardBody.denied,
+    withdrawn: [
+      {
+        id: 'withdrawn-1',
+        listing_id: 'l5',
+        listing_title: 'Withdrawn Apples',
+        owner_name: 'Carol Chen',
+        requested_quantity: 1,
+        approved_quantity: null,
+        status: 'cancelled',
+        requested_at: '2026-07-01T08:00:00.000Z',
+        approved_at: null,
+        picked_up_at: null,
+        denied_at: null,
+        cancelled_at: '2026-07-03T11:00:00.000Z',
+      },
+    ],
+  }
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, body)
+  })
+
+  renderMyRequestsPage()
+
+  const cancelButtons = await screen.findAllByRole('button', { name: 'Cancel request' })
+  expect(cancelButtons.length).toBe(1)
+  const approvedRow = screen.getByText('Bananas').closest('li')
+  expect(approvedRow?.querySelectorAll('button').length).toBe(2)
+  expect(approvedRow?.textContent).toContain('Confirm the Pickup')
+  expect(approvedRow?.textContent).toContain('Cancel request')
+
+  const pendingRow = screen.getByText('Apples').closest('li')
+  const pickedUpRow = screen.getByText('Picked Bananas').closest('li')
+  const deniedRow = screen.getByText('Cherries').closest('li')
+  const withdrawnRow = screen.getByText('Withdrawn Apples').closest('li')
+  expect(pendingRow?.querySelectorAll('button').length).toBe(1)
+  expect(pickedUpRow?.querySelector('button')).toBeNull()
+  expect(deniedRow?.querySelector('button')).toBeNull()
+  expect(withdrawnRow?.querySelector('button')).toBeNull()
+})
+
 test('clicking Withdraw reloads and the request moves from Pending to Withdrawn', async () => {
   setLoggedIn()
   vi.stubGlobal('confirm', () => {
@@ -564,13 +626,106 @@ test('clicking Withdraw reloads and the request moves from Pending to Withdrawn'
   expect(withdrawUrl).toContain('/withdraw')
   expect(myRequestsCalls).toBe(2)
   // The withdrawn request now renders in the Withdrawn section with its badge
-  // and the cancellation date line (neutral wording, because a cancellation
-  // can also come from the poster or a deactivation). "Withdrawn" appears
+  // and the cancellation date line. "Withdrawn" appears
   // twice: the section heading and the row badge.
   expect(screen.getByRole('heading', { level: 2, name: 'Withdrawn' })).toBeTruthy()
   expect(screen.getAllByText('Withdrawn').length).toBe(2)
   expect(screen.getByText(/This request was cancelled on/)).toBeTruthy()
   expect(screen.getByText('Apples')).toBeTruthy()
+})
+
+test('clicking Cancel refreshes in place and moves the request to Withdrawn', async () => {
+  setLoggedIn()
+  vi.stubGlobal('confirm', () => {
+    return true
+  })
+  const standardBody = makeMyRequestsBody()
+  const cancelledBody = {
+    pending: standardBody.pending,
+    approved: [],
+    denied: standardBody.denied,
+    withdrawn: [
+      {
+        id: 'a1',
+        listing_id: 'l2',
+        listing_title: 'Bananas',
+        owner_name: 'Bob Baker',
+        requested_quantity: 5,
+        approved_quantity: 2,
+        status: 'cancelled',
+        requested_at: '2026-07-01T08:00:00.000Z',
+        approved_at: '2026-07-02T10:00:00.000Z',
+        picked_up_at: null,
+        denied_at: null,
+        cancelled_at: '2026-07-04T09:00:00.000Z',
+      },
+    ],
+  }
+  let myRequestsCalls = 0
+  let cancelUrl = ''
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    const urlText = String(url)
+    if (urlText.includes('/cancel')) {
+      cancelUrl = urlText
+      return makeFakeResponse(true, 200, { id: 'a1', status: 'cancelled' })
+    }
+    myRequestsCalls = myRequestsCalls + 1
+    if (myRequestsCalls === 1) {
+      return makeFakeResponse(true, 200, standardBody)
+    }
+    return makeFakeResponse(true, 200, cancelledBody)
+  })
+
+  renderMyRequestsPage()
+
+  const cancelButton = await screen.findByRole('button', { name: 'Cancel request' })
+  fireEvent.click(cancelButton)
+
+  await waitFor(() => {
+    expect(screen.getByText('You have no approved requests.')).toBeTruthy()
+  })
+  expect(cancelUrl).toContain('/api/claims/a1/cancel')
+  expect(myRequestsCalls).toBe(2)
+  expect(screen.getByRole('heading', { level: 1, name: 'Requests You Have Made' })).toBeTruthy()
+  expect(screen.getByRole('heading', { level: 2, name: 'Withdrawn' })).toBeTruthy()
+  expect(screen.getAllByText('Withdrawn').length).toBe(2)
+  expect(screen.getByText(/This request was cancelled on/)).toBeTruthy()
+  expect(screen.getByText('Bananas')).toBeTruthy()
+})
+
+test('a failed Cancel shows the server detail and keeps the request approved', async () => {
+  setLoggedIn()
+  vi.stubGlobal('confirm', () => {
+    return true
+  })
+  const alertSpy = vi.fn()
+  vi.stubGlobal('alert', alertSpy)
+  let myRequestsCalls = 0
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    const urlText = String(url)
+    if (urlText.includes('/cancel')) {
+      return makeFakeResponse(false, 409, {
+        detail: 'This request is not approved, so it cannot be cancelled.',
+      })
+    }
+    myRequestsCalls = myRequestsCalls + 1
+    return makeFakeResponse(true, 200, makeMyRequestsBody())
+  })
+
+  renderMyRequestsPage()
+
+  const cancelButton = await screen.findByRole('button', { name: 'Cancel request' })
+  fireEvent.click(cancelButton)
+
+  await waitFor(() => {
+    expect(alertSpy).toHaveBeenCalledWith(
+      'This request is not approved, so it cannot be cancelled.',
+    )
+  })
+  expect(myRequestsCalls).toBe(1)
+  expect(screen.getByText('Bananas')).toBeTruthy()
+  expect(screen.getByText(/You were approved for: 2 on/)).toBeTruthy()
+  expect(screen.getByRole('button', { name: 'Cancel request' })).toBeTruthy()
 })
 
 test('clicking Confirm the Pickup calls the pickup endpoint and shows the picked-up row', async () => {

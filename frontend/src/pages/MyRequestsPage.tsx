@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
 
 import {
+  sendCancelExchangeRequest,
   sendConfirmPickupRequest,
   sendGetMyRequestsRequest,
   sendWithdrawClaimRequest,
@@ -29,9 +30,11 @@ function MyRequestsPage() {
   // the withdraw one above.
   const [confirmingPickupClaimId, setConfirmingPickupClaimId] = useState('')
   const pickupInFlightRef = useRef('')
+  const [cancellingClaimId, setCancellingClaimId] = useState('')
+  const cancelInFlightRef = useRef('')
 
   // Load the caller's outgoing requests when the page has a logged-in member,
-  // and again whenever reloadCounter changes (after a successful withdraw).
+  // and again whenever reloadCounter changes after a successful action.
   useEffect(() => {
     latestRequestNumber.current = latestRequestNumber.current + 1
     if (memberId === '') { return }
@@ -116,6 +119,50 @@ function MyRequestsPage() {
       let detailMessage = 'Could not confirm pickup. Please try again.'
       if (typeof pickupResult.data === 'object' && pickupResult.data !== null) {
         const dataObject = pickupResult.data as { detail?: unknown }
+        if (typeof dataObject.detail === 'string') {
+          detailMessage = dataObject.detail
+        }
+      }
+      window.alert(detailMessage)
+      return
+    }
+
+    setReloadCounter((currentValue) => currentValue + 1)
+  }
+
+  async function handleCancelApproved(claimId: string) {
+    if (cancelInFlightRef.current === claimId) {
+      return
+    }
+    cancelInFlightRef.current = claimId
+
+    const confirmed = window.confirm(
+      'Cancel this approved request? The quantity goes back to the listing for others.',
+    )
+    if (confirmed === false) {
+      if (cancelInFlightRef.current === claimId) {
+        cancelInFlightRef.current = ''
+      }
+      return
+    }
+
+    setCancellingClaimId(claimId)
+    const cancelResult = await sendCancelExchangeRequest(memberId, claimId)
+
+    if (cancelInFlightRef.current === claimId) {
+      cancelInFlightRef.current = ''
+    }
+    setCancellingClaimId('')
+
+    if (cancelResult.errorMessage !== '') {
+      window.alert(cancelResult.errorMessage)
+      return
+    }
+
+    if (cancelResult.ok === false) {
+      let detailMessage = 'Could not cancel the request. Please try again.'
+      if (typeof cancelResult.data === 'object' && cancelResult.data !== null) {
+        const dataObject = cancelResult.data as { detail?: unknown }
         if (typeof dataObject.detail === 'string') {
           detailMessage = dataObject.detail
         }
@@ -214,6 +261,7 @@ function MyRequestsPage() {
       // request is in flight.
       const exchangeThreadTarget = '/exchange-thread?claim=' + item.id
       const isThisRowConfirming = confirmingPickupClaimId === item.id
+      const isThisRowCancelling = cancellingClaimId === item.id
       controlsArea = (
         <div className="flex flex-wrap items-center gap-2 mt-3">
           <Link
@@ -229,6 +277,14 @@ function MyRequestsPage() {
             className="inline-flex items-center px-3 py-1.5 text-xs font-medium text-primary-600 border border-primary-200 rounded-md hover:bg-primary-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Confirm the Pickup
+          </button>
+          <button
+            type="button"
+            disabled={isThisRowCancelling}
+            onClick={() => handleCancelApproved(item.id)}
+            className="inline-flex items-center px-3 py-1.5 text-xs font-medium text-text-muted border border-border rounded-md hover:bg-background-alt hover:text-text transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Cancel request
           </button>
         </div>
       )
@@ -289,9 +345,8 @@ function MyRequestsPage() {
       if (item.cancelled_at !== undefined && item.cancelled_at !== null) {
         cancelledAtText = formatTimestamp(item.cancelled_at)
       }
-      // Neutral wording on purpose: a request lands here when the recipient
-      // withdraws it, when the poster cancels an approved exchange, or when
-      // the listing is deactivated, and the row cannot tell which happened.
+      // Neutral wording covers both pending withdrawals and approved
+      // cancellations because both statuses use this section.
       detailLine = <>This request was cancelled on {cancelledAtText}</>
     } else {
       // Pending

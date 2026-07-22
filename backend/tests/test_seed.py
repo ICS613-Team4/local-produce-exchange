@@ -17,7 +17,7 @@ from app.models.listing_photo import ListingPhoto
 from app.models.member import InviteToken, Member, MemberProfile
 from app.models.notification import Notification
 from app.models.sample_data import SampleData
-from app.routers.claim import cancel_exchange
+from app.routers.claim import cancel_approved_claim
 from app.routers.listing_photo import MAX_PHOTO_BYTES
 
 
@@ -338,8 +338,8 @@ def test_seed_listing_quantities_match_the_claims(db_connection, monkeypatch):
 
 
 def test_cancelling_a_seeded_approved_claim_works(db_connection, monkeypatch):
-    # The bug found in live QA: Carol cancels Alice's approved Thai Basil
-    # exchange. The seed must have already moved Alice's 3 approved bunches
+    # The bug found in live QA: Alice cancels her own approved Thai Basil
+    # request. The seed must have already moved Alice's 3 approved bunches
     # off the listing; otherwise returning them here pushes remaining past
     # total, the database check constraint rejects the update, and the whole
     # cancel fails with a 503.
@@ -355,16 +355,16 @@ def test_cancelling_a_seeded_approved_claim_works(db_connection, monkeypatch):
         assert claim.status == "approved"
         assert thai_basil.remaining_quantity == 9
 
-        response = cancel_exchange(str(claim.id), carol, session)
+        response = cancel_approved_claim(str(claim.id), alice, session)
 
         assert response.status == "cancelled"
         session.expire_all()
         listing_after = seed.find_listing_by_owner_and_title(session, carol, "Thai Basil")
         assert listing_after.remaining_quantity == 12
-        # The cancel also notified Alice, like the live trigger always does.
+        # The cancel also notified Carol, the poster, like the live trigger does.
         cancel_notes = session.scalars(
             select(Notification)
-            .where(Notification.member_id == alice.id)
+            .where(Notification.member_id == carol.id)
             .where(Notification.kind == "request_cancelled")
         ).all()
         assert len(cancel_notes) == 1

@@ -24,7 +24,7 @@ from app.models.thread import Message
 from app.notifications import create_notification
 from app.routers.claim import (
     approve_claim,
-    cancel_exchange,
+    cancel_approved_claim,
     complete_exchange,
     confirm_pickup,
     create_claim,
@@ -771,28 +771,32 @@ def test_complete_exchange_notifies_the_claimant(db_session):
     assert "Leave Owner a review" in rows[0].message
 
 
-def test_cancel_exchange_notifies_the_claimant(db_session):
+def test_cancel_approved_claim_notifies_the_owner(db_session):
     owner = insert_member(db_session, email="owner@example.com", name="Owner")
     claimant = insert_member(db_session, email="claimant@example.com", name="Claimant")
     listing = insert_listing(db_session, owner)
     claim = insert_claim(db_session, listing, claimant, status="approved")
 
-    cancel_exchange(str(claim.id), owner, db_session)
+    cancel_approved_claim(str(claim.id), claimant, db_session)
 
     saved_claim = db_session.scalars(
         select(Claim).where(Claim.id == claim.id)
     ).first()
     assert saved_claim.status == "cancelled"
-    rows = get_notifications_for(db_session, claimant.id)
+    rows = get_notifications_for(db_session, owner.id)
     assert len(rows) == 1
     assert rows[0].kind == "request_cancelled"
     assert rows[0].claim_id == claim.id
+    assert "Claimant" in rows[0].message
+
+    # Only the owner hears about it; the claimant did the cancelling.
+    assert len(get_notifications_for(db_session, claimant.id)) == 0
 
 
 def test_withdraw_and_cancel_are_told_apart(db_session):
-    # Both set the claim to cancelled, but a withdrawal notifies the OWNER with
-    # request_withdrawn while a cancellation notifies the CLAIMANT with
-    # request_cancelled.
+    # Both set the claim to cancelled and both notify the OWNER, but a pending
+    # request is withdrawn (request_withdrawn) while an approved one is
+    # cancelled (request_cancelled).
     owner = insert_member(db_session, email="owner@example.com", name="Owner")
     claimant = insert_member(db_session, email="claimant@example.com", name="Claimant")
     listing = insert_listing(db_session, owner)
@@ -802,17 +806,17 @@ def test_withdraw_and_cancel_are_told_apart(db_session):
     )
 
     withdraw_claim(str(withdrawn_claim.id), claimant, db_session)
-    cancel_exchange(str(cancelled_claim.id), owner, db_session)
+    cancel_approved_claim(str(cancelled_claim.id), claimant, db_session)
 
     owner_rows = get_notifications_for(db_session, owner.id)
-    assert len(owner_rows) == 1
-    assert owner_rows[0].kind == "request_withdrawn"
-    assert owner_rows[0].claim_id == withdrawn_claim.id
+    assert len(owner_rows) == 2
+    kinds_by_claim = {}
+    for row in owner_rows:
+        kinds_by_claim[row.claim_id] = row.kind
+    assert kinds_by_claim[withdrawn_claim.id] == "request_withdrawn"
+    assert kinds_by_claim[cancelled_claim.id] == "request_cancelled"
 
-    claimant_rows = get_notifications_for(db_session, claimant.id)
-    assert len(claimant_rows) == 1
-    assert claimant_rows[0].kind == "request_cancelled"
-    assert claimant_rows[0].claim_id == cancelled_claim.id
+    assert len(get_notifications_for(db_session, claimant.id)) == 0
 
 
 def test_confirm_pickup_returns_503_when_listing_load_fails():

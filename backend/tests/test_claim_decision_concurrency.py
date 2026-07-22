@@ -22,7 +22,7 @@ from app.models.claim import Claim
 from app.models.listing import Listing
 from app.models.member import Member
 from app.models.notification import Notification
-from app.routers.claim import approve_claim, create_claim
+from app.routers.claim import approve_claim, cancel_approved_claim, create_claim
 from app.schemas.claim import CreateClaimPayload
 
 
@@ -109,6 +109,8 @@ def insert_committed_listing_with_two_claims(remaining_quantity, quantity_a, qua
         ids = {
             "poster_id": poster_id,
             "listing_id": listing_id,
+            "claimant_a_id": claimant_a.id,
+            "claimant_b_id": claimant_b.id,
             "claim_a_id": claim_a.id,
             "claim_b_id": claim_b.id,
         }
@@ -270,6 +272,57 @@ def run_two_approvals(poster_id, claim_a_id, claim_b_id):
     return results
 
 
+def approve_claims_for_cancel(ids, claim_ids):
+    poster = make_active_member_stub(ids["poster_id"])
+    session = SessionLocal()
+    try:
+        for claim_id in claim_ids:
+            approve_claim(str(claim_id), poster, session)
+    finally:
+        session.close()
+
+
+def run_two_cancels(claimant_a_id, claimant_b_id, claim_a_id, claim_b_id):
+    results = {}
+    barrier = threading.Barrier(2)
+
+    def do_cancel(key, claimant_id, claim_id):
+        session = SessionLocal()
+        try:
+            member = make_active_member_stub(claimant_id)
+            barrier.wait()
+            try:
+                response = cancel_approved_claim(str(claim_id), member, session)
+                results[key] = ("ok", response.status)
+            except HTTPException as raised:
+                results[key] = ("error", raised.status_code)
+        finally:
+            session.close()
+
+    thread_a = threading.Thread(
+        target=do_cancel,
+        args=("a", claimant_a_id, claim_a_id),
+    )
+    thread_b = threading.Thread(
+        target=do_cancel,
+        args=("b", claimant_b_id, claim_b_id),
+    )
+    thread_a.start()
+    thread_b.start()
+    thread_a.join()
+    thread_b.join()
+    return results
+
+
+def claim_status(claim_id):
+    session = SessionLocal()
+    try:
+        claim = session.scalars(select(Claim).where(Claim.id == claim_id)).first()
+        return claim.status
+    finally:
+        session.close()
+
+
 def run_two_requests(listing_id, claimant_a_id, claimant_b_id, quantity):
     # Two different members request the listing at the same time, each in its own
     # session, released together by a barrier so they race. Returns each
@@ -422,6 +475,61 @@ def test_concurrent_double_approval_of_same_claim_allocates_once():
         for key in results:
             if results[key][0] == "error":
                 assert results[key][1] == 409
+    finally:
+        clean_up_listing(ids["listing_id"])
+
+
+# --- cancel scenarios -------------------------------------------------------
+
+
+def test_concurrent_double_cancel_restores_once():
+    ids = insert_committed_listing_with_two_claims(
+        remaining_quantity=10, quantity_a=3, quantity_b=3
+    )
+    try:
+        approve_claims_for_cancel(ids, [ids["claim_a_id"]])
+
+        results = run_two_cancels(
+            ids["claimant_a_id"],
+            ids["claimant_a_id"],
+            ids["claim_a_id"],
+            ids["claim_a_id"],
+        )
+
+        outcomes = []
+        outcomes.append(results["a"][0])
+        outcomes.append(results["b"][0])
+        assert outcomes.count("ok") == 1
+        assert outcomes.count("error") == 1
+        for key in results:
+            if results[key][0] == "error":
+                assert results[key][1] == 409
+        assert claim_status(ids["claim_a_id"]) == "cancelled"
+        assert remaining_quantity(ids["listing_id"]) == 10
+    finally:
+        clean_up_listing(ids["listing_id"])
+
+
+def test_concurrent_cancels_on_one_listing_restore_both_amounts():
+    ids = insert_committed_listing_with_two_claims(
+        remaining_quantity=10, quantity_a=3, quantity_b=4
+    )
+    try:
+        approve_claims_for_cancel(ids, [ids["claim_a_id"], ids["claim_b_id"]])
+        assert remaining_quantity(ids["listing_id"]) == 3
+
+        results = run_two_cancels(
+            ids["claimant_a_id"],
+            ids["claimant_b_id"],
+            ids["claim_a_id"],
+            ids["claim_b_id"],
+        )
+
+        assert results["a"][0] == "ok"
+        assert results["b"][0] == "ok"
+        assert claim_status(ids["claim_a_id"]) == "cancelled"
+        assert claim_status(ids["claim_b_id"]) == "cancelled"
+        assert remaining_quantity(ids["listing_id"]) == 10
     finally:
         clean_up_listing(ids["listing_id"])
 

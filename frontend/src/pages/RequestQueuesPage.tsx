@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
 
 import {
-  sendCancelExchangeRequest,
   sendCompleteExchangeRequest,
   sendDecideClaimRequest,
   sendGetAllRequestsRequest,
@@ -30,8 +29,6 @@ function RequestQueuesPage() {
   const decisionInFlightRef = useRef('')
   const [completingClaimId, setCompletingClaimId] = useState('')
   const completeInFlightRef = useRef('')
-  const [cancellingClaimId, setCancellingClaimId] = useState('')
-  const cancelInFlightRef = useRef('')
 
   async function handleDecision(claimId: string, decision: string) {
     if (decisionInFlightRef.current === claimId) { return }
@@ -82,39 +79,6 @@ function RequestQueuesPage() {
       let detailMessage = 'Could not complete the exchange. Please try again.'
       if (typeof completeResult.data === 'object' && completeResult.data !== null) {
         const dataObject = completeResult.data as { detail?: unknown }
-        if (typeof dataObject.detail === 'string') { detailMessage = dataObject.detail }
-      }
-      window.alert(detailMessage); return
-    }
-    setReloadCounter((currentValue) => currentValue + 1)
-  }
-
-  // The poster calls off an approved exchange before pickup. Same shape as
-  // handleComplete: a same-tick double-click guard, a confirm, the call, then
-  // a reload on success so the row re-renders as cancelled and the listing's
-  // remaining quantity updates.
-  async function handleCancelExchange(claimId: string) {
-    if (cancelInFlightRef.current === claimId) { return }
-    cancelInFlightRef.current = claimId
-
-    const confirmed = window.confirm(
-      'Cancel this approved exchange? The reserved quantity goes back to the listing. This is final.',
-    )
-    if (confirmed === false) {
-      if (cancelInFlightRef.current === claimId) { cancelInFlightRef.current = '' }
-      return
-    }
-
-    setCancellingClaimId(claimId)
-    const cancelResult = await sendCancelExchangeRequest(memberId, claimId)
-    if (cancelInFlightRef.current === claimId) { cancelInFlightRef.current = '' }
-    setCancellingClaimId('')
-
-    if (cancelResult.errorMessage !== '') { window.alert(cancelResult.errorMessage); return }
-    if (cancelResult.ok === false) {
-      let detailMessage = 'Could not cancel the exchange. Please try again.'
-      if (typeof cancelResult.data === 'object' && cancelResult.data !== null) {
-        const dataObject = cancelResult.data as { detail?: unknown }
         if (typeof dataObject.detail === 'string') { detailMessage = dataObject.detail }
       }
       window.alert(detailMessage); return
@@ -294,19 +258,6 @@ function RequestQueuesPage() {
         </button>
       )
     }
-    // The poster's way out of an approved exchange that will not happen. It
-    // sits next to the Arrange the Exchange link and disappears once the
-    // recipient confirms pickup (a picked-up item cannot be called back).
-    let cancelButton = null
-    if (item.status === 'approved') {
-      const isThisRowCancelling = cancellingClaimId === item.id
-      cancelButton = (
-        <button type="button" disabled={isThisRowCancelling} onClick={() => handleCancelExchange(item.id)}
-          className="inline-flex items-center px-3 py-1 text-xs font-medium text-error border border-red-200 rounded-md hover:bg-error-bg transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-          Cancel the Exchange
-        </button>
-      )
-    }
     // Placeholder for the review feature (US-20): a completed row lets the
     // poster review the other party, the recipient. The review form itself is
     // US-20's to build; until then the click explains that.
@@ -338,12 +289,11 @@ function RequestQueuesPage() {
           </div>
           <ul className="mt-1">{statusOutcomeItems}</ul>
         </div>
-        {(approveButton || denyButton || completeButton || cancelButton || reviewButton || threadLink) && (
+        {(approveButton || denyButton || completeButton || reviewButton || threadLink) && (
           <div className="flex items-center gap-2 shrink-0 ml-3">
             {approveButton}
             {denyButton}
             {completeButton}
-            {cancelButton}
             {reviewButton}
             {threadLink}
           </div>
