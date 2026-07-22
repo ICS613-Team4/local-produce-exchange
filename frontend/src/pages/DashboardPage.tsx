@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link } from 'react-router'
+import { Link, useSearchParams } from 'react-router'
 
 import { sendBrowseListingsRequest, sendGetMyListingsRequest } from '../services/listingService'
 import type { ListingDetail, ListingResult } from '../services/listingService'
@@ -21,6 +21,8 @@ import type {
   RequestQueuesResult,
 } from '../services/requestQueueService'
 import { formatTimestamp, getLocalTimeZoneNote } from '../utils/formatTimestamp'
+import MemberRatingChip from '../components/MemberRatingChip'
+import ReviewLinks from '../components/ReviewLinks'
 
 function DashboardPage() {
   const memberId = window.localStorage.getItem('memberId') ?? ''
@@ -44,14 +46,40 @@ function DashboardPage() {
   // only choose what to show, so switching tabs never refetches.
   const [historyResult, setHistoryResult] = useState<RequestQueuesResult | null>(null)
   const [historyReload, setHistoryReload] = useState(0)
-  const [activeHistoryTab, setActiveHistoryTab] = useState('needs_you')
   const [confirmingPickupClaimId, setConfirmingPickupClaimId] = useState('')
   const [completingClaimId, setCompletingClaimId] = useState('')
   const pickupInFlightRef = useRef('')
   const completeInFlightRef = useRef('')
 
+  // Which Exchange History tab is showing. This lives in the page's own URL
+  // (/dashboard?history=finished) instead of in React state, because React
+  // state is thrown away when the member leaves the page. The browser remembers
+  // a URL per history entry, so leaving for another page and pressing Back
+  // brings the member straight back to the tab they were reading.
+  //
+  // A missing or unrecognized value falls back to Needs you, so a plain
+  // /dashboard link and a hand-edited URL both open the same way they always
+  // have.
+  const historyTabNames = ['needs_you', 'in_progress', 'finished']
+  const [searchParams, setSearchParams] = useSearchParams()
+  let activeHistoryTab = 'needs_you'
+  const requestedHistoryTab = searchParams.get('history')
+  if (requestedHistoryTab !== null && historyTabNames.includes(requestedHistoryTab)) {
+    activeHistoryTab = requestedHistoryTab
+  }
+
+  // Switching tabs REPLACES the current history entry rather than adding one.
+  // Reading three tabs would otherwise stack up three entries, and the member
+  // would have to press Back three times to leave the dashboard. Replacing
+  // still updates the URL the browser stores for this entry, which is what
+  // makes the Back button land on the right tab later.
+  function setActiveHistoryTab(tabKey: string) {
+    const nextParams = new URLSearchParams(searchParams)
+    nextParams.set('history', tabKey)
+    setSearchParams(nextParams, { replace: true })
+  }
+
   useEffect(() => {
-    if (memberId === '') { return }
     async function loadPreview() {
       const loadedResult = await sendBrowseListingsRequest(memberId, { limit: 5 })
       setPreviewResult(loadedResult)
@@ -60,7 +88,6 @@ function DashboardPage() {
   }, [memberId])
 
   useEffect(() => {
-    if (memberId === '') { return }
     async function loadMyListings() {
       const loadedResult = await sendGetMyListingsRequest(memberId)
       setMyListingsResult(loadedResult)
@@ -69,7 +96,6 @@ function DashboardPage() {
   }, [memberId])
 
   useEffect(() => {
-    if (memberId === '') { return }
     async function loadIncoming() {
       const loadedResult = await sendGetRequestQueuesRequest(memberId, '')
       setIncomingResult(loadedResult)
@@ -78,7 +104,6 @@ function DashboardPage() {
   }, [memberId, incomingReload])
 
   useEffect(() => {
-    if (memberId === '') { return }
     async function loadOutgoing() {
       const loadedResult = await sendGetMyRequestsRequest(memberId)
       setOutgoingResult(loadedResult)
@@ -87,7 +112,6 @@ function DashboardPage() {
   }, [memberId, outgoingReload])
 
   useEffect(() => {
-    if (memberId === '') { return }
     async function loadHistory() {
       const loadedResult = await sendGetExchangeHistoryRequest(memberId)
       setHistoryResult(loadedResult)
@@ -263,9 +287,7 @@ function DashboardPage() {
 
   // --- Latest Community Listings preview ------------------------------------
   let previewArea
-  if (memberId === '') {
-    previewArea = null
-  } else if (previewResult === null) {
+  if (previewResult === null) {
     previewArea = <p className="text-sm text-text-muted">Loading latest listings...</p>
   } else if (previewResult.errorMessage !== '') {
     previewArea = <p className="text-sm text-error" role="alert">{previewResult.errorMessage}</p>
@@ -384,10 +406,29 @@ function DashboardPage() {
           </button>
         )
       }
+      // The requestor's rating AS a requestor (US-20), inline right after the
+      // requestor's name, so the owner can weigh whose request to accept.
+      let claimantRequestorAverage = null
+      if (item.claimant_requestor_average !== undefined && item.claimant_requestor_average !== null) {
+        claimantRequestorAverage = item.claimant_requestor_average
+      }
+      let claimantRequestorCount = 0
+      if (item.claimant_requestor_count !== undefined) {
+        claimantRequestorCount = item.claimant_requestor_count
+      }
       rowItems.push(
         <li key={item.id} className="flex items-center justify-between py-2.5 border-b border-border last:border-0">
           <div className="min-w-0">
-            <p className="text-sm text-text">{item.claimant_name} requested {item.requested_quantity}</p>
+            <p className="text-sm text-text">
+              {item.claimant_name}{' '}
+              <MemberRatingChip
+                memberId={item.claimant_id}
+                role="requestor"
+                average={claimantRequestorAverage}
+                count={claimantRequestorCount}
+              />{' '}
+              requested {item.requested_quantity}
+            </p>
             <p className="text-xs text-text-muted">{requestedAtText}</p>
           </div>
           <div className="flex items-center gap-2 shrink-0 ml-3">
@@ -500,6 +541,18 @@ function DashboardPage() {
     return 'finished'
   }
 
+  // A "cancelled" claim covers two different endings, and the claim's own
+  // timestamps tell them apart. The requestor can only withdraw a request that
+  // is still pending, so a withdrawn claim never got an approval and its
+  // approved_at is empty. The poster can only cancel an exchange they already
+  // approved, so a poster cancellation always has approved_at set. The Finished
+  // tab lists the two as separate groups, since they read as different events.
+  function isWithdrawnRow(item: ExchangeHistoryItem) {
+    if (item.status !== 'cancelled') { return false }
+    if (item.approved_at === null || item.approved_at === undefined) { return true }
+    return false
+  }
+
   // The muted second line: the status and the time the row entered it, read
   // from the timestamp column that matches the status.
   function getHistoryStatusLine(item: ExchangeHistoryItem) {
@@ -524,12 +577,22 @@ function DashboardPage() {
     if (item.status === 'cancelled') {
       let timeText = ''
       if (item.cancelled_at !== null) { timeText = formatTimestamp(item.cancelled_at) }
+      if (isWithdrawnRow(item)) {
+        return 'Withdrawn ' + timeText
+      }
       return 'Cancelled ' + timeText
     }
     let timeText = ''
     if (item.denied_at !== null) { timeText = formatTimestamp(item.denied_at) }
     return 'Denied ' + timeText
   }
+
+  // The controls slot on a history row. On a phone it is a full-width block
+  // under the listing text whose buttons wrap onto as many lines as they need;
+  // from the small breakpoint up it sits at the right end of the row and stops
+  // shrinking, the layout the request pages use. Every status builds its slot
+  // from this one string, so no row can lay out differently from the others.
+  const historyActionsClasses = 'flex flex-wrap items-center gap-2 sm:shrink-0'
 
   // One history row: the listing link, the quantity, the other party worded by
   // side, the status line, and the right-hand control or hint the status and
@@ -587,11 +650,13 @@ function DashboardPage() {
     // requested row (Approve and Deny live there), or a muted waiting hint on
     // the other open rows. Approved and picked-up rows also carry the thread
     // link built above, on both sides. Finished rows get nothing.
+    // Every one of these slots uses historyActionsClasses below, so each row's
+    // controls wrap and stack the same way on a narrow screen.
     let rightArea = null
     if (item.status === 'approved' && item.side === 'recipient') {
       const isThisRowConfirming = confirmingPickupClaimId === item.id
       rightArea = (
-        <div className="flex items-center gap-2 shrink-0 ml-3">
+        <div className={historyActionsClasses}>
           {threadLink}
           <button
             type="button"
@@ -606,7 +671,7 @@ function DashboardPage() {
     } else if (item.status === 'picked_up' && item.side === 'poster') {
       const isThisRowCompleting = completingClaimId === item.id
       rightArea = (
-        <div className="flex items-center gap-2 shrink-0 ml-3">
+        <div className={historyActionsClasses}>
           {threadLink}
           <button
             type="button"
@@ -620,13 +685,13 @@ function DashboardPage() {
       )
     } else if (item.status === 'requested' && item.side === 'poster') {
       rightArea = (
-        <Link to={'/requests?listing=' + item.listing_id} className="text-xs shrink-0 ml-3">
+        <Link to={'/requests?listing=' + item.listing_id} className="text-xs sm:shrink-0">
           Review this request
         </Link>
       )
     } else if (item.status === 'approved' || item.status === 'picked_up') {
       rightArea = (
-        <div className="flex items-center gap-2 shrink-0 ml-3">
+        <div className={historyActionsClasses}>
           <span className="text-xs text-text-muted">
             Waiting on {item.other_party_name}
           </span>
@@ -635,16 +700,44 @@ function DashboardPage() {
       )
     } else if (item.status === 'requested') {
       rightArea = (
-        <span className="text-xs text-text-muted shrink-0 ml-3">
+        <span className="text-xs text-text-muted sm:shrink-0">
           Waiting on {item.other_party_name}
         </span>
+      )
+    } else if (item.status === 'completed') {
+      // A finished exchange has nothing left to arrange, but each side can
+      // still write their review of the other party (US-20) and read what was
+      // written about the exchange (US-21). Same shared pair, wording, and
+      // styling the request pages and the exchange thread page use. The row
+      // knows the other party by side, so one fallback covers both.
+      let fallbackName = 'the poster'
+      if (item.side === 'poster') {
+        fallbackName = 'the recipient'
+      }
+      rightArea = (
+        <div className={historyActionsClasses}>
+          <ReviewLinks
+            claimId={item.id}
+            otherPartyName={item.other_party_name}
+            fallbackName={fallbackName}
+            reviewedByMe={item.reviewed_by_me}
+            onDeleted={() => setHistoryReload((c) => c + 1)}
+          />
+        </div>
       )
     }
 
     return (
-      <li key={item.id} className="flex items-center justify-between py-2.5 border-b border-border last:border-0">
+      // The row stacks on a phone and goes side by side from the small
+      // breakpoint up, the pattern list rows on GitHub and Stripe use: one
+      // column by default, a row once there is width for one. min-w-0 lets a
+      // long listing title wrap instead of pushing the controls off screen.
+      <li
+        key={item.id}
+        className="flex flex-col gap-2 py-2.5 border-b border-border last:border-0 sm:flex-row sm:items-center sm:justify-between sm:gap-3"
+      >
         <div className="min-w-0">
-          <p className="text-sm text-text">
+          <p className="text-sm text-text break-words">
             <Link to={'/listings/' + item.listing_id}>{item.listing_title}</Link>
             {' '}({quantity}){partyText}
           </p>
@@ -684,14 +777,26 @@ function DashboardPage() {
   }
 
   let historyArea
-  if (memberId === '') {
-    historyArea = null
-  } else if (historyResult === null) {
+  if (historyResult === null) {
     historyArea = <p className="text-sm text-text-muted">Loading exchange history...</p>
   } else if (historyResult.errorMessage !== '') {
     historyArea = <p className="text-sm text-error" role="alert">{historyResult.errorMessage}</p>
   } else if (historyResult.ok) {
     const historyData = historyResult.data as ExchangeHistoryResponse
+
+    // The backend returns one "cancelled" list, because that is the one status
+    // the database stores. Split it here so the Finished tab can show the
+    // requestor's withdrawals apart from the poster's cancellations.
+    const withdrawnItems = []
+    const cancelledItems = []
+    for (let index = 0; index < historyData.cancelled.length; index = index + 1) {
+      const item = historyData.cancelled[index]
+      if (isWithdrawnRow(item)) {
+        withdrawnItems.push(item)
+      } else {
+        cancelledItems.push(item)
+      }
+    }
 
     // Count the rows per tab for the tab labels. Every row of the six groups
     // lands in exactly one tab.
@@ -815,7 +920,8 @@ function DashboardPage() {
           hidden={activeHistoryTab !== 'finished'}
         >
           {buildHistoryStatusGroup('finished', 'Completed', historyData.completed)}
-          {buildHistoryStatusGroup('finished', 'Cancelled', historyData.cancelled)}
+          {buildHistoryStatusGroup('finished', 'Cancelled', cancelledItems)}
+          {buildHistoryStatusGroup('finished', 'Withdrawn', withdrawnItems)}
           {buildHistoryStatusGroup('finished', 'Denied', historyData.denied)}
         </div>
       </>

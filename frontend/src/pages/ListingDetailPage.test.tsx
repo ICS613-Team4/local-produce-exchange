@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router'
 import { afterEach, expect, test, vi } from 'vitest'
 
@@ -105,6 +105,11 @@ function makeActiveListing() {
     created_at: '2026-06-19T00:00:00.000Z',
     owner_name: 'Olivia Owner',
     photos: [] as Array<{ id: string; content_type: string; position: number }>,
+    // The owner's listing-owner rating (US-20). null and 0 read as
+    // "(no listing owner rating)"; a test that needs a rated owner
+    // overwrites these.
+    owner_rating_average: null as number | null,
+    owner_rating_count: 0,
   }
   return listing
 }
@@ -262,10 +267,11 @@ test('a stale-session 401 clears the credentials and fires the auth event', asyn
 
   renderDetailPage()
 
-  // The effect clears the creds, so the not-logged-in message appears.
-  expect(await screen.findByText('You need to be logged in to see this page.')).toBeTruthy()
-  // Every credential key is cleared, not just memberId.
-  expect(window.localStorage.getItem('memberId')).toBeNull()
+  // Every credential key is cleared, not just memberId. The shared route guard
+  // owns the logged-out message now, so this page renders nothing of its own.
+  await waitFor(() => {
+    expect(window.localStorage.getItem('memberId')).toBeNull()
+  })
   expect(window.localStorage.getItem('memberName')).toBeNull()
   expect(window.localStorage.getItem('memberEmail')).toBeNull()
   // The page told the shared nav the login was cleared.
@@ -356,21 +362,6 @@ test('shows the transport error message when the request fails', async () => {
   expect(alert.textContent).toContain('Timeout')
   // This is the transport branch, not the 404 branch.
   expect(screen.queryByText('This listing is unavailable.')).toBeNull()
-})
-
-test('renders the not-logged-in message and does not fetch when logged out', async () => {
-  let fetchCallCount = 0
-  vi.stubGlobal('fetch', async () => {
-    fetchCallCount = fetchCallCount + 1
-    return makeFakeResponse(true, 200, makeActiveListing())
-  })
-
-  renderDetailPage()
-
-  expect(screen.getByText('You need to be logged in to see this page.')).toBeTruthy()
-  // Logged out, the page must not call the backend.
-  await waitForStateUpdates()
-  expect(fetchCallCount).toBe(0)
 })
 
 test('ignores an older response after the route changes to another listing', async () => {
@@ -571,7 +562,7 @@ test('shows a transport error and keeps the deactivate button enabled', async ()
   expect(buttonAfter.hasAttribute('disabled')).toBe(false)
 })
 
-test('clears the credentials and shows the logged-out view on a 401', async () => {
+test('clears the credentials and fires the auth event on a deactivate 401', async () => {
   setLoggedIn()
   vi.stubGlobal('confirm', () => {
     return true
@@ -593,10 +584,11 @@ test('clears the credentials and shows the logged-out view on a 401', async () =
   const button = await screen.findByRole('button', { name: 'Deactivate listing' })
   fireEvent.click(button)
 
-  // The page falls back to the logged-out view.
-  expect(await screen.findByText('You need to be logged in to see this page.')).toBeTruthy()
-  // Every credential key is cleared.
-  expect(window.localStorage.getItem('memberId')).toBeNull()
+  // Every credential key is cleared. The shared route guard owns the
+  // logged-out message now, so this page renders nothing of its own.
+  await waitFor(() => {
+    expect(window.localStorage.getItem('memberId')).toBeNull()
+  })
   expect(window.localStorage.getItem('memberName')).toBeNull()
   expect(window.localStorage.getItem('memberEmail')).toBeNull()
   // The page told the shared nav the login was cleared.
@@ -843,7 +835,7 @@ test('hides the pending-request count and View requests link from a non-owner', 
   expect(screen.queryByRole('link', { name: 'View requests' })).toBeNull()
 })
 
-test('a count-fetch 401 clears the credentials and falls back to logged-out', async () => {
+test('a count-fetch 401 clears the credentials and fires the auth event', async () => {
   setLoggedIn()
   let authEventFired = false
   function handleAuthEvent() {
@@ -860,8 +852,11 @@ test('a count-fetch 401 clears the credentials and falls back to logged-out', as
 
   renderDetailPage()
 
-  expect(await screen.findByText('You need to be logged in to see this page.')).toBeTruthy()
-  expect(window.localStorage.getItem('memberId')).toBeNull()
+  // The shared route guard owns the logged-out message now, so this page
+  // renders nothing of its own; only the cleared login and the event show.
+  await waitFor(() => {
+    expect(window.localStorage.getItem('memberId')).toBeNull()
+  })
   expect(authEventFired).toBe(true)
 
   window.removeEventListener('auth-state-changed', handleAuthEvent)
@@ -985,6 +980,8 @@ function makeMyClaim(status: string, fields: object) {
     status: status,
     requested_at: '2026-07-01T09:00:00.000Z',
     approved_at: null,
+    picked_up_at: null,
+    completed_at: null,
     denied_at: null,
     cancelled_at: null,
   }
@@ -1018,7 +1015,10 @@ test('shows the request form to a non-owner with no prior request', async () => 
   // waits for the separate /my-claim fetch to resolve; getByRole would race it
   // and flake on CI, where that fetch settles a tick later than locally.
   expect(await screen.findByRole('button', { name: 'Submit request' })).toBeTruthy()
-  const quantityInput = screen.getByRole('spinbutton')
+  // Found BY ITS LABEL, which proves the "Quantity" label is tied to the input
+  // rather than sitting loose next to it: clicking the word focuses the box,
+  // and a screen reader reads the two together.
+  const quantityInput = screen.getByLabelText('Quantity')
   // Native HTML5 validation: whole numbers, at least 1, no more than remaining (4).
   expect(quantityInput.getAttribute('type')).toBe('number')
   expect(quantityInput.getAttribute('min')).toBe('1')
@@ -1055,7 +1055,7 @@ test('shows the pending line instead of the form when a request is already in', 
   expect(screen.queryByRole('button', { name: 'Submit request' })).toBeNull()
 })
 
-test('shows a denied line when the request was denied', async () => {
+test('a denied request leaves the plain request form, with nothing said about it', async () => {
   setLoggedIn()
   stubRequestFeatureFetch(
     makeOtherOwnedListing(),
@@ -1065,8 +1065,11 @@ test('shows a denied line when the request was denied', async () => {
 
   renderDetailPage()
 
-  expect(await screen.findByText('Your request was denied.')).toBeTruthy()
-  expect(screen.queryByRole('button', { name: 'Submit request' })).toBeNull()
+  // A finished request is over and done with, so this page says nothing about
+  // it and simply lets the member ask again.
+  expect(await screen.findByRole('button', { name: 'Submit request' })).toBeTruthy()
+  expect(screen.getByText('Request this item')).toBeTruthy()
+  expect(screen.queryByText('Your request was denied.')).toBeNull()
 })
 
 test('shows the approved quantity, time, and the Exchange Thread link when approved', async () => {
@@ -1117,6 +1120,88 @@ test('shows the picked-up confirmation and the Contact the Provider link when pi
   expect(providerLink.getAttribute('href')).toContain('/exchange-thread')
   // The pickup is done, so the confirm button is gone.
   expect(screen.queryByRole('button', { name: 'Confirm pickup' })).toBeNull()
+})
+
+test('a completed exchange leaves the request form, with nothing said about it', async () => {
+  setLoggedIn()
+  stubRequestFeatureFetch(
+    makeOtherOwnedListing(),
+    () =>
+      makeFakeResponse(
+        true,
+        200,
+        makeMyClaim('completed', {
+          approved_quantity: 2,
+          approved_at: '2026-07-02T10:00:00.000Z',
+          picked_up_at: '2026-07-03T09:00:00.000Z',
+          completed_at: '2026-07-04T09:00:00.000Z',
+        }),
+      ),
+    () => makeFakeResponse(true, 201, {}),
+  )
+
+  renderDetailPage()
+
+  // The exchange is done, so the member is free to ask for this listing again.
+  expect(await screen.findByRole('button', { name: 'Submit request' })).toBeTruthy()
+  // The page used to claim a withdrawal here, which was false. Now it says
+  // nothing at all about the finished request.
+  expect(screen.queryByText('You withdrew your request.')).toBeNull()
+  expect(screen.queryByText('Exchange complete')).toBeNull()
+})
+
+test('a withdrawn or cancelled request leaves the request form too', async () => {
+  setLoggedIn()
+  stubRequestFeatureFetch(
+    makeOtherOwnedListing(),
+    () =>
+      makeFakeResponse(
+        true,
+        200,
+        makeMyClaim('cancelled', { cancelled_at: '2026-07-02T09:00:00.000Z' }),
+      ),
+    () => makeFakeResponse(true, 201, {}),
+  )
+
+  renderDetailPage()
+
+  expect(await screen.findByRole('button', { name: 'Submit request' })).toBeTruthy()
+  expect(screen.queryByText('You withdrew your request.')).toBeNull()
+})
+
+test('an in-flight request hides the form and points at the exchange thread', async () => {
+  // The one rule the page still enforces: a member may have only one request
+  // in flight on a listing at a time. Each in-flight status says so and links
+  // into the thread for that exchange.
+  setLoggedIn()
+  const inFlightClaims = [
+    makeMyClaim('requested', {}),
+    makeMyClaim('approved', {
+      approved_quantity: 2,
+      approved_at: '2026-07-02T10:00:00.000Z',
+    }),
+    makeMyClaim('picked_up', {
+      approved_quantity: 2,
+      approved_at: '2026-07-02T10:00:00.000Z',
+      picked_up_at: '2026-07-03T09:00:00.000Z',
+    }),
+  ]
+
+  for (const claim of inFlightClaims) {
+    stubRequestFeatureFetch(
+      makeOtherOwnedListing(),
+      () => makeFakeResponse(true, 200, claim),
+      () => makeFakeResponse(true, 201, {}),
+    )
+
+    renderDetailPage()
+
+    const threadLink = await screen.findByRole('link', { name: /the [Ee]xchange|the Provider/ })
+    expect(threadLink.getAttribute('href')).toBe('/exchange-thread?claim=claim-1')
+    expect(screen.queryByRole('button', { name: 'Submit request' })).toBeNull()
+
+    cleanup()
+  }
 })
 
 test('clicking Confirm pickup updates the claim and shows the picked-up view', async () => {
@@ -1310,7 +1395,7 @@ test('a failed request shows the server message and keeps the form', async () =>
     makeOtherOwnedListing(),
     () => nullBody(),
     () =>
-      makeFakeResponse(false, 409, { detail: 'You have already made a request on this listing.' }),
+      makeFakeResponse(false, 409, { detail: 'You already have an open request on this listing.' }),
   )
 
   renderDetailPage()
@@ -1321,7 +1406,7 @@ test('a failed request shows the server message and keeps the form', async () =>
   fireEvent.click(submitButton)
 
   // The server's plain-words message shows, and the form stays for a retry.
-  expect(await screen.findByText('You have already made a request on this listing.')).toBeTruthy()
+  expect(await screen.findByText('You already have an open request on this listing.')).toBeTruthy()
   expect(screen.getByRole('button', { name: 'Submit request' })).toBeTruthy()
 })
 
@@ -1364,4 +1449,41 @@ test('does not flash the request form while the claim status is still loading', 
   )
   expect(await screen.findByRole('link', { name: /Arrange the Exchange/ })).toBeTruthy()
   expect(screen.queryByRole('button', { name: 'Submit request' })).toBeNull()
+})
+
+// --- US-20: the owner's listing-owner rating on the detail page ---
+
+test('shows the owner rating chip with the role-scoped average', async () => {
+  setLoggedIn()
+  const listing = makeActiveListing()
+  listing.owner_rating_average = 4.5
+  listing.owner_rating_count = 2
+  stubListingFetch(() => makeFakeResponse(true, 200, listing))
+
+  renderDetailPage()
+
+  await screen.findByText('Backyard Lemons')
+  // The rating sits inline in the posted-by line, which shows twice on the
+  // page (under the title and at the bottom), so the chip renders twice. The
+  // count is not shown.
+  const chips = screen.getAllByRole('link', {
+    name: "View the reviews behind this member's rating as a listing owner",
+  })
+  expect(chips.length).toBe(2)
+  expect(chips[0].textContent).toBe('(★ 4.5 listing owner rating)')
+  expect(chips[1].textContent).toBe('(★ 4.5 listing owner rating)')
+})
+
+test('says no rating, without a link, when the owner has no reviews', async () => {
+  setLoggedIn()
+  stubListingFetch(() => makeFakeResponse(true, 200, makeActiveListing()))
+
+  renderDetailPage()
+
+  await screen.findByText('Backyard Lemons')
+  // No reviews renders plain non-clickable text in both posted-by lines: no
+  // star, no chip button.
+  expect(screen.getAllByText('(no listing owner rating)').length).toBe(2)
+  expect(screen.queryByText(/★/)).toBeNull()
+  expect(screen.queryByRole('link', { name: /View the reviews/ })).toBeNull()
 })

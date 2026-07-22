@@ -16,9 +16,14 @@ import type { NotificationsResult } from '../services/notificationService'
 // Mock the auth service so the Log out button never reaches the network. The
 // mock also supplies the shared event name the Layout imports, so the dispatch
 // and the listener use the same string the real app uses.
-vi.mock('../services/authService', () => {
+// Only the network call is faked. clearStoredLogin passes through from the
+// real module, because clearing the stored login and firing the auth event is
+// exactly the behavior this file tests.
+vi.mock('../services/authService', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../services/authService')>()
   return {
-    authStateChangedEventName: 'auth-state-changed',
+    authStateChangedEventName: actual.authStateChangedEventName,
+    clearStoredLogin: actual.clearStoredLogin,
     sendLogoutRequest: vi.fn(async () => {
       return { ok: true, status: 200, data: '', errorMessage: '' }
     }),

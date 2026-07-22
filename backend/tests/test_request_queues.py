@@ -15,6 +15,7 @@ from app.models.claim import Claim
 from app.models.listing import Listing
 from app.models.listing_photo import ListingPhoto
 from app.models.member import Member
+from app.models.review import Review
 from app.routers.claim import get_all_requests, get_request_queues
 
 
@@ -1164,3 +1165,113 @@ def test_all_requests_route_is_wired_with_get_method():
             if route.path == "/api/request-queues/all" and "GET" in route.methods:
                 found_route = route
     assert found_route is not None
+
+
+# --- US-20: the reviewed_by_me flag and the requestor rating -----------------
+
+
+def insert_review_row(
+    session, claim_id, reviewer, reviewee, reviewee_role, rating=4, disabled_at=None
+):
+    now = datetime.now(timezone.utc)
+    review = Review(
+        claim_id=claim_id,
+        reviewer_id=reviewer.id,
+        reviewee_id=reviewee.id,
+        reviewee_role=reviewee_role,
+        rating=rating,
+        body="",
+        created_at=now,
+        updated_at=now,
+        disabled_at=disabled_at,
+    )
+    session.add(review)
+    session.commit()
+    return review.id
+
+
+def test_all_requests_flags_the_claims_the_caller_reviewed(db_session):
+    """A completed row the owner reviewed carries reviewed_by_me = True; one
+    they have not reviewed carries False."""
+    owner = insert_member(db_session, email="owner@example.com", name="Owner")
+    reviewed_claimant = insert_member(db_session, email="ra@example.com", name="Ra")
+    unreviewed_claimant = insert_member(db_session, email="rb@example.com", name="Rb")
+    listing = insert_listing(db_session, owner)
+    reviewed_claim = insert_claim(db_session, listing, reviewed_claimant, status="completed")
+    insert_claim(db_session, listing, unreviewed_claimant, status="completed")
+    insert_review_row(db_session, reviewed_claim.id, owner, reviewed_claimant, "requestor")
+
+    response = get_all_requests(None, owner, db_session)
+
+    assert len(response.groups) == 1
+    flags_by_claimant = {}
+    for item in response.groups[0].requests:
+        flags_by_claimant[item.claimant_name] = item.reviewed_by_me
+    assert flags_by_claimant["Ra"] is True
+    assert flags_by_claimant["Rb"] is False
+
+
+def test_queue_rows_carry_the_requestor_rating(db_session):
+    """The pending queue shows each requestor's requestor-side average: live
+    requestor-role reviews only, disabled and owner-role reviews excluded."""
+    owner = insert_member(db_session, email="owner@example.com", name="Owner")
+    rated = insert_member(db_session, email="rated@example.com", name="Rated")
+    unrated = insert_member(db_session, email="unrated@example.com", name="Unrated")
+    other_owner = insert_member(db_session, email="other@example.com", name="Other")
+
+    queue_listing = insert_listing(
+        db_session, owner, pickup_start=FUTURE_START, pickup_end=FUTURE_END
+    )
+    insert_claim(db_session, queue_listing, rated)
+    insert_claim(db_session, queue_listing, unrated)
+
+    # The rated member's history: two live requestor reviews (4 and 5), one
+    # disabled requestor review, and one listing-owner-role review. Only the
+    # two live requestor reviews count: average 4.5 from 2 reviews.
+    past_a = insert_listing(db_session, owner, title="Past A")
+    past_b = insert_listing(db_session, other_owner, title="Past B")
+    past_claim_a = insert_claim(db_session, past_a, rated, status="completed")
+    past_claim_b = insert_claim(db_session, past_b, rated, status="completed")
+    insert_review_row(db_session, past_claim_a.id, owner, rated, "requestor", rating=4)
+    insert_review_row(db_session, past_claim_b.id, other_owner, rated, "requestor", rating=5)
+    insert_review_row(
+        db_session,
+        past_claim_a.id,
+        other_owner,
+        rated,
+        "requestor",
+        rating=1,
+        disabled_at=datetime.now(timezone.utc),
+    )
+    insert_review_row(db_session, past_claim_b.id, owner, rated, "listing_owner", rating=1)
+
+    response = get_request_queues(None, owner, db_session)
+
+    assert len(response.groups) == 1
+    ratings_by_claimant = {}
+    for item in response.groups[0].pending:
+        entry = {}
+        entry["average"] = item.claimant_requestor_average
+        entry["count"] = item.claimant_requestor_count
+        ratings_by_claimant[item.claimant_name] = entry
+    assert ratings_by_claimant["Rated"]["average"] == 4.5
+    assert ratings_by_claimant["Rated"]["count"] == 2
+    assert ratings_by_claimant["Unrated"]["average"] is None
+    assert ratings_by_claimant["Unrated"]["count"] == 0
+
+
+def test_all_requests_rows_carry_the_requestor_rating(db_session):
+    """The all-requests rows carry the same requestor-side rating fields."""
+    owner = insert_member(db_session, email="owner@example.com", name="Owner")
+    claimant = insert_member(db_session, email="claimant@example.com", name="Claimant")
+    listing = insert_listing(db_session, owner)
+    claim = insert_claim(db_session, listing, claimant, status="completed")
+    insert_review_row(db_session, claim.id, owner, claimant, "requestor", rating=4)
+
+    response = get_all_requests(None, owner, db_session)
+
+    assert len(response.groups) == 1
+    item = response.groups[0].requests[0]
+    assert item.reviewed_by_me is True
+    assert item.claimant_requestor_average == 4.0
+    assert item.claimant_requestor_count == 1

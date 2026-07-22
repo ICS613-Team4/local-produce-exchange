@@ -40,6 +40,9 @@ export type ThreadData = {
   requested_quantity?: number | null
   approved_quantity?: number | null
   photos?: Array<{ id: string; content_type: string; position: number }>
+  // True when the viewer already reviewed this exchange, so the completed
+  // banner's link reads "Edit Your Review" instead of "Leave a Review".
+  reviewed_by_me?: boolean
 }
 
 async function fetchThread(url: string, options: RequestInit): Promise<ThreadResult> {

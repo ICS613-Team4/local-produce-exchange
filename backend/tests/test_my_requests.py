@@ -17,6 +17,7 @@ from app.models.claim import Claim
 from app.models.listing import Listing
 from app.models.listing_photo import ListingPhoto
 from app.models.member import Member
+from app.models.review import Review
 from app.routers.claim import get_my_requests
 
 
@@ -585,3 +586,83 @@ def test_my_requests_pending_order_is_deterministic_when_requested_at_ties(db_se
     for item in response.pending:
         pending_ids.append(item.id)
     assert pending_ids == expected_ids
+
+
+# --- reviewed_by_me: the US-20 edit-or-leave label flag ----------------------
+
+
+def insert_review_row(session, claim_id, reviewer, reviewee, reviewee_role, rating=4):
+    now = datetime.now(timezone.utc)
+    review = Review(
+        claim_id=claim_id,
+        reviewer_id=reviewer.id,
+        reviewee_id=reviewee.id,
+        reviewee_role=reviewee_role,
+        rating=rating,
+        body="",
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(review)
+    session.commit()
+    return review.id
+
+
+def test_completed_request_is_flagged_after_the_caller_reviews(db_session):
+    """Once the caller reviews a completed exchange, its row carries
+    reviewed_by_me = True so the page can offer the edit label."""
+    owner = insert_member(db_session, email="owner@example.com", name="Owner")
+    caller = insert_member(db_session, email="caller@example.com", name="Caller")
+    listing = insert_listing(db_session, owner)
+    claim = insert_claim(
+        db_session,
+        listing,
+        caller,
+        status="completed",
+        completed_at=datetime(2026, 7, 2, 12, 0, tzinfo=timezone.utc),
+    )
+    insert_review_row(db_session, claim.id, caller, owner, "listing_owner")
+
+    response = get_my_requests(caller, db_session)
+
+    assert len(response.completed) == 1
+    assert response.completed[0].reviewed_by_me is True
+
+
+def test_completed_request_is_not_flagged_before_the_caller_reviews(db_session):
+    owner = insert_member(db_session, email="owner@example.com", name="Owner")
+    caller = insert_member(db_session, email="caller@example.com", name="Caller")
+    listing = insert_listing(db_session, owner)
+    insert_claim(
+        db_session,
+        listing,
+        caller,
+        status="completed",
+        completed_at=datetime(2026, 7, 2, 12, 0, tzinfo=timezone.utc),
+    )
+
+    response = get_my_requests(caller, db_session)
+
+    assert len(response.completed) == 1
+    assert response.completed[0].reviewed_by_me is False
+
+
+def test_the_other_partys_review_does_not_flag_the_callers_row(db_session):
+    """Only the CALLER's own review counts: the owner's review of the caller
+    must not make the caller's row read as already reviewed."""
+    owner = insert_member(db_session, email="owner@example.com", name="Owner")
+    caller = insert_member(db_session, email="caller@example.com", name="Caller")
+    listing = insert_listing(db_session, owner)
+    claim = insert_claim(
+        db_session,
+        listing,
+        caller,
+        status="completed",
+        completed_at=datetime(2026, 7, 2, 12, 0, tzinfo=timezone.utc),
+    )
+    insert_review_row(db_session, claim.id, owner, caller, "requestor")
+
+    response = get_my_requests(caller, db_session)
+
+    assert len(response.completed) == 1
+    assert response.completed[0].reviewed_by_me is False

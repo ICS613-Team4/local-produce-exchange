@@ -5,11 +5,14 @@ import BrowsePage from './pages/BrowsePage.tsx'
 import CreateListingPage from './pages/CreateListingPage.tsx'
 import DashboardPage from './pages/DashboardPage.tsx'
 import EditListingPage from './pages/EditListingPage.tsx'
+import ExchangeReviewsPage from './pages/ExchangeReviewsPage.tsx'
 import ExchangeThreadPage from './pages/ExchangeThreadPage.tsx'
 import HomePage from './pages/HomePage.tsx'
 import InvitePage from './pages/InvitePage.tsx'
+import LeaveReviewPage from './pages/LeaveReviewPage.tsx'
 import ListingDetailPage from './pages/ListingDetailPage.tsx'
 import LoginPage from './pages/LoginPage.tsx'
+import MemberReviewsPage from './pages/MemberReviewsPage.tsx'
 import NotFoundPage from './pages/NotFoundPage.tsx'
 import NotificationsPage from './pages/NotificationsPage.tsx'
 import MyListingsPage from './pages/MyListingsPage.tsx'
@@ -45,9 +48,12 @@ function App() {
             <Route path="/listings/create" element={<CreateListingPage />} />
             <Route path="/listings/:id/edit" element={<EditListingPage />} />
             <Route path="/exchange-thread" element={<ExchangeThreadPage />} />
+            <Route path="/review" element={<LeaveReviewPage />} />
+            <Route path="/exchange-reviews" element={<ExchangeReviewsPage />} />
+            <Route path="/member-reviews" element={<MemberReviewsPage />} />
+            <Route path="/browse" element={<BrowsePage />} />
+            <Route path="/listings/:id" element={<ListingDetailPage />} />
           </Route>
-          <Route path="/browse" element={<BrowsePage />} />
-          <Route path="/listings/:id" element={<ListingDetailPage />} />
           {/* The "*" path matches only when no route above does, so every
               unknown URL shows the not-found page instead of a blank screen. */}
           <Route path="*" element={<NotFoundPage />} />

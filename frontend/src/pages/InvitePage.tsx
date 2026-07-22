@@ -68,19 +68,6 @@ function InvitePage() {
     }
   }
 
-  // Not logged in: no memberId in localStorage. Show a prompt and stop here,
-  // so the create button never appears and the backend is never called.
-  if (memberId === '') {
-    return (
-      <div className="max-w-lg mx-auto">
-        <div className="bg-surface rounded-xl border border-border p-8 shadow-sm">
-          <h1 className="text-2xl font-bold text-text mb-4">Invite a new member</h1>
-          <p className="text-text-muted">Please log in to create an invite.</p>
-        </div>
-      </div>
-    )
-  }
-
   // Build the success area only after a token has been created.
   let successArea = <></>
   if (token !== '') {

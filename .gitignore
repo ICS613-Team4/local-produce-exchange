@@ -147,3 +147,4 @@ nbdist/
 # ===== Playwright (local browser-automation artifacts) =====
 # Covers .playwright, .playwright-cli, .playwright-mcp, and any similar dir.
 .playwright*/
+/tests

@@ -12,6 +12,7 @@ from sqlalchemy.dialects.postgresql import Range
 from app.models.claim import Claim
 from app.models.listing import Listing
 from app.models.member import Member
+from app.models.review import Review
 from app.routers.exchange_history import (
     build_exchange_history_items,
     get_exchange_history,
@@ -363,6 +364,80 @@ def test_build_items_uses_an_empty_name_when_the_other_party_is_missing():
     assert items[0].other_party_name == ""
     assert items[1].side == "poster"
     assert items[1].other_party_name == ""
+
+
+def test_completed_rows_report_whether_the_caller_reviewed_them(db_session):
+    # The dashboard's review link says "Leave a Review" or "Edit Your Review"
+    # from this flag, so a completed row the caller has already reviewed comes
+    # back True and one they have not comes back False. Only the caller's own
+    # review counts: the other party's review of them leaves the flag False.
+    me = insert_member(db_session, email="me@example.com", name="Me Member")
+    other = insert_member(db_session, email="other@example.com", name="Other Member")
+    their_listing_id = insert_listing(db_session, other, title="Their Lemons")
+
+    reviewed_id = insert_claim(db_session, their_listing_id, me, status="completed")
+    not_reviewed_id = insert_claim(
+        db_session, their_listing_id, me, status="completed", minutes_ago=5
+    )
+    reviewed_by_them_id = insert_claim(
+        db_session, their_listing_id, me, status="completed", minutes_ago=10
+    )
+
+    now = datetime.now(timezone.utc)
+    db_session.add(
+        Review(
+            claim_id=reviewed_id,
+            reviewer_id=me.id,
+            reviewee_id=other.id,
+            reviewee_role="listing_owner",
+            rating=5,
+            body="Great produce.",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    # The other member's review of me on a different exchange. It is not mine,
+    # so it must not flip my flag on that row.
+    db_session.add(
+        Review(
+            claim_id=reviewed_by_them_id,
+            reviewer_id=other.id,
+            reviewee_id=me.id,
+            reviewee_role="requestor",
+            rating=4,
+            body="Easy pickup.",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    db_session.commit()
+
+    response = get_exchange_history(me, db_session)
+
+    flags = {}
+    for item in response.completed:
+        flags[item.id] = item.reviewed_by_me
+    assert flags[str(reviewed_id)] is True
+    assert flags[str(not_reviewed_id)] is False
+    assert flags[str(reviewed_by_them_id)] is False
+
+
+def test_unfinished_rows_never_claim_a_review(db_session):
+    # Only a completed exchange can carry a review, so every other group comes
+    # back with the flag off without the endpoint looking anything up.
+    me = insert_member(db_session, email="me@example.com", name="Me Member")
+    other = insert_member(db_session, email="other@example.com", name="Other Member")
+    their_listing_id = insert_listing(db_session, other, title="Their Lemons")
+
+    insert_claim(db_session, their_listing_id, me, status="requested")
+    insert_claim(db_session, their_listing_id, me, status="approved", minutes_ago=5)
+    insert_claim(db_session, their_listing_id, me, status="cancelled", minutes_ago=10)
+
+    response = get_exchange_history(me, db_session)
+
+    assert response.requested[0].reviewed_by_me is False
+    assert response.approved[0].reviewed_by_me is False
+    assert response.cancelled[0].reviewed_by_me is False
 
 
 def test_exchange_history_route_is_wired():

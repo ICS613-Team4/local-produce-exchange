@@ -15,8 +15,10 @@ from sqlalchemy.dialects.postgresql import Range
 from app.db import get_db_session
 from app.dependencies import get_current_member
 from app.main import app
+from app.models.claim import Claim
 from app.models.listing import Listing
 from app.models.member import Member
+from app.models.review import Review
 from app.routers.listing import get_listing
 
 
@@ -334,3 +336,90 @@ def test_get_listing_route_is_wired_with_auth_and_session():
         dependency_calls.append(dependency.call)
     assert get_current_member in dependency_calls
     assert get_db_session in dependency_calls
+
+
+# --- US-20: the owner's listing-owner rating ---------------------------------
+
+
+def insert_completed_claim_row(session, listing, claimant):
+    claim = Claim(
+        listing_id=listing.id,
+        claimant_id=claimant.id,
+        requested_quantity=1,
+        approved_quantity=1,
+        status="completed",
+        requested_at=datetime.now(timezone.utc),
+        completed_at=datetime.now(timezone.utc),
+    )
+    session.add(claim)
+    session.commit()
+    return claim.id
+
+
+def insert_review_row(
+    session, claim_id, reviewer, reviewee, reviewee_role, rating, disabled_at=None
+):
+    now = datetime.now(timezone.utc)
+    review = Review(
+        claim_id=claim_id,
+        reviewer_id=reviewer.id,
+        reviewee_id=reviewee.id,
+        reviewee_role=reviewee_role,
+        rating=rating,
+        body="",
+        created_at=now,
+        updated_at=now,
+        disabled_at=disabled_at,
+    )
+    session.add(review)
+    session.commit()
+    return review.id
+
+
+def test_listing_detail_owner_rating_is_empty_with_no_reviews(db_session):
+    """An owner with no reviews shows a None average and a 0 count, which the
+    page renders as "No rating yet", never a bare zero."""
+    owner = insert_member(db_session, email="owner@example.com")
+    listing = insert_listing(db_session, owner)
+    viewer = insert_member(db_session, email="viewer-two@example.com")
+
+    response = get_listing(str(listing.id), viewer, db_session)
+
+    assert response.owner_rating_average is None
+    assert response.owner_rating_count == 0
+
+
+def test_listing_detail_owner_rating_counts_only_live_owner_role_reviews(db_session):
+    """The average uses live listing-owner-role reviews only: a disabled
+    review and a requestor-role review about the same member are excluded."""
+    owner = insert_member(db_session, email="owner@example.com")
+    listing = insert_listing(db_session, owner)
+    reviewer_a = insert_member(db_session, email="reviewer-a@example.com")
+    reviewer_b = insert_member(db_session, email="reviewer-b@example.com")
+    reviewer_c = insert_member(db_session, email="reviewer-c@example.com")
+
+    claim_a = insert_completed_claim_row(db_session, listing, reviewer_a)
+    claim_b = insert_completed_claim_row(db_session, listing, reviewer_b)
+    claim_c = insert_completed_claim_row(db_session, listing, reviewer_c)
+
+    # Two live owner-role reviews: 4 and 5, so the average is 4.5 from 2.
+    insert_review_row(db_session, claim_a, reviewer_a, owner, "listing_owner", 4)
+    insert_review_row(db_session, claim_b, reviewer_b, owner, "listing_owner", 5)
+    # A disabled owner-role review must not count.
+    insert_review_row(
+        db_session,
+        claim_c,
+        reviewer_c,
+        owner,
+        "listing_owner",
+        1,
+        disabled_at=datetime.now(timezone.utc),
+    )
+    # A requestor-role review about the owner belongs to the OTHER reputation.
+    insert_review_row(db_session, claim_a, reviewer_b, owner, "requestor", 1)
+
+    viewer = insert_member(db_session, email="viewer-two@example.com")
+    response = get_listing(str(listing.id), viewer, db_session)
+
+    assert response.owner_rating_average == 4.5
+    assert response.owner_rating_count == 2

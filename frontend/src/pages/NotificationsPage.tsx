@@ -11,14 +11,12 @@ import type {
   NotificationsResponse,
   NotificationsResult,
 } from '../services/notificationService'
-import { authStateChangedEventName } from '../services/authService'
+import { clearStoredLogin } from '../services/authService'
 import { formatTimestamp, getLocalTimeZoneNote } from '../utils/formatTimestamp'
-
-const notLoggedInMessage = 'You need to be logged in to see this page.'
 
 function NotificationsPage() {
   const latestRequestNumber = useRef(0)
-  const [memberId, setMemberId] = useState(window.localStorage.getItem('memberId') ?? '')
+  const memberId = window.localStorage.getItem('memberId') ?? ''
   const [result, setResult] = useState<NotificationsResult | null>(null)
   // Bumped after a successful mark-read to re-run the load effect, so the row
   // flips to read without a full page reload.
@@ -35,17 +33,12 @@ function NotificationsPage() {
   // again whenever reloadCounter changes.
   useEffect(() => {
     latestRequestNumber.current = latestRequestNumber.current + 1
-    if (memberId === '') { return }
     const requestNumber = latestRequestNumber.current
     async function loadNotifications() {
       const loadedResult = await sendGetNotificationsRequest(memberId)
       if (requestNumber !== latestRequestNumber.current) { return }
       if (loadedResult.status === 401) {
-        window.localStorage.removeItem('memberId')
-        window.localStorage.removeItem('memberName')
-        window.localStorage.removeItem('memberEmail')
-        setMemberId('')
-        window.dispatchEvent(new Event(authStateChangedEventName))
+        clearStoredLogin()
         return
       }
       setResult(loadedResult)
@@ -84,11 +77,7 @@ function NotificationsPage() {
     // tell the rest of the app, rather than showing a raw "not authenticated"
     // detail in an alert.
     if (markResult.status === 401) {
-      window.localStorage.removeItem('memberId')
-      window.localStorage.removeItem('memberName')
-      window.localStorage.removeItem('memberEmail')
-      setMemberId('')
-      window.dispatchEvent(new Event(authStateChangedEventName))
+      clearStoredLogin()
       return
     }
 
@@ -131,13 +120,7 @@ function NotificationsPage() {
   const timeZoneNote = getLocalTimeZoneNote()
 
   let contentArea
-  if (memberId === '') {
-    contentArea = (
-      <div className="rounded-lg bg-error-bg border border-red-200 px-4 py-3 text-sm text-error" role="alert">
-        {notLoggedInMessage}
-      </div>
-    )
-  } else if (result === null) {
+  if (result === null) {
     contentArea = <p className="text-text-muted text-sm py-8 text-center">Loading your notifications...</p>
   } else if (result.errorMessage !== '') {
     contentArea = (
@@ -168,9 +151,11 @@ function NotificationsPage() {
         // Where the row's action link goes. A new incoming request links to
         // the Incoming Requests page, where the owner acts on it. A withdrawn
         // request gets no link at all: it already left the queue, so there is
-        // nothing to open. Every other notification with a claim links to
-        // that exchange's thread. Clicking whichever link comes out of this
-        // also marks an unread row read on the way out (handleLinkClick).
+        // nothing to open. A denied request gets no link either: the poster
+        // turned it down, the thread is locked, and there is nothing left to
+        // do there. Every other notification with a claim links to that
+        // exchange's thread. Clicking whichever link comes out of this also
+        // marks an unread row read on the way out (handleLinkClick).
         let actionLink = null
         if (item.kind === 'request_submitted') {
           actionLink = (
@@ -182,7 +167,7 @@ function NotificationsPage() {
               Open your incoming requests
             </Link>
           )
-        } else if (item.kind === 'request_withdrawn') {
+        } else if (item.kind === 'request_withdrawn' || item.kind === 'request_denied') {
           actionLink = null
         } else if (item.claim_id !== null) {
           const exchangeThreadTarget = '/exchange-thread?claim=' + item.claim_id

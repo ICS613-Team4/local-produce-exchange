@@ -12,16 +12,16 @@ import type {
   ListingAllRequestsGroup,
   RequestQueuesResult,
 } from '../services/requestQueueService'
-import { authStateChangedEventName } from '../services/authService'
+import { clearStoredLogin } from '../services/authService'
 import { formatTimestamp, getLocalTimeZoneNote } from '../utils/formatTimestamp'
-
-const notLoggedInMessage = 'You need to be logged in to see this page.'
+import MemberRatingChip from '../components/MemberRatingChip'
+import ReviewLinks from '../components/ReviewLinks'
 
 function RequestQueuesPage() {
   const latestRequestNumber = useRef(0)
   const [searchParams] = useSearchParams()
   const listingFilter = searchParams.get('listing') ?? ''
-  const [memberId, setMemberId] = useState(window.localStorage.getItem('memberId') ?? '')
+  const memberId = window.localStorage.getItem('memberId') ?? ''
   const [result, setResult] = useState<RequestQueuesResult | null>(null)
   const [resultFilter, setResultFilter] = useState('')
   const [reloadCounter, setReloadCounter] = useState(0)
@@ -86,28 +86,14 @@ function RequestQueuesPage() {
     setReloadCounter((currentValue) => currentValue + 1)
   }
 
-  // Placeholder for the review feature (US-20). The button renders on
-  // completed rows now so the flow is visible, but the review form itself is
-  // US-20's to build; until then the click explains that.
-  function handleLeaveReview() {
-    window.alert(
-      'Reviews are not built yet. Leaving a rating and review for a completed exchange arrives with user story US-20.',
-    )
-  }
-
   useEffect(() => {
     latestRequestNumber.current = latestRequestNumber.current + 1
-    if (memberId === '') { return }
     const requestNumber = latestRequestNumber.current
     async function loadAllRequests() {
       const loadedResult = await sendGetAllRequestsRequest(memberId, listingFilter)
       if (requestNumber !== latestRequestNumber.current) { return }
       if (loadedResult.status === 401) {
-        window.localStorage.removeItem('memberId')
-        window.localStorage.removeItem('memberName')
-        window.localStorage.removeItem('memberEmail')
-        setMemberId('')
-        window.dispatchEvent(new Event(authStateChangedEventName))
+        clearStoredLogin()
         return
       }
       setResult(loadedResult)
@@ -258,28 +244,56 @@ function RequestQueuesPage() {
         </button>
       )
     }
-    // Placeholder for the review feature (US-20): a completed row lets the
-    // poster review the other party, the recipient. The review form itself is
-    // US-20's to build; until then the click explains that.
+    // A completed row lets the poster review the other party, the recipient,
+    // on the shared /review screen (US-20). Same screen the recipient's own
+    // review link reaches; the backend works out the roles from the claim.
     let reviewButton = null
     if (item.status === 'completed') {
-      let recipientFirstName = 'the recipient'
-      if (item.claimant_name !== '') {
-        recipientFirstName = item.claimant_name.split(' ')[0]
-      }
+      // The shared pair, in this page's own button variant: write the caller's
+      // own review of the recipient (US-20), and read both sides' reviews of
+      // the exchange (US-21).
       reviewButton = (
-        <button type="button" onClick={() => handleLeaveReview()}
-          className="inline-flex items-center px-3 py-1 text-xs font-medium text-primary-700 border border-border rounded-md hover:bg-primary-50 transition-colors">
-          Leave a Review for {recipientFirstName}
-        </button>
+        <ReviewLinks
+          claimId={item.id}
+          otherPartyName={item.claimant_name}
+          fallbackName="the recipient"
+          reviewedByMe={item.reviewed_by_me}
+          onDeleted={() => setReloadCounter((c) => c + 1)}
+          linkClasses="inline-flex items-center px-3 py-1 text-xs font-medium text-primary-700 border border-border rounded-md hover:bg-primary-50 transition-colors"
+        />
       )
     }
 
+    // The requestor's rating AS a requestor (US-20), inline right after the
+    // requestor's name, so the owner can weigh whose request to accept.
+    let claimantRequestorAverage = null
+    if (item.claimant_requestor_average !== undefined && item.claimant_requestor_average !== null) {
+      claimantRequestorAverage = item.claimant_requestor_average
+    }
+    let claimantRequestorCount = 0
+    if (item.claimant_requestor_count !== undefined) {
+      claimantRequestorCount = item.claimant_requestor_count
+    }
+
     return (
-      <li key={item.id} className="flex items-center justify-between py-3 border-b border-border last:border-0">
+      // The row stacks on a phone and goes side by side from the small
+      // breakpoint up, the same pattern the dashboard history rows use. A
+      // completed row carries three controls, which do not fit one line on a
+      // narrow screen, so the controls block below wraps too.
+      <li
+        key={item.id}
+        className="flex flex-col gap-2 py-3 border-b border-border last:border-0 sm:flex-row sm:items-center sm:justify-between sm:gap-3"
+      >
         <div className="min-w-0">
-          <p className="text-sm text-text">
-            <span className="font-medium">{item.claimant_name}</span> requested {item.requested_quantity}
+          <p className="text-sm text-text break-words">
+            <span className="font-medium">{item.claimant_name}</span>{' '}
+            <MemberRatingChip
+              memberId={item.claimant_id}
+              role="requestor"
+              average={claimantRequestorAverage}
+              count={claimantRequestorCount}
+            />{' '}
+            requested {item.requested_quantity}
           </p>
           <div className="flex items-center gap-2 mt-1">
             <span className={'inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ' + badgeClasses}>
@@ -290,7 +304,7 @@ function RequestQueuesPage() {
           <ul className="mt-1">{statusOutcomeItems}</ul>
         </div>
         {(approveButton || denyButton || completeButton || reviewButton || threadLink) && (
-          <div className="flex items-center gap-2 shrink-0 ml-3">
+          <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
             {approveButton}
             {denyButton}
             {completeButton}
@@ -374,13 +388,7 @@ function RequestQueuesPage() {
   const timeZoneNote = getLocalTimeZoneNote()
 
   let contentArea
-  if (memberId === '') {
-    contentArea = (
-      <div className="rounded-lg bg-error-bg border border-red-200 px-4 py-3 text-sm text-error" role="alert">
-        {notLoggedInMessage}
-      </div>
-    )
-  } else if (result === null || resultFilter !== listingFilter) {
+  if (result === null || resultFilter !== listingFilter) {
     contentArea = <p className="text-text-muted text-sm py-8 text-center">Loading your requests...</p>
   } else if (result.errorMessage !== '') {
     contentArea = (

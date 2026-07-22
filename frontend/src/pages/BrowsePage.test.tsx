@@ -48,29 +48,25 @@ function makeListing(id: string, title: string) {
     created_at: '2026-06-19T00:00:00.000Z',
     owner_name: 'Olivia Owner',
     photos: [] as Array<{ id: string; content_type: string; position: number }>,
+    // The owner's listing-owner rating (US-20). null and 0 read as
+    // "(no listing owner rating)"; a test that needs a rated owner
+    // overwrites these.
+    owner_rating_average: null as number | null,
+    owner_rating_count: 0,
   }
   return listing
 }
 
-// Render the browse page with routes for /browse and /login, so the redirect
-// guard has somewhere to land.
+// Render the browse page on its own route.
 function renderBrowse() {
   render(
     <MemoryRouter initialEntries={['/browse']}>
       <Routes>
         <Route path="/browse" element={<BrowsePage />} />
-        <Route path="/login" element={<p>Login page</p>} />
       </Routes>
     </MemoryRouter>,
   )
 }
-
-test('redirects to the login page when not logged in', () => {
-  // No memberId in localStorage, so the page must send the visitor to /login.
-  renderBrowse()
-
-  expect(screen.getByText('Login page')).toBeTruthy()
-})
 
 test('renders the controls and lists the active listings on open', async () => {
   window.localStorage.setItem('memberId', 'member-123')
@@ -249,4 +245,43 @@ test('checking two tags then unchecking one keeps only the remaining tag', async
   expect(lastUrl).not.toContain('dietary_tags=vegan')
   expect(lastUrl).toContain('allergen_tags=contains+wheat')
   expect(lastUrl).toContain('allergen_tags=contains+nuts')
+})
+
+// --- US-20: each card shows the owner's listing-owner rating ---
+
+test('a card shows the owner rating chip when the owner has reviews', async () => {
+  window.localStorage.setItem('memberId', 'member-123')
+  const listing = makeListing('l1', 'Rated Lemons')
+  listing.owner_rating_average = 4.0
+  listing.owner_rating_count = 1
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, [listing])
+  })
+
+  renderBrowse()
+
+  await screen.findByRole('link', { name: 'Rated Lemons' })
+  // The rating sits inline in the posted-by line itself, with no count shown.
+  const chip = screen.getByRole('link', {
+    name: "View the reviews behind this member's rating as a listing owner",
+  })
+  expect(chip.textContent).toBe('(★ 4.0 listing owner rating)')
+  const postedLine = screen.getByText('Posted by Olivia Owner')
+  expect(postedLine.contains(chip)).toBe(true)
+})
+
+test('a card says no rating, without a link, for an unrated owner', async () => {
+  window.localStorage.setItem('memberId', 'member-123')
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, [makeListing('l1', 'Unrated Kale')])
+  })
+
+  renderBrowse()
+
+  await screen.findByRole('link', { name: 'Unrated Kale' })
+  // No reviews renders plain non-clickable text: no star, no chip button.
+  expect(screen.getByText('Posted by Olivia Owner')).toBeTruthy()
+  expect(screen.getByText('(no listing owner rating)')).toBeTruthy()
+  expect(screen.queryByText(/★/)).toBeNull()
+  expect(screen.queryByRole('link', { name: /View the reviews/ })).toBeNull()
 })

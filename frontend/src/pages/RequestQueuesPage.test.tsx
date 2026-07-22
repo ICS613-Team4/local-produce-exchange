@@ -276,11 +276,11 @@ test('a picked-up request shows both outcome lines and the Contact the Recipient
   expect(screen.getByRole('button', { name: 'Mark exchange complete' })).toBeTruthy()
   const recipientLink = screen.getByRole('link', { name: 'Contact the Recipient' })
   expect(recipientLink.getAttribute('href')).toContain('/exchange-thread?claim=c3')
-  // A finished exchange offers no Approve or Deny, and the review button
+  // A finished exchange offers no Approve or Deny, and the review link
   // belongs to completed rows only.
   expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
   expect(screen.queryByRole('button', { name: 'Deny' })).toBeNull()
-  expect(screen.queryByRole('button', { name: /Leave a Review/ })).toBeNull()
+  expect(screen.queryByRole('link', { name: /Leave a Review/ })).toBeNull()
 })
 
 test('a completed request shows its full outcome and no complete button', async () => {
@@ -296,27 +296,57 @@ test('a completed request shows its full outcome and no complete button', async 
   expect(screen.getByText(/Picked up on/)).toBeTruthy()
   expect(screen.getByText(/Completed on/)).toBeTruthy()
   expect(screen.queryByRole('button', { name: 'Mark exchange complete' })).toBeNull()
-  // The completed row's one control is the placeholder review button naming
-  // the recipient (the fixture's claimant is Carol Chen).
-  expect(screen.getByRole('button', { name: 'Leave a Review for Carol' })).toBeTruthy()
+  // The completed row's one control is the review link naming the recipient
+  // (the fixture's claimant is Carol Chen).
+  expect(screen.getByRole('link', { name: 'Leave a Review for Carol' })).toBeTruthy()
 })
 
-test('the review button on a completed request explains it arrives with US-20', async () => {
+test('the review link on a completed request points at the shared review page', async () => {
   setLoggedIn()
-  let alertMessage = ''
-  vi.stubGlobal('alert', (message: string) => {
-    alertMessage = message
-  })
   vi.stubGlobal('fetch', async () => {
     return makeFakeResponse(true, 200, makeCompletedBody())
   })
 
   renderRequestsPage('/requests')
 
-  const reviewButton = await screen.findByRole('button', { name: 'Leave a Review for Carol' })
-  fireEvent.click(reviewButton)
+  const reviewLink = await screen.findByRole('link', { name: 'Leave a Review for Carol' })
+  expect(reviewLink.getAttribute('href')).toBe('/review?claim=c3')
+})
 
-  expect(alertMessage).toContain('US-20')
+test('a completed request also links to the reviews for that exchange', async () => {
+  setLoggedIn()
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, makeCompletedBody())
+  })
+
+  renderRequestsPage('/requests')
+
+  // US-21: reading the reviews sits beside writing one.
+  const viewLink = await screen.findByRole('link', { name: 'View Reviews' })
+  expect(viewLink.getAttribute('href')).toBe('/exchange-reviews?claim=c3')
+})
+
+test('a row stacks on a phone and its controls wrap', async () => {
+  // A completed row carries three controls (write, read, delete), which do not
+  // fit one line on a narrow screen. The row must stack and the controls must
+  // wrap, or the page scrolls sideways. Found in a browser walk at 375px wide,
+  // where the delete button hung 100px past the right edge.
+  setLoggedIn()
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, makeCompletedBody())
+  })
+
+  renderRequestsPage('/requests')
+
+  const viewLink = await screen.findByRole('link', { name: 'View Reviews' })
+  const controls = viewLink.parentElement as HTMLElement
+  expect(controls.className).toContain('flex-wrap')
+  // No unconditional shrink-0: that is what pushed the controls off screen.
+  expect(controls.className).not.toContain(' shrink-0')
+
+  const row = controls.parentElement as HTMLElement
+  expect(row.className).toContain('flex-col')
+  expect(row.className).toContain('sm:flex-row')
 })
 
 test('a deactivated listing group is marked in its heading', async () => {
@@ -685,8 +715,11 @@ test('a stale-session 401 clears the credentials and fires the auth event', asyn
 
   renderRequestsPage('/requests')
 
-  expect(await screen.findByText('You need to be logged in to see this page.')).toBeTruthy()
-  expect(window.localStorage.getItem('memberId')).toBeNull()
+  // The shared route guard renders the logged-out message now, so the only
+  // thing this page owns is clearing the stored login and firing the event.
+  await waitFor(() => {
+    expect(window.localStorage.getItem('memberId')).toBeNull()
+  })
   expect(window.localStorage.getItem('memberName')).toBeNull()
   expect(window.localStorage.getItem('memberEmail')).toBeNull()
   expect(authEventFired).toBe(true)
@@ -728,20 +761,6 @@ test('shows the fallback message on a non-200 failure that carries no detail', a
 
   const alert = await screen.findByRole('alert')
   expect(alert.textContent).toBe('Could not load your requests. Please try again.')
-})
-
-test('renders the not-logged-in message and does not fetch when logged out', async () => {
-  let fetchCallCount = 0
-  vi.stubGlobal('fetch', async () => {
-    fetchCallCount = fetchCallCount + 1
-    return makeFakeResponse(true, 200, { groups: [] })
-  })
-
-  renderRequestsPage('/requests')
-
-  expect(screen.getByText('You need to be logged in to see this page.')).toBeTruthy()
-  await waitForStateUpdates()
-  expect(fetchCallCount).toBe(0)
 })
 
 test('drops a late response after the listing filter changes', async () => {
@@ -861,4 +880,52 @@ test('shows a denied status outcome for a denied request', async () => {
 
   expect(await screen.findByText(/Denied on/)).toBeTruthy()
   expect(screen.queryByRole('button', { name: 'Mark exchange complete' })).toBeNull()
+})
+
+test('a completed request the caller reviewed offers the edit label', async () => {
+  setLoggedIn()
+  const body = makeCompletedBody()
+  body.groups[0].requests[0].reviewed_by_me = true
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, body)
+  })
+
+  renderRequestsPage('/requests')
+
+  const reviewLink = await screen.findByRole('link', { name: 'Edit Your Review for Carol' })
+  expect(reviewLink.getAttribute('href')).toBe('/review?claim=c3')
+  expect(screen.queryByRole('link', { name: 'Leave a Review for Carol' })).toBeNull()
+})
+
+test('a request row shows the requestor rating inline after the name', async () => {
+  setLoggedIn()
+  const body = makeAllRequestsBody()
+  body.groups[0].requests[0].claimant_requestor_average = 4.3
+  body.groups[0].requests[0].claimant_requestor_count = 12
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, body)
+  })
+
+  renderRequestsPage('/requests')
+
+  // Bob's rating sits inline in his own row line, with no count shown.
+  const bobName = await screen.findByText('Bob Baker')
+  const chip = screen.getByRole('link', {
+    name: "View the reviews behind this member's rating as a requestor",
+  })
+  expect(chip.textContent).toBe('(★ 4.3 requestor rating)')
+  const bobLine = bobName.parentElement
+  expect(bobLine !== null).toBe(true)
+  if (bobLine !== null) {
+    expect(bobLine.contains(chip)).toBe(true)
+  }
+  // Carol's row has no reviews, so her line says so in plain non-clickable
+  // text with no star.
+  const carolName = screen.getByText('Carol Chen')
+  const carolLine = carolName.parentElement
+  expect(carolLine !== null).toBe(true)
+  if (carolLine !== null) {
+    expect(carolLine.textContent).toContain('(no requestor rating)')
+    expect(carolLine.textContent).not.toContain('★')
+  }
 })

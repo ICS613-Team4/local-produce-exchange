@@ -12,14 +12,13 @@ import type {
   MyRequestsResponse,
   RequestQueuesResult,
 } from '../services/requestQueueService'
-import { authStateChangedEventName } from '../services/authService'
+import { clearStoredLogin } from '../services/authService'
 import { formatTimestamp, getLocalTimeZoneNote } from '../utils/formatTimestamp'
-
-const notLoggedInMessage = 'You need to be logged in to see this page.'
+import ReviewLinks from '../components/ReviewLinks'
 
 function MyRequestsPage() {
   const latestRequestNumber = useRef(0)
-  const [memberId, setMemberId] = useState(window.localStorage.getItem('memberId') ?? '')
+  const memberId = window.localStorage.getItem('memberId') ?? ''
   const [result, setResult] = useState<RequestQueuesResult | null>(null)
   const [reloadCounter, setReloadCounter] = useState(0)
   const [withdrawingClaimId, setWithdrawingClaimId] = useState('')
@@ -37,17 +36,12 @@ function MyRequestsPage() {
   // and again whenever reloadCounter changes after a successful action.
   useEffect(() => {
     latestRequestNumber.current = latestRequestNumber.current + 1
-    if (memberId === '') { return }
     const requestNumber = latestRequestNumber.current
     async function loadMyRequests() {
       const loadedResult = await sendGetMyRequestsRequest(memberId)
       if (requestNumber !== latestRequestNumber.current) { return }
       if (loadedResult.status === 401) {
-        window.localStorage.removeItem('memberId')
-        window.localStorage.removeItem('memberName')
-        window.localStorage.removeItem('memberEmail')
-        setMemberId('')
-        window.dispatchEvent(new Event(authStateChangedEventName))
+        clearStoredLogin()
         return
       }
       setResult(loadedResult)
@@ -172,15 +166,6 @@ function MyRequestsPage() {
     }
 
     setReloadCounter((currentValue) => currentValue + 1)
-  }
-
-  // Placeholder for the review feature (US-20). The button renders on
-  // completed rows now so the flow is visible, but the review form itself is
-  // US-20's to build; until then the click explains that.
-  function handleLeaveReview() {
-    window.alert(
-      'Reviews are not built yet. Leaving a rating and review for a completed exchange arrives with user story US-20.',
-    )
   }
 
   // Map a claim status to its badge colors. Pickup and completion use distinct
@@ -316,22 +301,20 @@ function MyRequestsPage() {
       }
       // A finished exchange: the poster marked it complete after the pickup.
       // No thread link here, matching the poster's all-requests page, where a
-      // completed row also loses its link. The review button reviews the other
-      // party, the poster; the form itself is US-20's (see handleLeaveReview).
+      // completed row also loses its link. The review link reviews the other
+      // party, the poster, on the shared /review screen (US-20).
       detailLine = <>Your exchange for {approvedQuantity} was completed on {completedAtText}</>
-      let posterFirstName = 'the poster'
-      if (item.owner_name !== '') {
-        posterFirstName = item.owner_name.split(' ')[0]
-      }
+      // The shared pair: write the caller's own review of the poster (US-20),
+      // and read both sides' reviews of the exchange (US-21).
       controlsArea = (
         <div className="flex flex-wrap items-center gap-2 mt-3">
-          <button
-            type="button"
-            onClick={() => handleLeaveReview()}
-            className="inline-flex items-center px-3 py-1.5 text-xs font-medium text-primary-600 border border-primary-200 rounded-md hover:bg-primary-50 transition-colors"
-          >
-            Leave a Review for {posterFirstName}
-          </button>
+          <ReviewLinks
+            claimId={item.id}
+            otherPartyName={item.owner_name}
+            fallbackName="the poster"
+            reviewedByMe={item.reviewed_by_me}
+            onDeleted={() => setReloadCounter((c) => c + 1)}
+          />
         </div>
       )
     } else if (item.status === 'denied') {
@@ -411,13 +394,7 @@ function MyRequestsPage() {
   const timeZoneNote = getLocalTimeZoneNote()
 
   let contentArea
-  if (memberId === '') {
-    contentArea = (
-      <div className="rounded-lg bg-error-bg border border-red-200 px-4 py-3 text-sm text-error" role="alert">
-        {notLoggedInMessage}
-      </div>
-    )
-  } else if (result === null) {
+  if (result === null) {
     contentArea = <p className="text-text-muted text-sm py-8 text-center">Loading your requests...</p>
   } else if (result.errorMessage !== '') {
     contentArea = (

@@ -53,16 +53,6 @@ function renderProfilePage() {
   )
 }
 
-// --- not logged in ---
-
-test('shows a login prompt when no member is in localStorage', () => {
-  renderProfilePage()
-
-  expect(screen.getByText(/Please/)).toBeTruthy()
-  expect(screen.getByRole('link', { name: 'log in' })).toBeTruthy()
-  expect(screen.queryByText('Profile')).toBeTruthy()
-})
-
 // --- loading then success ---
 
 test('shows profile fields after a successful fetch', async () => {

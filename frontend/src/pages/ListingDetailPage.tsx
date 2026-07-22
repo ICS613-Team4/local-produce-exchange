@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router'
 
 import { sendDeactivateListingRequest, sendGetListingRequest } from '../services/listingService'
 import type { ListingDetail, ListingResult } from '../services/listingService'
+import MemberRatingChip from '../components/MemberRatingChip'
 import {
   sendConfirmPickupRequest,
   sendCreateClaimRequest,
@@ -13,14 +14,12 @@ import type {
   ClaimDecisionResponse,
   RequestQueuesResponse,
 } from '../services/requestQueueService'
-import { authStateChangedEventName } from '../services/authService'
+import { clearStoredLogin } from '../services/authService'
 import { formatApiResult } from '../utils/formatApiResult'
 import { formatTimestamp, getLocalTimeZoneName } from '../utils/formatTimestamp'
 
 // One shared message for the not-logged-in case, declared at module scope so the
 // wording is the same everywhere and it is not a useEffect dependency.
-const notLoggedInMessage = 'You need to be logged in to see this page.'
-
 function ListingDetailPage() {
   // Counts listing loads so an older response cannot overwrite a newer route.
   const latestRequestNumber = useRef(0)
@@ -32,8 +31,7 @@ function ListingDetailPage() {
   // memberId is the single source of auth truth: logged in means it is not
   // empty. The shared nav shows who is logged in, so this page keeps only the
   // name setter, which the 401 paths use to clear a stale session.
-  const [memberId, setMemberId] = useState(window.localStorage.getItem('memberId') ?? '')
-  const [, setMemberName] = useState(window.localStorage.getItem('memberName') ?? '')
+  const memberId = window.localStorage.getItem('memberId') ?? ''
 
   // Holds the whole response. null means the listing has not loaded yet, which
   // doubles as the loading state, so no separate loading flag is needed.
@@ -183,14 +181,7 @@ function ListingDetailPage() {
     // Stale login: a 401 means the saved id no longer works. Clear the creds and
     // fall back to logged-out, exactly like the GET 401 path above.
     if (deactivateResult.status === 401) {
-      window.localStorage.removeItem('memberId')
-      window.localStorage.removeItem('memberName')
-      window.localStorage.removeItem('memberEmail')
-      setMemberId('')
-      setMemberName('')
-      // The route is not changing, so tell the shared nav the login was
-      // cleared by firing the same-tab event it listens for.
-      window.dispatchEvent(new Event(authStateChangedEventName))
+      clearStoredLogin()
       return
     }
 
@@ -269,12 +260,7 @@ function ListingDetailPage() {
     // Stale login: a 401 means the saved id no longer works. Clear the creds and
     // fall back to logged-out, like the other paths on this page.
     if (claimResult.status === 401) {
-      window.localStorage.removeItem('memberId')
-      window.localStorage.removeItem('memberName')
-      window.localStorage.removeItem('memberEmail')
-      setMemberId('')
-      setMemberName('')
-      window.dispatchEvent(new Event(authStateChangedEventName))
+      clearStoredLogin()
       return
     }
 
@@ -332,12 +318,7 @@ function ListingDetailPage() {
     setIsConfirmingPickup(false)
 
     if (claimResult.status === 401) {
-      window.localStorage.removeItem('memberId')
-      window.localStorage.removeItem('memberName')
-      window.localStorage.removeItem('memberEmail')
-      setMemberId('')
-      setMemberName('')
-      window.dispatchEvent(new Event(authStateChangedEventName))
+      clearStoredLogin()
       return
     }
 
@@ -359,13 +340,10 @@ function ListingDetailPage() {
     setPickupMessage(failureMessage)
   }
 
-  // Load the listing when the page has a logged-in member. The request number
-  // keeps an older response from replacing a newer route's response.
+  // Load the listing. The request number keeps an older response from
+  // replacing a newer route's response.
   useEffect(() => {
     latestRequestNumber.current = latestRequestNumber.current + 1
-    if (memberId === '') {
-      return
-    }
     const requestNumber = latestRequestNumber.current
     async function loadListing() {
       const loadedResult = await sendGetListingRequest(listingId, memberId)
@@ -376,14 +354,7 @@ function ListingDetailPage() {
         // The saved memberId no longer works (the member was deleted, say).
         // Clear the stale credentials exactly like logout, so the nav and the
         // content both fall back to the logged-out view.
-        window.localStorage.removeItem('memberId')
-        window.localStorage.removeItem('memberName')
-        window.localStorage.removeItem('memberEmail')
-        setMemberId('')
-        setMemberName('')
-        // The route is not changing, so tell the shared nav the login was
-        // cleared by firing the same-tab event it listens for.
-        window.dispatchEvent(new Event(authStateChangedEventName))
+        clearStoredLogin()
         return
       }
       setResult(loadedResult)
@@ -428,12 +399,7 @@ function ListingDetailPage() {
       if (countResult.status === 401) {
         // Same stale-session handling as the listing-load and deactivate paths:
         // clear the creds, fall back to logged-out, and tell the shared nav.
-        window.localStorage.removeItem('memberId')
-        window.localStorage.removeItem('memberName')
-        window.localStorage.removeItem('memberEmail')
-        setMemberId('')
-        setMemberName('')
-        window.dispatchEvent(new Event(authStateChangedEventName))
+        clearStoredLogin()
         return
       }
       if (countResult.ok === false) {
@@ -476,12 +442,7 @@ function ListingDetailPage() {
       }
       if (claimResult.status === 401) {
         // Same stale-session handling as the other fetches on this page.
-        window.localStorage.removeItem('memberId')
-        window.localStorage.removeItem('memberName')
-        window.localStorage.removeItem('memberEmail')
-        setMemberId('')
-        setMemberName('')
-        window.dispatchEvent(new Event(authStateChangedEventName))
+        clearStoredLogin()
         return
       }
       if (claimResult.ok === false) {
@@ -508,15 +469,7 @@ function ListingDetailPage() {
   // Build the content area with a plain if/else chain, checked in a set order.
   // Every branch assigns (the chain ends with a plain else), so no initial value.
   let contentArea
-  if (memberId === '') {
-    // A logged-out viewer cannot load details (the GET requires auth). This also
-    // covers the just-cleared 401 case above.
-    contentArea = (
-      <div className="rounded-lg bg-error-bg border border-red-200 px-4 py-3 text-sm text-error" role="alert">
-        {notLoggedInMessage}
-      </div>
-    )
-  } else if (result === null || resultListingId !== listingId) {
+  if (result === null || resultListingId !== listingId) {
     // First render, or a route change before the next response arrives.
     contentArea = <p className="text-text-muted text-sm">Loading the listing...</p>
   } else if (result.errorMessage !== '') {
@@ -549,9 +502,23 @@ function ListingDetailPage() {
     const postedText = formatTimestamp(listing.created_at)
     // Say who posted the listing when the backend sent the owner's name. The
     // field is optional on the type, so check it is a real non-empty string.
-    let postedLine = 'Posted ' + postedText
+    // The line is split in two so the owner's rating chip can sit inline right
+    // after the name: "Posted by Carol Chen (star 4.0) on <date>".
+    let postedStartText = 'Posted ' + postedText
+    let postedEndText = ''
     if (typeof listing.owner_name === 'string' && listing.owner_name !== '') {
-      postedLine = 'Posted by ' + listing.owner_name + ' on ' + postedText
+      postedStartText = 'Posted by ' + listing.owner_name
+      postedEndText = ' on ' + postedText
+    }
+    // The owner's rating AS a listing owner (US-20). No reviews yet renders
+    // nothing, never a bare zero.
+    let ownerRatingAverage = null
+    if (listing.owner_rating_average !== undefined && listing.owner_rating_average !== null) {
+      ownerRatingAverage = listing.owner_rating_average
+    }
+    let ownerRatingCount = 0
+    if (listing.owner_rating_count !== undefined) {
+      ownerRatingCount = listing.owner_rating_count
     }
     // The first photo renders as one large cover image spanning the card, the
     // way listing sites such as Airbnb and Etsy lead with a big photo. Any
@@ -663,14 +630,15 @@ function ListingDetailPage() {
         </div>
       )
     }
-    // The non-owner request area. What it shows depends on the viewer's own claim
-    // on this listing:
-    //   - no claim yet: the quantity textfield and Submit button.
-    //   - requested (pending): "You requested X quantity on: Y".
-    //   - denied: a short line saying the request was denied.
-    //   - approved: the approved quantity and time, plus a link to invite the
-    //     member to the Exchange Thread (a feature not built yet, stubbed below).
-    //   - withdrawn: a short line; the member already requested, so no new form.
+    // The non-owner request area, which is one of two views:
+    //   - the member has a request in flight on this listing (requested,
+    //     approved, or picked_up): a box saying where it stands, and no form,
+    //     because a member may have only one request in flight at a time.
+    //   - the member has no request in flight: the quantity textfield and
+    //     Submit button. A request that has finished (completed, cancelled, or
+    //     denied) is over and done with, so this page says nothing about it and
+    //     simply lets the member ask again. Where those earlier requests ended
+    //     up is on My Requests and on the dashboard's exchange history.
     // The form uses native HTML5 validation only (whole numbers via step, at
     // least 1 via min, no more than the remaining quantity via max, required), so
     // no custom JavaScript checks the value. The backend validates again and is
@@ -679,20 +647,125 @@ function ListingDetailPage() {
     let requestArea = null
     let requestMessageArea = null
     if (memberId !== ownerId) {
+      // The member's request on this listing counts as in flight while it still
+      // has somewhere to go. Any other state, including no request at all,
+      // leaves them free to ask.
+      const inFlightStatuses = ['requested', 'approved', 'picked_up']
+      let claimIsInFlight = false
+      if (myClaim !== null && inFlightStatuses.includes(myClaim.status)) {
+        claimIsInFlight = true
+      }
+
+      let statusBox = null
+      let formIsOpen = false
+
       if (myClaimLoaded === false) {
         // The claim status is still loading. Show nothing yet (not the form and
-        // no placeholder text), so the form does not flash before an existing
-        // request's status replaces it. requestArea stays null.
-        requestArea = null
-      } else if (myClaim === null) {
-        // No request made yet, so show the form.
-        requestArea = (
-          <div className="border-t border-border pt-6 mt-6">
+        // no placeholder text), so the form does not flash before an in-flight
+        // request's status replaces it.
+        statusBox = null
+      } else if (claimIsInFlight === false) {
+        formIsOpen = true
+      } else if (myClaim !== null && myClaim.status === 'requested') {
+        // The request is in, waiting on the owner. Show the pending line and a
+        // way into the thread, where the two of them can talk it over.
+        const requestedAtText = formatTimestamp(myClaim.requested_at)
+        const exchangeThreadTarget = '/exchange-thread?claim=' + myClaim.id
+        statusBox = (
+          <div className="rounded-lg bg-warning-bg border border-amber-200 px-4 py-3">
+            <p className="text-sm font-medium text-warning">Request pending</p>
+            <p className="text-sm text-text-muted mt-1">
+              You requested {myClaim.requested_quantity} quantity on {requestedAtText}
+            </p>
+            <Link
+              to={exchangeThreadTarget}
+              className="inline-flex items-center mt-3 text-sm font-medium text-primary-600 hover:text-primary-700"
+            >
+              Go to the exchange →
+            </Link>
+          </div>
+        )
+      } else if (myClaim !== null && myClaim.status === 'approved') {
+        // Approved. Show the approved quantity and when, plus the Exchange Thread
+        // link and a confirm pickup action.
+        let approvedQuantity = 0
+        if (myClaim.approved_quantity !== null) {
+          approvedQuantity = myClaim.approved_quantity
+        }
+        let approvedAtValue = ''
+        if (myClaim.approved_at !== null) {
+          approvedAtValue = myClaim.approved_at
+        }
+        const approvedAtText = formatTimestamp(approvedAtValue)
+        const exchangeThreadTarget = '/exchange-thread?claim=' + myClaim.id
+        statusBox = (
+          <div className="rounded-lg bg-success-bg border border-green-200 px-4 py-3">
+            <p className="text-sm font-medium text-success">Request approved</p>
+            <p className="text-sm text-text-muted mt-1">
+              Your request was approved for {approvedQuantity} on: {approvedAtText}.
+            </p>
+            <div className="flex flex-wrap items-center gap-3 mt-3">
+              <Link
+                to={exchangeThreadTarget}
+                className="inline-flex items-center text-sm font-medium text-primary-600 hover:text-primary-700"
+              >
+                Arrange the Exchange →
+              </Link>
+              <button
+                type="button"
+                disabled={isConfirmingPickup}
+                onClick={handleConfirmPickup}
+                className="inline-flex items-center px-4 py-1.5 text-sm font-semibold text-text-inverse bg-primary-600 rounded-lg hover:bg-primary-700 shadow-sm transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Confirm pickup
+              </button>
+            </div>
+            {pickupMessage !== '' ? (
+              <p className="text-sm text-error mt-2" role="alert">
+                {pickupMessage}
+              </p>
+            ) : null}
+          </div>
+        )
+      } else if (myClaim !== null && myClaim.status === 'picked_up') {
+        let pickedUpAtValue = ''
+        if (myClaim.picked_up_at !== null) {
+          pickedUpAtValue = myClaim.picked_up_at
+        }
+        const pickedUpAtText = formatTimestamp(pickedUpAtValue)
+        const exchangeThreadTarget = '/exchange-thread?claim=' + myClaim.id
+        statusBox = (
+          <div className="rounded-lg bg-info-bg border border-blue-200 px-4 py-3">
+            <p className="text-sm font-medium text-info">Pickup confirmed</p>
+            <p className="text-sm text-text-muted mt-1">
+              Your pickup was confirmed on: {pickedUpAtText}.
+            </p>
+            <Link
+              to={exchangeThreadTarget}
+              className="inline-flex items-center mt-3 text-sm font-medium text-primary-600 hover:text-primary-700"
+            >
+              Contact the Provider →
+            </Link>
+          </div>
+        )
+      }
+
+      // The form, shown whenever the member has nothing in flight here. A
+      // finished request leaves no trace on this page, so the form looks the
+      // same whether it is the member's first request or their fourth.
+      let formBox = null
+      if (formIsOpen === true) {
+        formBox = (
+          <div>
             <h3 className="text-sm font-semibold text-text uppercase tracking-wide mb-4">Request this item</h3>
             <form onSubmit={handleRequestSubmit} className="flex items-end gap-3">
               <div className="flex-1 max-w-[200px]">
-                <label className="block text-sm font-medium text-text mb-1.5">Quantity</label>
+                {/* htmlFor ties the label to the field below, so clicking the
+                    word focuses the box and a screen reader reads the two
+                    together. */}
+                <label htmlFor="request-quantity" className="block text-sm font-medium text-text mb-1.5">Quantity</label>
                 <input
+                  id="request-quantity"
                   type="number"
                   min="1"
                   max={listing.remaining_quantity}
@@ -724,106 +797,14 @@ function ListingDetailPage() {
             </div>
           )
         }
-      } else if (myClaim.status === 'requested') {
-        // The request is in, waiting on the owner. Show the pending line.
-        const requestedAtText = formatTimestamp(myClaim.requested_at)
+      }
+
+      // One divider above whatever showed, instead of one per branch.
+      if (statusBox !== null || formBox !== null) {
         requestArea = (
           <div className="border-t border-border pt-6 mt-6">
-            <div className="rounded-lg bg-warning-bg border border-amber-200 px-4 py-3">
-              <p className="text-sm font-medium text-warning">Request pending</p>
-              <p className="text-sm text-text-muted mt-1">
-                You requested {myClaim.requested_quantity} quantity on {requestedAtText}
-              </p>
-            </div>
-          </div>
-        )
-      } else if (myClaim.status === 'denied') {
-        // Denied. The spec asks for a plain "was denied" line, nothing more.
-        requestArea = (
-          <div className="border-t border-border pt-6 mt-6">
-            <div className="rounded-lg bg-error-bg border border-red-200 px-4 py-3">
-              <p className="text-sm font-medium text-error">Your request was denied.</p>
-            </div>
-          </div>
-        )
-      } else if (myClaim.status === 'approved') {
-        // Approved. Show the approved quantity and when, plus the Exchange Thread
-        // link and a confirm pickup action.
-        let approvedQuantity = 0
-        if (myClaim.approved_quantity !== null) {
-          approvedQuantity = myClaim.approved_quantity
-        }
-        let approvedAtValue = ''
-        if (myClaim.approved_at !== null) {
-          approvedAtValue = myClaim.approved_at
-        }
-        const approvedAtText = formatTimestamp(approvedAtValue)
-        // Stub: the Exchange Thread feature is not built yet, so this link points
-        // at a placeholder route for now.
-        const exchangeThreadTarget = '/exchange-thread?claim=' + myClaim.id
-        requestArea = (
-          <div className="border-t border-border pt-6 mt-6">
-            <div className="rounded-lg bg-success-bg border border-green-200 px-4 py-3">
-              <p className="text-sm font-medium text-success">Request approved</p>
-              <p className="text-sm text-text-muted mt-1">
-                Your request was approved for {approvedQuantity} on: {approvedAtText}.
-              </p>
-              <div className="flex flex-wrap items-center gap-3 mt-3">
-                <Link
-                  to={exchangeThreadTarget}
-                  className="inline-flex items-center text-sm font-medium text-primary-600 hover:text-primary-700"
-                >
-                  Arrange the Exchange →
-                </Link>
-                <button
-                  type="button"
-                  disabled={isConfirmingPickup}
-                  onClick={handleConfirmPickup}
-                  className="inline-flex items-center px-4 py-1.5 text-sm font-semibold text-text-inverse bg-primary-600 rounded-lg hover:bg-primary-700 shadow-sm transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  Confirm pickup
-                </button>
-              </div>
-              {pickupMessage !== '' ? (
-                <p className="text-sm text-error mt-2" role="alert">
-                  {pickupMessage}
-                </p>
-              ) : null}
-            </div>
-          </div>
-        )
-      } else if (myClaim.status === 'picked_up') {
-        let pickedUpAtValue = ''
-        if (myClaim.picked_up_at !== null) {
-          pickedUpAtValue = myClaim.picked_up_at
-        }
-        const pickedUpAtText = formatTimestamp(pickedUpAtValue)
-        const exchangeThreadTarget = '/exchange-thread?claim=' + myClaim.id
-        requestArea = (
-          <div className="border-t border-border pt-6 mt-6">
-            <div className="rounded-lg bg-info-bg border border-blue-200 px-4 py-3">
-              <p className="text-sm font-medium text-info">Pickup confirmed</p>
-              <p className="text-sm text-text-muted mt-1">
-                Your pickup was confirmed on: {pickedUpAtText}.
-              </p>
-              <Link
-                to={exchangeThreadTarget}
-                className="inline-flex items-center mt-3 text-sm font-medium text-primary-600 hover:text-primary-700"
-              >
-                Contact the Provider →
-              </Link>
-            </div>
-          </div>
-        )
-      } else {
-        // A withdrawn (cancelled) request. The member already requested this
-        // listing, so the backend will not accept another; show a short line
-        // instead of the form.
-        requestArea = (
-          <div className="border-t border-border pt-6 mt-6">
-            <div className="rounded-lg bg-background-alt border border-border px-4 py-3">
-              <p className="text-sm text-text-muted">You withdrew your request.</p>
-            </div>
+            {statusBox}
+            {formBox}
           </div>
         )
       }
@@ -842,8 +823,19 @@ function ListingDetailPage() {
           )}
         </div>
         {/* The posted-by line shows under the title and again at the bottom of
-            the listing, so it is visible without scrolling past the photos. */}
-        <p className="text-xs text-text-muted mb-4">{postedLine}</p>
+            the listing, so it is visible without scrolling past the photos.
+            The owner's rating AS a listing owner (US-20) sits inline right
+            after the name in both spots. */}
+        <p className="text-xs text-text-muted mb-4">
+          {postedStartText}{' '}
+          <MemberRatingChip
+            memberId={listing.owner_id}
+            role="listing_owner"
+            average={ownerRatingAverage}
+            count={ownerRatingCount}
+          />
+          {postedEndText}
+        </p>
         {photoArea}
         <p className="text-text-muted leading-relaxed mb-6">{listing.description}</p>
 
@@ -874,7 +866,16 @@ function ListingDetailPage() {
           <p className="text-xs text-text-muted mt-1">{timeZoneNote}</p>
         </div>
 
-        <p className="text-xs text-text-muted">{postedLine}</p>
+        <p className="text-xs text-text-muted">
+          {postedStartText}{' '}
+          <MemberRatingChip
+            memberId={listing.owner_id}
+            role="listing_owner"
+            average={ownerRatingAverage}
+            count={ownerRatingCount}
+          />
+          {postedEndText}
+        </p>
 
         {requestArea}
         {requestMessageArea}

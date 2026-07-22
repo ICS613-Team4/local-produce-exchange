@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router'
 
-import { sendLoginRequest } from '../services/authService'
+import { authStateChangedEventName, sendLoginRequest } from '../services/authService'
 
 function LoginPage() {
   const navigate = useNavigate()
@@ -70,6 +70,11 @@ function LoginPage() {
       window.localStorage.setItem('memberId', data.id)
       window.localStorage.setItem('memberName', data.name)
       window.localStorage.setItem('memberEmail', data.email)
+      // The auth event is the one signal for a login change, so a successful
+      // login sends it too. The guard and the nav both re-read the stored
+      // login when it fires, instead of relying on the navigation below to
+      // re-render everything.
+      window.dispatchEvent(new Event(authStateChangedEventName))
       navigate('/dashboard')
       return
     }
