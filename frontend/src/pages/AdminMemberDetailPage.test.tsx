@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { afterEach, expect, test, vi } from 'vitest'
 
@@ -140,4 +140,17 @@ test('has a back link to the search page', async () => {
 
   const backLink = await screen.findByRole('link', { name: /Back to search/ })
   expect(backLink.getAttribute('href')).toBe('/admin/members')
+})
+
+test('clears the stale login on a 401 instead of showing a generic error', async () => {
+  window.localStorage.setItem('memberName', 'Stale Name')
+  vi.stubGlobal('fetch', async () => makeFakeResponse(false, 401, { detail: 'Not authenticated.' }))
+
+  renderDetailPage('member-2')
+
+  await waitFor(() => {
+    expect(window.localStorage.getItem('memberId')).toBeNull()
+  })
+  expect(window.localStorage.getItem('memberName')).toBeNull()
+  expect(screen.queryByRole('alert')).toBeNull()
 })

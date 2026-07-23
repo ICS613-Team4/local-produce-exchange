@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import { afterEach, expect, test, vi } from 'vitest'
 
@@ -102,6 +102,20 @@ test('shows an error message on a network failure (transport error, not an HTTP 
 
   const errorArea = await screen.findByRole('alert')
   expect(errorArea.textContent).toContain('Request failed')
+})
+
+test('clears the stale login on a 401 instead of showing a generic error', async () => {
+  window.localStorage.setItem('memberName', 'Stale Name')
+  vi.stubGlobal('fetch', async () => makeFakeResponse(false, 401, { detail: 'Not authenticated.' }))
+
+  renderSearchPage()
+  runSearch('carol')
+
+  await waitFor(() => {
+    expect(window.localStorage.getItem('memberId')).toBeNull()
+  })
+  expect(window.localStorage.getItem('memberName')).toBeNull()
+  expect(screen.queryByRole('alert')).toBeNull()
 })
 
 test('shows an inactive member with the neutral fallback badge', async () => {

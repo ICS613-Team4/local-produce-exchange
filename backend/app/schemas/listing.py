@@ -77,3 +77,11 @@ class ListingResponse(BaseModel):
     # construction site (create, browse, my-listings, edit) working unchanged.
     owner_name: str = ""
     photos: list[ListingPhotoRef] = Field(default_factory=list)
+    # The owner's reputation AS a listing owner (US-20): the average rating
+    # across reviews where this owner was reviewed in the listing_owner role,
+    # excluding reviews an admin disabled, plus how many reviews are behind it.
+    # None with a 0 count means no reviews yet. The browse and GET-details
+    # routes fill these; the defaults keep the other construction sites
+    # working unchanged.
+    owner_rating_average: float | None = None
+    owner_rating_count: int = 0

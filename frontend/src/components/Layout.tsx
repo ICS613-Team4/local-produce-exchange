@@ -1,7 +1,11 @@
 import { useEffect, useState } from 'react'
 import { Link, Outlet, useLocation } from 'react-router'
 
-import { authStateChangedEventName, sendLogoutRequest } from '../services/authService'
+import {
+  authStateChangedEventName,
+  clearStoredLogin,
+  sendLogoutRequest,
+} from '../services/authService'
 import {
   notificationsChangedEventName,
   sendGetUnreadCountRequest,
@@ -161,10 +165,7 @@ function Layout() {
     // so this nav (and any other listener) re-reads the cleared login. The Link
     // handles going to "/", and we tell the backend after; there is no need to
     // wait for that before leaving.
-    window.localStorage.removeItem('memberId')
-    window.localStorage.removeItem('memberName')
-    window.localStorage.removeItem('memberEmail')
-    window.dispatchEvent(new Event(authStateChangedEventName))
+    clearStoredLogin()
     setMobileMenuOpen(false)
     // The next member to log in on this browser must not see this member's
     // badge count while the first fetch is still on its way.

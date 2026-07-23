@@ -153,8 +153,8 @@ test('each notification kind links to the right place', async () => {
 })
 
 test('a cancelled-exchange notification keeps its exchange link', async () => {
-  // The poster cancelling an approved exchange locks its thread, but the
-  // requester's notification still links there: the thread stays readable
+  // The requester cancelling an approved exchange locks its thread, but the
+  // poster's notification still links there: the thread stays readable
   // as history even though sending is closed.
   setLoggedIn()
   const body = {
@@ -163,7 +163,7 @@ test('a cancelled-exchange notification keeps its exchange link', async () => {
         id: 'n9',
         claim_id: 'claim-12',
         kind: 'request_cancelled',
-        message: "Your approved exchange for 'Thai Basil' was cancelled by the poster.",
+        message: "Carol Chen cancelled their approved request on your listing 'Thai Basil'.",
         is_read: false,
         created_at: '2026-07-03T10:00:00.000Z',
       },
@@ -178,6 +178,36 @@ test('a cancelled-exchange notification keeps its exchange link', async () => {
   const linkTarget = exchangeLink.getAttribute('href')
   expect(linkTarget).toContain('/exchange-thread?claim=')
   expect(linkTarget).toContain('claim-12')
+})
+
+test('a denied-request notification shows no exchange link', async () => {
+  // The poster turned the request down, so its thread is locked and there is
+  // nothing left to do there. The row shows the message with no action link.
+  setLoggedIn()
+  const body = {
+    notifications: [
+      {
+        id: 'n10',
+        claim_id: 'claim-13',
+        kind: 'request_denied',
+        message: "Your request for 'Kabocha Squash' was denied.",
+        is_read: false,
+        created_at: '2026-07-03T11:00:00.000Z',
+      },
+    ],
+    unread_count: 1,
+  }
+  vi.stubGlobal('fetch', async () => makeFakeResponse(true, 200, body))
+
+  renderNotificationsPage()
+
+  expect(await screen.findByText("Your request for 'Kabocha Squash' was denied.")).toBeTruthy()
+  expect(screen.queryByRole('link', { name: 'Open the exchange' })).toBeNull()
+
+  const rows = screen.getAllByRole('listitem')
+  expect(rows[0].textContent).not.toContain('Open the exchange')
+  // The mark-read button is unrelated to the link, so it stays.
+  expect(screen.getByRole('button', { name: 'Mark as read' })).toBeTruthy()
 })
 
 test('shows the empty state when the member has no notifications', async () => {
@@ -227,17 +257,7 @@ test('shows the service error message when the request itself fails', async () =
   expect(alert.textContent).toContain('Request failed')
 })
 
-test('shows the not-logged-in message and calls no service without a member', () => {
-  const fetchSpy = vi.fn()
-  vi.stubGlobal('fetch', fetchSpy)
-
-  renderNotificationsPage()
-
-  expect(screen.getByRole('alert').textContent).toContain('You need to be logged in')
-  expect(fetchSpy).not.toHaveBeenCalled()
-})
-
-test('a stale session clears the stored login and shows the login message', async () => {
+test('a stale session clears the stored login', async () => {
   setLoggedIn()
   vi.stubGlobal('fetch', async () => {
     return makeFakeResponse(false, 401, { detail: 'Not authenticated. Unknown member.' })
@@ -245,9 +265,11 @@ test('a stale session clears the stored login and shows the login message', asyn
 
   renderNotificationsPage()
 
-  const alert = await screen.findByRole('alert')
-  expect(alert.textContent).toContain('You need to be logged in')
-  expect(window.localStorage.getItem('memberId')).toBeNull()
+  // The shared route guard renders the logged-out message now, so the only
+  // thing this page owns is clearing the stored login.
+  await waitFor(() => {
+    expect(window.localStorage.getItem('memberId')).toBeNull()
+  })
   expect(window.localStorage.getItem('memberName')).toBeNull()
   expect(window.localStorage.getItem('memberEmail')).toBeNull()
 })
@@ -593,10 +615,11 @@ test('a stale session on the mark path clears the stored login', async () => {
   const markButton = await screen.findByRole('button', { name: 'Mark as read' })
   markButton.click()
 
-  // The page flips to the login message instead of alerting a raw detail.
-  const alert = await screen.findByRole('alert')
-  expect(alert.textContent).toContain('You need to be logged in')
-  expect(window.localStorage.getItem('memberId')).toBeNull()
+  // The stored login is cleared instead of alerting a raw detail. The shared
+  // route guard is what shows the logged-out message.
+  await waitFor(() => {
+    expect(window.localStorage.getItem('memberId')).toBeNull()
+  })
   expect(alertSpy).not.toHaveBeenCalled()
 })
 

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router'
 
+import { clearStoredLogin } from '../services/authService'
 import {
   getAdminMemberDetail,
   type AdminMemberDetail,
@@ -35,6 +36,12 @@ function AdminMemberDetailPage() {
       return
     }
     getAdminMemberDetail(targetMemberId, memberId).then((loadedResult) => {
+      if (loadedResult.status === 401) {
+        // Same convention every protected page follows: clear the stale
+        // login and let RequireAdmin's listener take the page away.
+        clearStoredLogin()
+        return
+      }
       setResult(loadedResult)
       setResultForId(targetMemberId)
     })

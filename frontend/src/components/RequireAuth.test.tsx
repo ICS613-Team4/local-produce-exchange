@@ -5,6 +5,7 @@ import { MemoryRouter, Route, Routes } from 'react-router'
 import { afterEach, expect, test, vi } from 'vitest'
 
 import RequireAuth from './RequireAuth'
+import { clearStoredLogin } from '../services/authService'
 
 type FakeResponse = {
   ok: boolean
@@ -89,4 +90,28 @@ test('logs out and blocks when the backend rejects the stored id', async () => {
   // The stale login was cleared, so the visitor is really logged out.
   expect(window.localStorage.getItem('memberId')).toBeNull()
   expect(window.localStorage.getItem('memberName')).toBeNull()
+})
+
+test('blocks the page when another component clears the login mid-session', async () => {
+  window.localStorage.setItem('memberId', 'real-member-id')
+  window.localStorage.setItem('memberName', 'Bob Baker')
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, { id: 'real-member-id', name: 'Bob Baker' })
+  })
+
+  renderGuard()
+
+  // The page renders first, because the stored id is valid.
+  expect(await screen.findByText('Protected dashboard')).toBeTruthy()
+
+  // Now a page hits a 401 and calls clearStoredLogin, which clears the stored
+  // login and fires this event. There is no route change and no reload.
+  clearStoredLogin()
+
+  // The guard notices and takes the page away, showing the one log-in message.
+  await waitFor(() => {
+    expect(screen.queryByText('Protected dashboard')).toBeNull()
+  })
+  expect(screen.getByText(/You must/)).toBeTruthy()
+  expect(screen.getByRole('link', { name: 'log in' })).toBeTruthy()
 })

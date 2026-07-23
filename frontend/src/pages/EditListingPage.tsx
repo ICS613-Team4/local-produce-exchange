@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
 
-import { authStateChangedEventName } from '../services/authService'
+import { clearStoredLogin } from '../services/authService'
 import {
   sendDeleteListingPhotoRequest,
   sendGetListingRequest,
@@ -9,8 +9,6 @@ import {
   sendUploadListingPhotoRequest,
 } from '../services/listingService'
 import type { ListingDetail, ListingResult } from '../services/listingService'
-
-const notLoggedInMessage = 'You need to be logged in to see this page.'
 
 function padTwoDigits(value: number) {
   let text = String(value)
@@ -108,8 +106,7 @@ function EditListingPage() {
 
   // The shared nav shows who is logged in, so this page keeps only the name
   // setter, which the 401 paths use to clear a stale session.
-  const [memberId, setMemberId] = useState(window.localStorage.getItem('memberId') ?? '')
-  const [, setMemberName] = useState(window.localStorage.getItem('memberName') ?? '')
+  const memberId = window.localStorage.getItem('memberId') ?? ''
 
   const [result, setResult] = useState<ListingResult | null>(null)
   const [resultListingId, setResultListingId] = useState('')
@@ -129,17 +126,6 @@ function EditListingPage() {
   const [photoReloadCounter, setPhotoReloadCounter] = useState(0)
   const [isPhotoBusy, setIsPhotoBusy] = useState(false)
 
-  const clearStoredLogin = useCallback(() => {
-    window.localStorage.removeItem('memberId')
-    window.localStorage.removeItem('memberName')
-    window.localStorage.removeItem('memberEmail')
-    setMemberId('')
-    setMemberName('')
-    // The route is not changing on a stale 401, so tell the shared nav the
-    // login was cleared by firing the same-tab event it listens for.
-    window.dispatchEvent(new Event(authStateChangedEventName))
-  }, [])
-
   const fillFormFromListing = useCallback((listing: ListingDetail) => {
     setTitle(listing.title)
     setDescription(listing.description)
@@ -153,10 +139,6 @@ function EditListingPage() {
 
   useEffect(() => {
     latestRequestNumber.current = latestRequestNumber.current + 1
-
-    if (memberId === '') {
-      return
-    }
 
     const requestNumber = latestRequestNumber.current
     async function loadListing() {
@@ -178,7 +160,7 @@ function EditListingPage() {
       }
     }
     loadListing()
-  }, [listingId, memberId, clearStoredLogin, fillFormFromListing, photoReloadCounter])
+  }, [listingId, memberId, fillFormFromListing, photoReloadCounter])
 
   function handleTitleChange(event: React.ChangeEvent<HTMLInputElement>) {
     setTitle(event.target.value)
@@ -372,13 +354,7 @@ function EditListingPage() {
   const labelClasses = 'block text-sm font-medium text-text mb-1.5'
 
   let contentArea
-  if (memberId === '') {
-    contentArea = (
-      <div className="rounded-lg bg-error-bg border border-red-200 px-4 py-3 text-sm text-error" role="alert">
-        {notLoggedInMessage}
-      </div>
-    )
-  } else if (result === null || resultListingId !== listingId) {
+  if (result === null || resultListingId !== listingId) {
     contentArea = <p className="text-text-muted text-sm">Loading the listing...</p>
   } else if (result.errorMessage !== '') {
     contentArea = (

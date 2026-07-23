@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link, Navigate } from 'react-router'
+import { Link } from 'react-router'
 
 import { sendBrowseListingsRequest } from '../services/listingService'
 import type { BrowseListingFilters, ListingDetail, ListingResult } from '../services/listingService'
 import { formatTimestamp, getLocalTimeZoneNote } from '../utils/formatTimestamp'
+import MemberRatingChip from '../components/MemberRatingChip'
 
 // The filter choices are the demo vocabulary from backend/app/seed.py. Create
 // and edit still allow free-form categories and tags, so for R1 browse only
@@ -34,9 +35,6 @@ function BrowsePage() {
   // Load the full active list when the page opens. The request number keeps an
   // older response from replacing a newer one.
   useEffect(() => {
-    if (memberId === '') {
-      return
-    }
     latestRequestNumber.current = latestRequestNumber.current + 1
     const requestNumber = latestRequestNumber.current
     async function loadAllListings() {
@@ -121,12 +119,6 @@ function BrowsePage() {
     setSelectedDietary([])
     setSelectedAllergen([])
     runSearch({})
-  }
-
-  // Not logged in: send the visitor to the login page, the same guard the create
-  // page uses. Returning <Navigate> from render is the correct way.
-  if (memberId === '') {
-    return <Navigate to="/login" replace />
   }
 
   // Build the category dropdown options, with a blank "all categories" first.
@@ -232,6 +224,17 @@ function BrowsePage() {
         if (typeof listing.owner_name === 'string' && listing.owner_name !== '') {
           postedByLine = 'Posted by ' + listing.owner_name
         }
+        // The owner's rating AS a listing owner (US-20), rendered inline right
+        // after the owner's name. No reviews yet renders nothing, never a bare
+        // zero.
+        let ownerRatingAverage = null
+        if (listing.owner_rating_average !== undefined && listing.owner_rating_average !== null) {
+          ownerRatingAverage = listing.owner_rating_average
+        }
+        let ownerRatingCount = 0
+        if (listing.owner_rating_count !== undefined) {
+          ownerRatingCount = listing.owner_rating_count
+        }
         const postedAtText = formatTimestamp(listing.created_at)
         let coverPhotoArea = null
         if (listing.photos !== undefined && listing.photos.length > 0) {
@@ -274,7 +277,15 @@ function BrowsePage() {
                 <p className="text-xs">{timeZoneNote}</p>
               </div>
               <div className="mt-auto pt-3 border-t border-border">
-                <p className="text-xs text-text-muted">{postedByLine}</p>
+                <p className="text-xs text-text-muted">
+                  {postedByLine}{' '}
+                  <MemberRatingChip
+                    memberId={listing.owner_id}
+                    role="listing_owner"
+                    average={ownerRatingAverage}
+                    count={ownerRatingCount}
+                  />
+                </p>
                 <p className="text-xs text-text-muted mt-0.5">{postedAtText}</p>
               </div>
             </article>

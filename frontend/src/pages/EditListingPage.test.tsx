@@ -146,13 +146,6 @@ function submitForm() {
   fireEvent.click(screen.getByRole('button', { name: 'Save changes' }))
 }
 
-test('shows a logged-out message and no form when no member is logged in', () => {
-  renderEditPage()
-
-  expect(screen.getByText('You need to be logged in to see this page.')).toBeTruthy()
-  expect(screen.queryByLabelText('Title')).toBeNull()
-})
-
 test('shows a non-owner message and no form on direct access', async () => {
   setLoggedIn()
   const listing = makeActiveListing()
@@ -297,9 +290,10 @@ test('clears stored login when a photo upload returns 401', async () => {
     target: { files: [file] },
   })
 
+  // The shared route guard owns the logged-out message now, so this page
+  // renders nothing of its own; only the cleared login shows.
   await waitFor(() => {
     expect(window.localStorage.getItem('memberId')).toBeNull()
-    expect(screen.getByText('You need to be logged in to see this page.')).toBeTruthy()
   })
 })
 
@@ -497,9 +491,11 @@ test('clears stale credentials and fires the auth event on a 401 load response',
 
   renderEditPage()
 
-  expect(await screen.findByText('You need to be logged in to see this page.')).toBeTruthy()
-  expect(screen.queryByLabelText('Title')).toBeNull()
-  expect(window.localStorage.getItem('memberId')).toBeNull()
+  // The shared route guard owns the logged-out message now, so this page
+  // renders nothing of its own; only the cleared login and the event show.
+  await waitFor(() => {
+    expect(window.localStorage.getItem('memberId')).toBeNull()
+  })
   expect(window.localStorage.getItem('memberName')).toBeNull()
   expect(window.localStorage.getItem('memberEmail')).toBeNull()
   expect(authEventFired).toBe(true)
@@ -652,11 +648,13 @@ test('clears stale credentials and fires the auth event on a 401 save response',
   await waitForLoadedForm()
   submitForm()
 
-  expect(await screen.findByText('You need to be logged in to see this page.')).toBeTruthy()
-  expect(window.localStorage.getItem('memberId')).toBeNull()
+  // The shared route guard owns the logged-out message now, so this page
+  // renders nothing of its own; only the cleared login and the event show.
+  await waitFor(() => {
+    expect(window.localStorage.getItem('memberId')).toBeNull()
+  })
   expect(window.localStorage.getItem('memberName')).toBeNull()
   expect(window.localStorage.getItem('memberEmail')).toBeNull()
-  expect(screen.queryByLabelText('Title')).toBeNull()
   expect(authEventFired).toBe(true)
 
   window.removeEventListener('auth-state-changed', handleAuthEvent)

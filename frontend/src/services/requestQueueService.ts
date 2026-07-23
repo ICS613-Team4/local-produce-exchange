@@ -29,6 +29,10 @@ export type QueueClaimItem = {
   requested_at: string
   can_decide: boolean
   can_deny: boolean
+  // The requestor's rating AS a requestor (US-20), shown next to Approve and
+  // Deny. Optional so stubbed shapes without the fields keep type-checking.
+  claimant_requestor_average?: number | null
+  claimant_requestor_count?: number
 }
 
 // One listing's queue: the listing's own details plus its pending rows.
@@ -66,6 +70,13 @@ export type AllRequestItem = {
   cancelled_at?: string | null
   can_decide: boolean
   can_deny: boolean
+  // True when the caller already reviewed this completed exchange (US-20).
+  // Optional so stubbed shapes without the field keep type-checking.
+  reviewed_by_me?: boolean
+  // The requestor's rating AS a requestor (US-20), shown next to Approve and
+  // Deny. Optional so stubbed shapes without the fields keep type-checking.
+  claimant_requestor_average?: number | null
+  claimant_requestor_count?: number
 }
 
 // One active listing's full request history: its title and remaining quantity,
@@ -117,6 +128,9 @@ export type MyRequestItem = {
   // The requested listing's photos; the first one is the cover. Optional so
   // stubbed shapes without the field keep type-checking.
   photos?: ListingPhotoRef[]
+  // True when the caller already reviewed this completed exchange (US-20).
+  // Optional so stubbed shapes without the field keep type-checking.
+  reviewed_by_me?: boolean
 }
 
 // The my-requests response: the caller's requests split into five sections,
@@ -151,6 +165,10 @@ export type ExchangeHistoryItem = {
   completed_at: string | null
   cancelled_at: string | null
   denied_at: string | null
+  // True when the caller already reviewed this exchange, so the dashboard's
+  // review link reads "Edit Your Review" instead of "Leave a Review". Only a
+  // completed row can be true. Optional so older cached responses still parse.
+  reviewed_by_me?: boolean
 }
 
 // The exchange-history response: the caller's exchanges grouped by claim
@@ -241,6 +259,8 @@ export type ClaimDecisionResponse = {
   requested_at: string
   approved_at: string | null
   picked_up_at: string | null
+  completed_at: string | null
+  cancelled_at: string | null
   denied_at: string | null
 }
 
@@ -524,9 +544,8 @@ export async function sendCancelExchangeRequest(
   memberId: string,
   claimId: string,
 ): Promise<RequestQueuesResult> {
-  // The poster calls off an exchange they already approved (before pickup).
-  // PATCH with no body; the backend checks the caller owns the listing, sets
-  // the claim to "cancelled", and returns the reserved quantity to the listing.
+  // The recipient cancels an approved request before pickup. PATCH has no body;
+  // the backend checks the caller owns the request and restores its quantity.
   const url = '/api/claims/' + claimId + '/cancel'
 
   try {

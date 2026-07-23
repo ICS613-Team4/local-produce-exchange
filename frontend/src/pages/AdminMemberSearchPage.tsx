@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router'
 
+import { clearStoredLogin } from '../services/authService'
 import {
   searchMembers,
   type AdminMemberResult,
@@ -31,6 +32,12 @@ function AdminMemberSearchPage() {
     setResult(null)
     setHasSearched(true)
     const searchResult = await searchMembers(searchText, memberId)
+    if (searchResult.status === 401) {
+      // Same convention every protected page follows: clear the stale login
+      // and let RequireAdmin's listener take the page away.
+      clearStoredLogin()
+      return
+    }
     setResult(searchResult)
   }
 

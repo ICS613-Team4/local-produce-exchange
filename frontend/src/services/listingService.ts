@@ -44,6 +44,12 @@ export type ListingDetail = {
   // an empty string, so it is optional here for the same reason as above.
   owner_name?: string
   photos?: ListingPhotoRef[]
+  // The owner's reputation AS a listing owner (US-20): the role-scoped
+  // average rating and review count, excluding reviews an admin disabled.
+  // null with a 0 count means no reviews yet. Optional so stubbed shapes
+  // without the fields keep type-checking.
+  owner_rating_average?: number | null
+  owner_rating_count?: number
 }
 
 // The shape of the listing fields the page builds and sends. The two pickup

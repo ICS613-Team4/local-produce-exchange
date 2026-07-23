@@ -4,6 +4,7 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { afterEach, expect, test, vi } from 'vitest'
 
+import { clearStoredLogin } from '../services/authService'
 import RequireAdmin from './RequireAdmin'
 
 type FakeResponse = {
@@ -89,4 +90,24 @@ test('logs out and blocks when the backend rejects the stored id', async () => {
   expect(screen.queryByText('Protected admin page')).toBeNull()
   expect(window.localStorage.getItem('memberId')).toBeNull()
   expect(window.localStorage.getItem('memberName')).toBeNull()
+})
+
+test('blocks the page when another component clears the login mid-session', async () => {
+  window.localStorage.setItem('memberId', 'admin-id')
+  vi.stubGlobal('fetch', async () => makeFakeResponse(true, 200, { id: 'admin-id', role: 'admin' }))
+
+  renderGuard()
+
+  // The page renders first, because the stored id belongs to an admin.
+  expect(await screen.findByText('Protected admin page')).toBeTruthy()
+
+  // Some other page hits a 401 and calls clearStoredLogin. No route change,
+  // no reload - just the shared event this guard now listens for.
+  clearStoredLogin()
+
+  await waitFor(() => {
+    expect(screen.queryByText('Protected admin page')).toBeNull()
+  })
+  expect(screen.getByText(/You must/)).toBeTruthy()
+  expect(screen.getByRole('link', { name: 'log in' })).toBeTruthy()
 })

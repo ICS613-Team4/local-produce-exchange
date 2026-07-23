@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { afterEach, expect, test, vi } from 'vitest'
 
@@ -64,16 +64,6 @@ function renderPublicProfilePage(viewedMemberId: string) {
     </MemoryRouter>,
   )
 }
-
-// --- not logged in ---
-
-test('shows a login prompt when no member is in localStorage', () => {
-  renderProfilePage()
-
-  expect(screen.getByText(/Please/)).toBeTruthy()
-  expect(screen.getByRole('link', { name: 'log in' })).toBeTruthy()
-  expect(screen.queryByText('Profile')).toBeTruthy()
-})
 
 // --- loading then success ---
 
@@ -252,21 +242,17 @@ const OTHER_PROFILE_RESPONSE = {
   },
 }
 
-test('shows a login prompt for a guest visiting a member profile URL', () => {
-  renderPublicProfilePage(OTHER_MEMBER_ID)
-
-  expect(screen.getByText(/this profile/)).toBeTruthy()
-  expect(screen.getByRole('link', { name: 'log in' })).toBeTruthy()
-})
-
-test('shows only the display name and a reviews placeholder for another member', async () => {
+test('shows only the display name and review links for another member', async () => {
   window.localStorage.setItem('memberId', MEMBER_ID)
   vi.stubGlobal('fetch', async () => makeFakeResponse(true, 200, OTHER_PROFILE_RESPONSE))
 
   renderPublicProfilePage(OTHER_MEMBER_ID)
 
   expect(await screen.findByRole('heading', { name: 'Bobby' })).toBeTruthy()
-  expect(screen.getByText('No reviews yet.')).toBeTruthy()
+  const listingOwnerLink = screen.getByRole('link', { name: 'View Reviews as a Listing Owner' })
+  expect(listingOwnerLink.getAttribute('href')).toBe('/member-reviews?member=' + OTHER_MEMBER_ID + '&role=listing_owner')
+  const requestorLink = screen.getByRole('link', { name: 'View Reviews as a Requestor' })
+  expect(requestorLink.getAttribute('href')).toBe('/member-reviews?member=' + OTHER_MEMBER_ID + '&role=requestor')
   expect(screen.queryByText('bob@example.com')).toBeNull()
   expect(screen.queryByText('Kaimuki')).toBeNull()
   expect(screen.queryByRole('button', { name: 'Edit profile' })).toBeNull()
@@ -281,7 +267,7 @@ test('shows the read-only public view, not the editable one, when viewing your o
   renderPublicProfilePage(MEMBER_ID)
 
   expect(await screen.findByRole('heading', { name: 'Alice' })).toBeTruthy()
-  expect(screen.getByText('No reviews yet.')).toBeTruthy()
+  expect(screen.getByRole('link', { name: 'View Reviews as a Listing Owner' })).toBeTruthy()
   expect(screen.queryByText('alice@example.com')).toBeNull()
   expect(screen.queryByRole('button', { name: 'Edit profile' })).toBeNull()
 })
@@ -311,4 +297,17 @@ test('shows a profile-specific error message when the public profile fetch fails
 
   const errorArea = await screen.findByRole('alert')
   expect(errorArea.textContent).toContain('Could not load this profile.')
+})
+
+test('clears the stale login on a 401, the same convention every protected page follows', async () => {
+  window.localStorage.setItem('memberId', MEMBER_ID)
+  window.localStorage.setItem('memberName', 'Stale Name')
+  vi.stubGlobal('fetch', async () => makeFakeResponse(false, 401, { detail: 'Not authenticated.' }))
+
+  renderPublicProfilePage(OTHER_MEMBER_ID)
+
+  await waitFor(() => {
+    expect(window.localStorage.getItem('memberId')).toBeNull()
+  })
+  expect(window.localStorage.getItem('memberName')).toBeNull()
 })

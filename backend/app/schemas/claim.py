@@ -56,6 +56,14 @@ class QueueClaimItem(BaseModel):
     requested_at: datetime
     can_decide: bool
     can_deny: bool
+    # The requestor's reputation AS a requestor (US-20): the average rating
+    # and review count across reviews where this member was reviewed in the
+    # requestor role, excluding disabled reviews. Shown next to Approve and
+    # Deny so the owner can weigh whose request to accept. None with a 0
+    # count means no requestor reviews yet. The defaults keep older
+    # construction sites working.
+    claimant_requestor_average: Optional[float] = None
+    claimant_requestor_count: int = 0
 
 
 # One listing's queue: the listing's own details plus its pending rows. The
@@ -102,6 +110,10 @@ class MyRequestItem(BaseModel):
     # the listing's cover photo next to the request. Same shape as
     # ListingResponse.photos; the default keeps older construction sites working.
     photos: list[ListingPhotoRef] = Field(default_factory=list)
+    # True when the caller already left a review on this exchange (US-20), so a
+    # completed row can offer "Edit Your Review" instead of "Leave a Review".
+    # The default keeps older construction sites working.
+    reviewed_by_me: bool = False
 
 
 # The "my requests" response, split into the five sections the page shows. Each
@@ -135,6 +147,15 @@ class AllRequestItem(BaseModel):
     cancelled_at: Optional[datetime] = None
     can_decide: bool
     can_deny: bool
+    # True when the caller already left a review on this exchange (US-20), so a
+    # completed row can offer "Edit Your Review" instead of "Leave a Review".
+    # The default keeps older construction sites working.
+    reviewed_by_me: bool = False
+    # The requestor's reputation AS a requestor (US-20), same meaning and
+    # defaults as on QueueClaimItem, so the requests page can show it next to
+    # Approve and Deny.
+    claimant_requestor_average: Optional[float] = None
+    claimant_requestor_count: int = 0
 
 
 # One listing's full request history: the listing's title and remaining

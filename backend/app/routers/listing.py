@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.dialects.postgresql import Range
 from sqlalchemy.orm import Session
 
@@ -22,6 +22,7 @@ from app.models.claim import Claim
 from app.models.listing import Listing
 from app.models.listing_photo import ListingPhoto
 from app.models.member import Member
+from app.models.review import Review
 from app.schemas.listing import CreateListingRequest, ListingPhotoRef, ListingResponse
 
 logger = logging.getLogger(__name__)
@@ -270,6 +271,28 @@ def browse_listings(
             ).all()
             for owner_row in owner_rows:
                 owner_names_by_id[owner_row.id] = owner_row.name
+        # Load every owner's listing-owner reputation in one query (US-20):
+        # the average rating and review count across reviews where the owner
+        # was reviewed AS a listing owner. Reviews an admin disabled are left
+        # out. An owner with no reviews simply has no entry here.
+        owner_ratings_by_id = {}
+        if owner_ids:
+            rating_rows = session.execute(
+                select(
+                    Review.reviewee_id,
+                    func.avg(Review.rating),
+                    func.count(Review.id),
+                )
+                .where(Review.reviewee_id.in_(owner_ids))
+                .where(Review.reviewee_role == "listing_owner")
+                .where(Review.disabled_at.is_(None))
+                .group_by(Review.reviewee_id)
+            ).all()
+            for rating_row in rating_rows:
+                rating_entry = {}
+                rating_entry["average"] = float(rating_row[1])
+                rating_entry["count"] = int(rating_row[2])
+                owner_ratings_by_id[rating_row[0]] = rating_entry
     except Exception as error:
         logger.error("Browsing listings failed: %s", error)
         raise HTTPException(
@@ -303,6 +326,11 @@ def browse_listings(
         if category_value is None:
             category_value = ""
         photos = photos_by_listing.get(row.id, [])
+        owner_rating_average = None
+        owner_rating_count = 0
+        if row.owner_id in owner_ratings_by_id:
+            owner_rating_average = owner_ratings_by_id[row.owner_id]["average"]
+            owner_rating_count = owner_ratings_by_id[row.owner_id]["count"]
         results.append(
             ListingResponse(
                 id=str(row.id),
@@ -320,6 +348,8 @@ def browse_listings(
                 created_at=row.created_at,
                 owner_name=owner_names_by_id.get(row.owner_id, ""),
                 photos=photos,
+                owner_rating_average=owner_rating_average,
+                owner_rating_count=owner_rating_count,
             )
         )
     return results
@@ -539,6 +569,34 @@ def get_listing(
     except Exception as error:
         logger.error("Reading the listing owner failed: %s", error)
 
+    # The owner's listing-owner reputation (US-20): the average rating and the
+    # review count across reviews where the owner was reviewed AS a listing
+    # owner. Reviews an admin disabled are left out. No reviews means the
+    # average stays None and the count 0, which the page shows as
+    # "No rating yet".
+    owner_rating_average = None
+    owner_rating_count = 0
+    try:
+        rating_row = session.execute(
+            select(func.avg(Review.rating), func.count(Review.id))
+            .where(Review.reviewee_id == row.owner_id)
+            .where(Review.reviewee_role == "listing_owner")
+            .where(Review.disabled_at.is_(None))
+        ).first()
+    except Exception as error:
+        logger.error("Reading the owner's rating failed: %s", error)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Could not read the listing right now. "
+                "Make sure the database is running and migrated: "
+                "npm run db:up, then npm run db:migrate, then npm run db:seed."
+            ),
+        )
+    if rating_row is not None and rating_row[0] is not None:
+        owner_rating_average = float(rating_row[0])
+        owner_rating_count = int(rating_row[1])
+
     try:
         photos = load_photo_refs(session, row.id)
     except Exception as error:
@@ -571,6 +629,8 @@ def get_listing(
         created_at=row.created_at,
         owner_name=owner_name,
         photos=photos,
+        owner_rating_average=owner_rating_average,
+        owner_rating_count=owner_rating_count,
     )
 
 

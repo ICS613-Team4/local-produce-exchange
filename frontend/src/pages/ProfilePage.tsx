@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router'
 
+import { clearStoredLogin } from '../services/authService'
 import {
   getPublicMemberProfile,
   updateMemberProfile,
@@ -17,7 +18,7 @@ function isOwnProfile(profileId: string): boolean {
 }
 
 function ProfilePage() {
-  const memberId = window.localStorage.getItem('memberId')
+  const memberId = window.localStorage.getItem('memberId') ?? ''
 
   // A route param (/profile/:id) means "view another member's public profile"
   // (US-08). Its absence (/profile) means the existing "view/edit my own
@@ -32,7 +33,7 @@ function ProfilePage() {
 
   const [member, setMember] = useState<MemberData | null>(null)
   // Only load when there is a memberId to fetch; no memberId means nothing to load.
-  const [loading, setLoading] = useState(memberId !== null)
+  const [loading, setLoading] = useState(memberId !== '')
   const [pageError, setPageError] = useState('')
 
   const [editing, setEditing] = useState(false)
@@ -44,9 +45,11 @@ function ProfilePage() {
   const [rawResponseText, setRawResponseText] = useState('')
 
   useEffect(() => {
-    // No logged-in viewer means nothing to load; the guest gate below covers
-    // both the self and public-view cases (Scenario 3: guests are denied).
-    if (memberId === null || targetMemberId === null) {
+    // RequireAuth already guarantees a logged-in viewer before this page can
+    // render (it is the only place that decides that and shows the log-in
+    // message), so the only thing left to guard here is having an id to ask
+    // for at all.
+    if (targetMemberId === '') {
       return
     }
 
@@ -54,6 +57,12 @@ function ProfilePage() {
     // logged-in viewer making the request, even when viewing someone else's
     // profile.
     getPublicMemberProfile(targetMemberId, memberId).then((result) => {
+      if (result.status === 401) {
+        // Same convention every protected page follows: clear the stale
+        // login and let RequireAuth's listener block the page.
+        clearStoredLogin()
+        return
+      }
       setLoading(false)
       if (result.ok) {
         setMember(result.data as MemberData)
@@ -84,7 +93,7 @@ function ProfilePage() {
   async function handleSaveSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
 
-    if (memberId === null || member === null) return
+    if (member === null) return
 
     // Frontend auth check: confirm this is still the member's own profile
     // before sending the request. The backend enforces the same rule.
@@ -144,19 +153,6 @@ function ProfilePage() {
   const inputClasses = 'w-full px-4 py-2.5 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-150'
   const labelClasses = 'block text-sm font-medium text-text mb-1.5'
 
-  if (memberId === null) {
-    return (
-      <div className="max-w-lg mx-auto">
-        <div className="bg-surface rounded-xl border border-border p-8 shadow-sm">
-          <h1 className="text-2xl font-bold text-text mb-4">Profile</h1>
-          <p className="text-text-muted">
-            Please <Link to="/login" className="font-medium text-primary-600 hover:text-primary-700">log in</Link> to view {isPublicView ? 'this profile' : 'your profile'}.
-          </p>
-        </div>
-      </div>
-    )
-  }
-
   if (loading) {
     return (
       <div className="max-w-lg mx-auto">
@@ -185,9 +181,18 @@ function ProfilePage() {
 
   // US-08, Scenario 1 & 2: the public view always shows display name and
   // review history read-only, with no edit control - even for your own
-  // profile viewed through this route. Reviews (US-20/US-21) have no backend
-  // yet, so this renders a placeholder until that story ships.
+  // profile viewed through this route.
   if (isPublicView) {
+    // US-20/US-21: a member has two separate reputations, as a listing owner
+    // and as a requestor, counted apart. Rather than duplicate the summary
+    // (average, star breakdown, review list) MemberReviewsPage already
+    // renders, this quick lookup just links to it for each role - the same
+    // /member-reviews?member=&role= URL MemberRatingChip and that page's own
+    // tab bar use. The link works even before the member has any reviews;
+    // MemberReviewsPage shows its own "no reviews yet" message in that case.
+    const reviewLinkClasses =
+      'inline-flex items-center px-3 py-1.5 text-xs font-medium text-primary-600 border border-primary-200 rounded-md hover:bg-primary-50 transition-colors'
+
     return (
       <div className="max-w-lg mx-auto">
         <div className="bg-surface rounded-xl border border-border p-8 shadow-sm">
@@ -199,8 +204,15 @@ function ProfilePage() {
             </div>
           </dl>
           <div className="border-t border-border mt-6 pt-4">
-            <h2 className="text-base font-semibold text-text mb-1">Reviews</h2>
-            <p className="text-sm text-text-muted">No reviews yet.</p>
+            <h2 className="text-base font-semibold text-text mb-3">Reviews</h2>
+            <div className="flex flex-wrap gap-2">
+              <Link to={'/member-reviews?member=' + member.id + '&role=listing_owner'} className={reviewLinkClasses}>
+                View Reviews as a Listing Owner
+              </Link>
+              <Link to={'/member-reviews?member=' + member.id + '&role=requestor'} className={reviewLinkClasses}>
+                View Reviews as a Requestor
+              </Link>
+            </div>
           </div>
         </div>
       </div>

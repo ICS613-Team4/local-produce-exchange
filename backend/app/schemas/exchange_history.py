@@ -34,6 +34,10 @@ class ExchangeHistoryItem(BaseModel):
     completed_at: Optional[datetime] = None
     cancelled_at: Optional[datetime] = None
     denied_at: Optional[datetime] = None
+    # True when the caller has already written their review of the other party
+    # on this exchange, so the dashboard's review link can say "Edit Your
+    # Review" instead of "Leave a Review". Only a completed row can be true.
+    reviewed_by_me: bool = False
 
 
 # The whole exchange history, grouped by claim status in lifecycle order. Every

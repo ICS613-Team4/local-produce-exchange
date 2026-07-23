@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -18,6 +18,7 @@ from app.models.claim import Claim
 from app.models.listing import Listing
 from app.models.listing_photo import ListingPhoto
 from app.models.member import Member
+from app.models.review import Review
 from app.notifications import create_notification
 from app.schemas.claim import (
     AllRequestItem,
@@ -182,18 +183,23 @@ def create_claim(
         )
 
     # ------------------------------------------------------------------
-    # One-request-per-listing check. A member may make only a single request on
-    # a listing, ever. The state of any earlier request does not matter
-    # (requested, approved, denied, or withdrawn): if this member already has any
-    # claim on this listing, a second one is refused with a 409. This is checked
-    # first so the common case gets a clear message; the database race backstop
-    # below covers two requests that slip past this check at the same time.
+    # One-open-request-per-listing check. A member may have only one request in
+    # flight on a listing at a time. "In flight" means the request still has
+    # somewhere to go: it is waiting on the poster (requested), approved and
+    # waiting on the pickup (approved), or picked up and waiting on the poster
+    # to close it out (picked_up). Once a request has finished, whichever way
+    # it ended (completed, cancelled, or denied), it no longer blocks anything
+    # and the member may ask for this listing again. This is checked first so
+    # the common case gets a clear message; the database race backstop below
+    # covers two requests that slip past this check at the same time.
     # ------------------------------------------------------------------
+    open_statuses = ["requested", "approved", "picked_up"]
     try:
         existing = session.scalars(
             select(Claim).where(
                 Claim.listing_id == listing_uuid,
                 Claim.claimant_id == claimant_id,
+                Claim.status.in_(open_statuses),
             )
         ).first()
     except Exception as error:
@@ -209,7 +215,7 @@ def create_claim(
     if existing is not None:
         raise HTTPException(
             status_code=409,
-            detail="You have already made a request on this listing.",
+            detail="You already have an open request on this listing.",
         )
 
     # ------------------------------------------------------------------
@@ -248,12 +254,12 @@ def create_claim(
         # insert. Every claim is inserted as "requested", so the unique index on
         # (listing_id, claimant_id) where status = 'requested' lets only one in
         # and rejects this one. No duplicate row was created; report the same
-        # clean 409 as the duplicate case above instead of a generic 503.
+        # 409 as the open-request case above instead of a generic 503.
         session.rollback()
         logger.info("Duplicate claim insert blocked by the unique index: %s", error)
         raise HTTPException(
             status_code=409,
-            detail="You have already made a request on this listing.",
+            detail="You already have an open request on this listing.",
         )
     except Exception as error:
         session.rollback()
@@ -282,9 +288,11 @@ def get_my_claim_for_listing(
     session: Session = Depends(get_db_session),
 ) -> Optional[ClaimResponse]:
     # The viewer's own request on one listing, whatever its status (requested,
-    # approved, denied, or withdrawn). The listing detail page uses this so a
-    # requester sees their current status across reloads. Returns null (no body
-    # object) when the viewer has not requested this listing.
+    # approved, picked up, completed, denied, or cancelled). The listing detail
+    # page uses this so a requester sees their current status across reloads,
+    # and it names each status honestly, so every timestamp column comes back.
+    # Returns null (no body object) when the viewer has not requested this
+    # listing.
 
     # ------------------------------------------------------------------
     # Active-member gate, the same rule as the other claim endpoints.
@@ -307,13 +315,17 @@ def get_my_claim_for_listing(
     except (ValueError, AttributeError, TypeError):
         return None
 
-    # Load the viewer's claim on this listing. A member may make only one request
-    # per listing ever, so there is at most one row; first() returns it or None.
+    # Load the viewer's claim on this listing. A member who has finished a
+    # request may ask again, so there can be several rows over time: take the
+    # newest, which is the one the listing page should speak about. At most one
+    # of them is open, and an open one is always the newest, so this returns the
+    # open request whenever there is one.
     try:
         claim = session.scalars(
             select(Claim)
             .where(Claim.listing_id == listing_uuid)
             .where(Claim.claimant_id == current_member.id)
+            .order_by(Claim.requested_at.desc(), Claim.id.desc())
         ).first()
     except Exception as error:
         logger.error("Loading the viewer's claim failed: %s", error)
@@ -337,9 +349,40 @@ def get_my_claim_for_listing(
         status=claim.status,
         requested_at=claim.requested_at,
         approved_at=claim.approved_at,
+        picked_up_at=claim.picked_up_at,
+        completed_at=claim.completed_at,
         denied_at=claim.denied_at,
         cancelled_at=claim.cancelled_at,
     )
+
+
+def load_requestor_ratings(session, claimant_ids):
+    # The requestor-side reputation for a set of members (US-20): for each
+    # member id, the average rating and review count across reviews where that
+    # member was reviewed AS a requestor. Reviews an admin disabled are left
+    # out. A member with no requestor reviews has no entry, which the pages
+    # show as "No rating yet". The two queue endpoints call this so a listing
+    # owner can weigh whose request to accept.
+    ratings_by_member = {}
+    if not claimant_ids:
+        return ratings_by_member
+    rating_rows = session.execute(
+        select(
+            Review.reviewee_id,
+            func.avg(Review.rating),
+            func.count(Review.id),
+        )
+        .where(Review.reviewee_id.in_(claimant_ids))
+        .where(Review.reviewee_role == "requestor")
+        .where(Review.disabled_at.is_(None))
+        .group_by(Review.reviewee_id)
+    ).all()
+    for rating_row in rating_rows:
+        rating_entry = {}
+        rating_entry["average"] = float(rating_row[1])
+        rating_entry["count"] = int(rating_row[2])
+        ratings_by_member[rating_row[0]] = rating_entry
+    return ratings_by_member
 
 
 @router.get("/request-queues")
@@ -467,6 +510,25 @@ def get_request_queues(
         if len(pending_claim_rows) == 0:
             continue
 
+        # Each requestor's requestor-side rating, in one query per listing, so
+        # the owner sees who they are dealing with next to Approve and Deny.
+        queue_claimant_ids = []
+        for claim_result in pending_claim_rows:
+            claim_row = claim_result[0]
+            if claim_row.claimant_id not in queue_claimant_ids:
+                queue_claimant_ids.append(claim_row.claimant_id)
+        try:
+            requestor_ratings = load_requestor_ratings(session, queue_claimant_ids)
+        except Exception as error:
+            logger.error("Loading requestor ratings failed: %s", error)
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Could not read your requests right now. "
+                    "Make sure the database is running and migrated."
+                ),
+            )
+
         pending_items = []
         for claim_result in pending_claim_rows:
             claim_row = claim_result[0]
@@ -474,6 +536,11 @@ def get_request_queues(
             claimant_name = claimant.name
             can_decide = claim_can_decide(claim_row, listing_row, claimant, now)
             can_deny = claim_can_deny(claim_row, listing_row, claimant, now)
+            claimant_requestor_average = None
+            claimant_requestor_count = 0
+            if claim_row.claimant_id in requestor_ratings:
+                claimant_requestor_average = requestor_ratings[claim_row.claimant_id]["average"]
+                claimant_requestor_count = requestor_ratings[claim_row.claimant_id]["count"]
             pending_items.append(
                 QueueClaimItem(
                     id=str(claim_row.id),
@@ -483,6 +550,8 @@ def get_request_queues(
                     requested_at=claim_row.requested_at,
                     can_decide=can_decide,
                     can_deny=can_deny,
+                    claimant_requestor_average=claimant_requestor_average,
+                    claimant_requestor_count=claimant_requestor_count,
                 )
             )
 
@@ -655,6 +724,54 @@ def get_all_requests(
                 ),
             )
 
+        # Which of this listing's completed exchanges the caller has already
+        # reviewed (US-20), in one query, so a completed row can offer "Edit
+        # Your Review" instead of "Leave a Review". Only a completed claim can
+        # have a review, so only those ids are looked up.
+        completed_claim_ids = []
+        for claim_result in all_claim_rows:
+            claim_row = claim_result[0]
+            if claim_row.status == "completed":
+                completed_claim_ids.append(claim_row.id)
+        reviewed_claim_ids = set()
+        if completed_claim_ids:
+            try:
+                reviewed_rows = session.scalars(
+                    select(Review.claim_id)
+                    .where(Review.claim_id.in_(completed_claim_ids))
+                    .where(Review.reviewer_id == member_id)
+                ).all()
+            except Exception as error:
+                logger.error("Loading the caller's reviews failed: %s", error)
+                raise HTTPException(
+                    status_code=503,
+                    detail=(
+                        "Could not read your requests right now. "
+                        "Make sure the database is running and migrated."
+                    ),
+                )
+            for reviewed_claim_id in reviewed_rows:
+                reviewed_claim_ids.add(reviewed_claim_id)
+
+        # Each requestor's requestor-side rating, in one query per listing, so
+        # the owner sees who they are dealing with next to Approve and Deny.
+        all_claimant_ids = []
+        for claim_result in all_claim_rows:
+            claim_row = claim_result[0]
+            if claim_row.claimant_id not in all_claimant_ids:
+                all_claimant_ids.append(claim_row.claimant_id)
+        try:
+            requestor_ratings = load_requestor_ratings(session, all_claimant_ids)
+        except Exception as error:
+            logger.error("Loading requestor ratings failed: %s", error)
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Could not read your requests right now. "
+                    "Make sure the database is running and migrated."
+                ),
+            )
+
         request_items = []
         for claim_result in all_claim_rows:
             claim_row = claim_result[0]
@@ -662,6 +779,12 @@ def get_all_requests(
             claimant_name = claimant.name
             can_decide = claim_can_decide(claim_row, listing_row, claimant, now)
             can_deny = claim_can_deny(claim_row, listing_row, claimant, now)
+            reviewed_by_me = claim_row.id in reviewed_claim_ids
+            claimant_requestor_average = None
+            claimant_requestor_count = 0
+            if claim_row.claimant_id in requestor_ratings:
+                claimant_requestor_average = requestor_ratings[claim_row.claimant_id]["average"]
+                claimant_requestor_count = requestor_ratings[claim_row.claimant_id]["count"]
             request_items.append(
                 AllRequestItem(
                     id=str(claim_row.id),
@@ -678,6 +801,9 @@ def get_all_requests(
                     cancelled_at=claim_row.cancelled_at,
                     can_decide=can_decide,
                     can_deny=can_deny,
+                    reviewed_by_me=reviewed_by_me,
+                    claimant_requestor_average=claimant_requestor_average,
+                    claimant_requestor_count=claimant_requestor_count,
                 )
             )
 
@@ -700,11 +826,13 @@ def get_all_requests(
     return AllRequestsResponse(groups=groups)
 
 
-def build_my_request_items(session, claims):
+def build_my_request_items(session, claims, member_id):
     # Turn a list of the caller's claim rows into MyRequestItem rows for the
     # my-requests page. Reads each claim's listing through the relationship for
     # the title. A claim whose listing is missing is skipped. A database error
-    # while reading the listing becomes a 503, like the other reads.
+    # while reading the listing becomes a 503, like the other reads. member_id
+    # is the caller, used to flag which completed exchanges they have already
+    # reviewed (US-20).
 
     # First pass: pair each claim with its listing, skipping missing listings.
     claim_listing_pairs = []
@@ -760,6 +888,34 @@ def build_my_request_items(session, claims):
                 )
             )
 
+    # Which of these completed exchanges the caller has already reviewed
+    # (US-20), in one query, so a completed row can offer "Edit Your Review"
+    # instead of "Leave a Review". Only a completed claim can have a review,
+    # so only those ids are looked up; the other sections skip the query.
+    completed_claim_ids = []
+    for claim_row, listing_row in claim_listing_pairs:
+        if claim_row.status == "completed":
+            completed_claim_ids.append(claim_row.id)
+    reviewed_claim_ids = set()
+    if completed_claim_ids:
+        try:
+            reviewed_rows = session.scalars(
+                select(Review.claim_id)
+                .where(Review.claim_id.in_(completed_claim_ids))
+                .where(Review.reviewer_id == member_id)
+            ).all()
+        except Exception as error:
+            logger.error("Loading the caller's reviews failed: %s", error)
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Could not read your requests right now. "
+                    "Make sure the database is running and migrated."
+                ),
+            )
+        for reviewed_claim_id in reviewed_rows:
+            reviewed_claim_ids.add(reviewed_claim_id)
+
     items = []
     for claim_row, listing_row in claim_listing_pairs:
         # The listing's owner is who the caller requested from (the provider), so
@@ -769,6 +925,7 @@ def build_my_request_items(session, claims):
         owner_name = ""
         if listing_row.owner is not None:
             owner_name = listing_row.owner.name
+        reviewed_by_me = claim_row.id in reviewed_claim_ids
         items.append(
             MyRequestItem(
                 id=str(claim_row.id),
@@ -786,6 +943,7 @@ def build_my_request_items(session, claims):
                 denied_at=claim_row.denied_at,
                 cancelled_at=claim_row.cancelled_at,
                 photos=photos_by_listing.get(listing_row.id, []),
+                reviewed_by_me=reviewed_by_me,
             )
         )
     return items
@@ -862,11 +1020,11 @@ def get_my_requests(
             ),
         )
 
-    pending_items = build_my_request_items(session, pending_claims)
-    approved_items = build_my_request_items(session, approved_claims)
-    completed_items = build_my_request_items(session, completed_claims)
-    denied_items = build_my_request_items(session, denied_claims)
-    withdrawn_items = build_my_request_items(session, withdrawn_claims)
+    pending_items = build_my_request_items(session, pending_claims, member_id)
+    approved_items = build_my_request_items(session, approved_claims, member_id)
+    completed_items = build_my_request_items(session, completed_claims, member_id)
+    denied_items = build_my_request_items(session, denied_claims, member_id)
+    withdrawn_items = build_my_request_items(session, withdrawn_claims, member_id)
 
     return MyRequestsResponse(
         pending=pending_items,
@@ -1325,27 +1483,21 @@ def complete_exchange(
 
 
 @router.patch("/claims/{claim_id}/cancel")
-def cancel_exchange(
+def cancel_approved_claim(
     claim_id: str,
     current_member: Member = Depends(get_current_member),
     session: Session = Depends(get_db_session),
 ) -> ClaimResponse:
-    # The poster calls off an exchange they already approved, before pickup.
-    # The claim goes to "cancelled" and the quantity that approval reserved
-    # goes back to the listing. Only an APPROVED claim can be cancelled this
-    # way: a pending one is denied instead, and a picked-up or completed one
-    # is already in the recipient's hands.
-
-    # Only an active member may cancel an exchange.
+    # Only an active member may cancel a request.
     if current_member.status != "active":
         if current_member.status == "suspended":
             raise HTTPException(
                 status_code=403,
-                detail="Your account is suspended, so you cannot cancel an exchange.",
+                detail="Your account is suspended, so you cannot cancel a request.",
             )
         raise HTTPException(
             status_code=403,
-            detail="Your account is not active, so you cannot cancel an exchange.",
+            detail="Your account is not active, so you cannot cancel a request.",
         )
 
     try:
@@ -1353,14 +1505,13 @@ def cancel_exchange(
     except (ValueError, AttributeError, TypeError):
         raise HTTPException(status_code=404, detail="Request not found.")
 
-    # Lock the claim so two cancellations (or a cancellation racing a pickup
-    # confirmation) cannot update it at once.
+    # Lock the claim first. A second cancel waits, then sees "cancelled" below.
     try:
         claim = session.scalars(
             select(Claim).where(Claim.id == claim_uuid).with_for_update()
         ).first()
     except Exception as error:
-        logger.error("Loading claim for cancellation failed: %s", error)
+        logger.error("Loading claim for cancel failed: %s", error)
         raise HTTPException(
             status_code=503,
             detail=(
@@ -1372,22 +1523,34 @@ def cancel_exchange(
     if claim is None:
         raise HTTPException(status_code=404, detail="Request not found.")
 
+    if claim.claimant_id != current_member.id:
+        raise HTTPException(
+            status_code=403,
+            detail="You can only cancel your own request.",
+        )
+
     if claim.status != "approved":
         raise HTTPException(
             status_code=409,
-            detail="This exchange is not approved, so it cannot be cancelled.",
+            detail="This request is not approved, so it cannot be cancelled.",
         )
 
-    # Load the listing and lock its row too: the reserved quantity is returned
-    # below, and the lock serializes that read-modify-write against approvals
-    # of other claims on the same listing. Claims are always locked before
-    # listings here, the same fixed order as approve and deny.
+    if claim.approved_quantity is None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This approved request has no allocated quantity, "
+                "so it cannot be cancelled."
+            ),
+        )
+
+    # Lock the listing second, matching approve_claim's lock order.
     try:
         listing = session.scalars(
             select(Listing).where(Listing.id == claim.listing_id).with_for_update()
         ).first()
     except Exception as error:
-        logger.error("Loading listing for cancellation failed: %s", error)
+        logger.error("Loading listing for cancel failed: %s", error)
         raise HTTPException(
             status_code=503,
             detail=(
@@ -1399,29 +1562,22 @@ def cancel_exchange(
     if listing is None:
         raise HTTPException(status_code=404, detail="Request not found.")
 
-    if listing.owner_id != current_member.id:
-        raise HTTPException(
-            status_code=403,
-            detail="Only the listing owner can cancel the exchange.",
-        )
-
-    # Apply the cancellation. The quantity the approval moved off the listing
-    # goes back, so it can be offered to someone else.
+    amount_to_restore = claim.approved_quantity
     now = datetime.now(timezone.utc)
 
-    if claim.approved_quantity is not None:
-        listing.remaining_quantity = listing.remaining_quantity + claim.approved_quantity
     claim.status = "cancelled"
     claim.cancelled_at = now
+    listing.remaining_quantity = listing.remaining_quantity + amount_to_restore
 
-    # Notify the claimant that the poster called off the approved exchange
-    # (US-22).
+    # Notify the listing owner that the recipient called off the approved
+    # exchange (US-22), so the owner knows the quantity is available again.
     cancelled_message = (
-        f"Your approved exchange for '{listing.title}' was cancelled by the poster."
+        f"{current_member.name} cancelled their approved request on your "
+        f"listing '{listing.title}'."
     )
     create_notification(
         session,
-        claim.claimant_id,
+        listing.owner_id,
         claim.id,
         "request_cancelled",
         cancelled_message,
@@ -1439,11 +1595,11 @@ def cancel_exchange(
         session.commit()
     except Exception as error:
         session.rollback()
-        logger.error("Cancelling an exchange failed: %s", error)
+        logger.error("Cancelling an approved claim failed: %s", error)
         raise HTTPException(
             status_code=503,
             detail=(
-                "Could not cancel the exchange right now. "
+                "Could not cancel the request right now. "
                 "Make sure the database is running and migrated."
             ),
         )

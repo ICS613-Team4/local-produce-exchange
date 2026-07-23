@@ -224,6 +224,96 @@ test('guards the /my-listings route, showing the log-in message when logged out'
   expect(loginLink.getAttribute('href')).toBe('/login')
 })
 
+// ── the routes that moved under RequireAuth, and the two new review routes ────
+
+test('guards the /browse route, showing the log-in message when logged out', () => {
+  // /browse used to guard itself and bounce to /login. It now sits inside the
+  // RequireAuth group like every other member page, so a logged-out visitor
+  // gets the one shared message instead of a redirect.
+  window.history.pushState({}, '', '/browse')
+  render(<App />)
+
+  expect(screen.queryByRole('heading', { name: 'Browse listings' })).toBeNull()
+  const loginLink = screen.getByRole('link', { name: 'log in' })
+  expect(loginLink.getAttribute('href')).toBe('/login')
+})
+
+test('guards the /listings/:id route, showing the log-in message when logged out', () => {
+  window.history.pushState({}, '', '/listings/abc')
+  render(<App />)
+
+  expect(screen.getByRole('link', { name: 'log in' }).getAttribute('href')).toBe('/login')
+})
+
+test('guards the /exchange-reviews route, showing the log-in message when logged out', () => {
+  window.history.pushState({}, '', '/exchange-reviews?claim=claim-1')
+  render(<App />)
+
+  expect(screen.queryByText(/Reviews for your exchange/)).toBeNull()
+  expect(screen.getByRole('link', { name: 'log in' }).getAttribute('href')).toBe('/login')
+})
+
+test('guards the /member-reviews route, showing the log-in message when logged out', () => {
+  window.history.pushState({}, '', '/member-reviews?member=member-1&role=listing_owner')
+  render(<App />)
+
+  expect(screen.queryByText(/Reviews for/)).toBeNull()
+  expect(screen.getByRole('link', { name: 'log in' }).getAttribute('href')).toBe('/login')
+})
+
+test('wires the /exchange-reviews route for a logged-in member', async () => {
+  window.history.pushState({}, '', '/exchange-reviews?claim=claim-1')
+  window.localStorage.setItem('memberId', 'member-123')
+  window.localStorage.setItem('memberName', 'Bob Baker')
+
+  // Two fetches happen: the guard's member-profile check, then the page's own
+  // reviews call. Both answer 200 here.
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    const urlText = String(url)
+    if (urlText.includes('/reviews')) {
+      return makeFakeResponse(true, 200, {
+        claim_id: 'claim-1',
+        listing_title: 'Routed Lemons',
+        reviews: [],
+      })
+    }
+    return makeFakeResponse(true, 200, { id: 'member-123', name: 'Bob Baker' })
+  })
+
+  render(<App />)
+
+  expect(
+    await screen.findByRole('heading', { name: 'Reviews for your exchange: Routed Lemons' }),
+  ).toBeTruthy()
+})
+
+test('wires the /member-reviews route for a logged-in member', async () => {
+  window.history.pushState({}, '', '/member-reviews?member=member-9&role=requestor')
+  window.localStorage.setItem('memberId', 'member-123')
+  window.localStorage.setItem('memberName', 'Bob Baker')
+
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    const urlText = String(url)
+    if (urlText.includes('/reviews')) {
+      return makeFakeResponse(true, 200, {
+        member_id: 'member-9',
+        member_name: 'Carol Chen',
+        role: 'requestor',
+        average: null,
+        count: 0,
+        reviews: [],
+      })
+    }
+    return makeFakeResponse(true, 200, { id: 'member-123', name: 'Bob Baker' })
+  })
+
+  render(<App />)
+
+  expect(
+    await screen.findByRole('heading', { name: 'Reviews for Carol Chen as a requestor' }),
+  ).toBeTruthy()
+})
+
 test('wires the /profile/:id route inside RequireAuth for a logged-in member', async () => {
   window.history.pushState({}, '', '/profile/other-member-456')
   window.localStorage.setItem('memberId', 'member-123')

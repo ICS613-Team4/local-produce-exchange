@@ -18,6 +18,7 @@ from app.models.listing import Listing
 from app.models.listing_photo import ListingPhoto
 from app.models.member import Member
 from app.models.notification import Notification
+from app.models.review import Review
 from app.models.thread import Message
 from app.routers.thread import (
     get_thread_endpoint,
@@ -345,6 +346,95 @@ def test_cancelled_thread_is_readable_but_rejects_new_messages(db_session):
     assert saved_messages == []
     saved_notifications = db_session.scalars(select(Notification)).all()
     assert saved_notifications == []
+
+
+def test_completed_thread_reports_whether_the_viewer_reviewed_it(db_session):
+    # The completed banner's link says "Leave a Review" or "Edit Your Review"
+    # from this flag. It is the VIEWER's own review that counts, so the same
+    # exchange reads True for the member who wrote one and False for the other.
+    owner = insert_member(db_session, email="owner@example.com", name="Owner")
+    claimant = insert_member(db_session, email="claimant@example.com", name="Claimant")
+    listing = insert_listing(db_session, owner)
+    claim = insert_claim(db_session, listing, claimant, status="completed")
+
+    # Before anyone reviews, both sides get the first-review wording.
+    assert get_thread_for_claim(claim.id, claimant, db_session).reviewed_by_me is False
+    assert get_thread_for_claim(claim.id, owner, db_session).reviewed_by_me is False
+
+    now = datetime.now(timezone.utc)
+    db_session.add(
+        Review(
+            claim_id=claim.id,
+            reviewer_id=claimant.id,
+            reviewee_id=owner.id,
+            reviewee_role="listing_owner",
+            rating=5,
+            body="Great produce.",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    db_session.commit()
+
+    # The claimant wrote it, so only their view flips.
+    assert get_thread_for_claim(claim.id, claimant, db_session).reviewed_by_me is True
+    assert get_thread_for_claim(claim.id, owner, db_session).reviewed_by_me is False
+
+
+def test_unfinished_thread_never_claims_a_review(db_session):
+    # Only a completed exchange can carry a review, so an open thread reports
+    # the flag off without the endpoint looking anything up.
+    owner = insert_member(db_session, email="owner@example.com", name="Owner")
+    claimant = insert_member(db_session, email="claimant@example.com", name="Claimant")
+    listing = insert_listing(db_session, owner)
+    claim = insert_claim(db_session, listing, claimant, status="approved")
+
+    result = get_thread_for_claim(claim.id, claimant, db_session)
+
+    assert result.reviewed_by_me is False
+
+
+def test_denied_thread_is_readable_but_rejects_new_messages(db_session):
+    # A denied request locks its thread the same way a cancelled one does:
+    # reading stays open as history, but sending answers 409 and writes
+    # neither a message nor a notification. This is what stops a requester who
+    # guessed the thread URL, or called the API directly, from writing there.
+    owner = insert_member(db_session, email="owner@example.com", name="Owner")
+    claimant = insert_member(db_session, email="claimant@example.com", name="Claimant")
+    listing = insert_listing(db_session, owner)
+    claim = insert_claim(db_session, listing, claimant, status="denied")
+
+    result = get_thread_for_claim(claim.id, owner, db_session)
+    assert result.claim_status == "denied"
+
+    payload = SendMessagePayload(body="Please reconsider!")
+    with pytest.raises(HTTPException) as exc:
+        send_message_to_thread(claim.id, payload, claimant, db_session)
+
+    assert exc.value.status_code == 409
+    assert "denied" in exc.value.detail.lower()
+    assert "locked" in exc.value.detail.lower()
+
+    saved_messages = db_session.scalars(select(Message)).all()
+    assert saved_messages == []
+    saved_notifications = db_session.scalars(select(Notification)).all()
+    assert saved_notifications == []
+
+
+def test_denied_thread_rejects_a_message_from_the_owner_too(db_session):
+    # The lock is not a permission check on one party; it closes the thread for
+    # both, so the poster cannot write there either.
+    owner = insert_member(db_session, email="owner@example.com", name="Owner")
+    claimant = insert_member(db_session, email="claimant@example.com", name="Claimant")
+    listing = insert_listing(db_session, owner)
+    claim = insert_claim(db_session, listing, claimant, status="denied")
+
+    payload = SendMessagePayload(body="Sorry about that.")
+    with pytest.raises(HTTPException) as exc:
+        send_message_to_thread(claim.id, payload, owner, db_session)
+
+    assert exc.value.status_code == 409
+    assert db_session.scalars(select(Message)).all() == []
 
 
 def test_thread_accessible_for_denied_claim(db_session):

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
 
 import {
+  sendCancelExchangeRequest,
   sendConfirmPickupRequest,
   sendGetMyRequestsRequest,
   sendWithdrawClaimRequest,
@@ -11,14 +12,13 @@ import type {
   MyRequestsResponse,
   RequestQueuesResult,
 } from '../services/requestQueueService'
-import { authStateChangedEventName } from '../services/authService'
+import { clearStoredLogin } from '../services/authService'
 import { formatTimestamp, getLocalTimeZoneNote } from '../utils/formatTimestamp'
-
-const notLoggedInMessage = 'You need to be logged in to see this page.'
+import ReviewLinks from '../components/ReviewLinks'
 
 function MyRequestsPage() {
   const latestRequestNumber = useRef(0)
-  const [memberId, setMemberId] = useState(window.localStorage.getItem('memberId') ?? '')
+  const memberId = window.localStorage.getItem('memberId') ?? ''
   const [result, setResult] = useState<RequestQueuesResult | null>(null)
   const [reloadCounter, setReloadCounter] = useState(0)
   const [withdrawingClaimId, setWithdrawingClaimId] = useState('')
@@ -29,22 +29,19 @@ function MyRequestsPage() {
   // the withdraw one above.
   const [confirmingPickupClaimId, setConfirmingPickupClaimId] = useState('')
   const pickupInFlightRef = useRef('')
+  const [cancellingClaimId, setCancellingClaimId] = useState('')
+  const cancelInFlightRef = useRef('')
 
   // Load the caller's outgoing requests when the page has a logged-in member,
-  // and again whenever reloadCounter changes (after a successful withdraw).
+  // and again whenever reloadCounter changes after a successful action.
   useEffect(() => {
     latestRequestNumber.current = latestRequestNumber.current + 1
-    if (memberId === '') { return }
     const requestNumber = latestRequestNumber.current
     async function loadMyRequests() {
       const loadedResult = await sendGetMyRequestsRequest(memberId)
       if (requestNumber !== latestRequestNumber.current) { return }
       if (loadedResult.status === 401) {
-        window.localStorage.removeItem('memberId')
-        window.localStorage.removeItem('memberName')
-        window.localStorage.removeItem('memberEmail')
-        setMemberId('')
-        window.dispatchEvent(new Event(authStateChangedEventName))
+        clearStoredLogin()
         return
       }
       setResult(loadedResult)
@@ -127,13 +124,48 @@ function MyRequestsPage() {
     setReloadCounter((currentValue) => currentValue + 1)
   }
 
-  // Placeholder for the review feature (US-20). The button renders on
-  // completed rows now so the flow is visible, but the review form itself is
-  // US-20's to build; until then the click explains that.
-  function handleLeaveReview() {
-    window.alert(
-      'Reviews are not built yet. Leaving a rating and review for a completed exchange arrives with user story US-20.',
+  async function handleCancelApproved(claimId: string) {
+    if (cancelInFlightRef.current === claimId) {
+      return
+    }
+    cancelInFlightRef.current = claimId
+
+    const confirmed = window.confirm(
+      'Cancel this approved request? The quantity goes back to the listing for others.',
     )
+    if (confirmed === false) {
+      if (cancelInFlightRef.current === claimId) {
+        cancelInFlightRef.current = ''
+      }
+      return
+    }
+
+    setCancellingClaimId(claimId)
+    const cancelResult = await sendCancelExchangeRequest(memberId, claimId)
+
+    if (cancelInFlightRef.current === claimId) {
+      cancelInFlightRef.current = ''
+    }
+    setCancellingClaimId('')
+
+    if (cancelResult.errorMessage !== '') {
+      window.alert(cancelResult.errorMessage)
+      return
+    }
+
+    if (cancelResult.ok === false) {
+      let detailMessage = 'Could not cancel the request. Please try again.'
+      if (typeof cancelResult.data === 'object' && cancelResult.data !== null) {
+        const dataObject = cancelResult.data as { detail?: unknown }
+        if (typeof dataObject.detail === 'string') {
+          detailMessage = dataObject.detail
+        }
+      }
+      window.alert(detailMessage)
+      return
+    }
+
+    setReloadCounter((currentValue) => currentValue + 1)
   }
 
   // Map a claim status to its badge colors. Pickup and completion use distinct
@@ -214,6 +246,7 @@ function MyRequestsPage() {
       // request is in flight.
       const exchangeThreadTarget = '/exchange-thread?claim=' + item.id
       const isThisRowConfirming = confirmingPickupClaimId === item.id
+      const isThisRowCancelling = cancellingClaimId === item.id
       controlsArea = (
         <div className="flex flex-wrap items-center gap-2 mt-3">
           <Link
@@ -229,6 +262,14 @@ function MyRequestsPage() {
             className="inline-flex items-center px-3 py-1.5 text-xs font-medium text-primary-600 border border-primary-200 rounded-md hover:bg-primary-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Confirm the Pickup
+          </button>
+          <button
+            type="button"
+            disabled={isThisRowCancelling}
+            onClick={() => handleCancelApproved(item.id)}
+            className="inline-flex items-center px-3 py-1.5 text-xs font-medium text-text-muted border border-border rounded-md hover:bg-background-alt hover:text-text transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Cancel request
           </button>
         </div>
       )
@@ -260,22 +301,20 @@ function MyRequestsPage() {
       }
       // A finished exchange: the poster marked it complete after the pickup.
       // No thread link here, matching the poster's all-requests page, where a
-      // completed row also loses its link. The review button reviews the other
-      // party, the poster; the form itself is US-20's (see handleLeaveReview).
+      // completed row also loses its link. The review link reviews the other
+      // party, the poster, on the shared /review screen (US-20).
       detailLine = <>Your exchange for {approvedQuantity} was completed on {completedAtText}</>
-      let posterFirstName = 'the poster'
-      if (item.owner_name !== '') {
-        posterFirstName = item.owner_name.split(' ')[0]
-      }
+      // The shared pair: write the caller's own review of the poster (US-20),
+      // and read both sides' reviews of the exchange (US-21).
       controlsArea = (
         <div className="flex flex-wrap items-center gap-2 mt-3">
-          <button
-            type="button"
-            onClick={() => handleLeaveReview()}
-            className="inline-flex items-center px-3 py-1.5 text-xs font-medium text-primary-600 border border-primary-200 rounded-md hover:bg-primary-50 transition-colors"
-          >
-            Leave a Review for {posterFirstName}
-          </button>
+          <ReviewLinks
+            claimId={item.id}
+            otherPartyName={item.owner_name}
+            fallbackName="the poster"
+            reviewedByMe={item.reviewed_by_me}
+            onDeleted={() => setReloadCounter((c) => c + 1)}
+          />
         </div>
       )
     } else if (item.status === 'denied') {
@@ -289,9 +328,8 @@ function MyRequestsPage() {
       if (item.cancelled_at !== undefined && item.cancelled_at !== null) {
         cancelledAtText = formatTimestamp(item.cancelled_at)
       }
-      // Neutral wording on purpose: a request lands here when the recipient
-      // withdraws it, when the poster cancels an approved exchange, or when
-      // the listing is deactivated, and the row cannot tell which happened.
+      // Neutral wording covers both pending withdrawals and approved
+      // cancellations because both statuses use this section.
       detailLine = <>This request was cancelled on {cancelledAtText}</>
     } else {
       // Pending
@@ -356,13 +394,7 @@ function MyRequestsPage() {
   const timeZoneNote = getLocalTimeZoneNote()
 
   let contentArea
-  if (memberId === '') {
-    contentArea = (
-      <div className="rounded-lg bg-error-bg border border-red-200 px-4 py-3 text-sm text-error" role="alert">
-        {notLoggedInMessage}
-      </div>
-    )
-  } else if (result === null) {
+  if (result === null) {
     contentArea = <p className="text-text-muted text-sm py-8 text-center">Loading your requests...</p>
   } else if (result.errorMessage !== '') {
     contentArea = (

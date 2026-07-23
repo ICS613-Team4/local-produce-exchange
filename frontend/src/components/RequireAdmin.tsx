@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, Outlet } from 'react-router'
 
-import { authStateChangedEventName } from '../services/authService'
+import { authStateChangedEventName, clearStoredLogin } from '../services/authService'
 import { getMemberProfile } from '../services/memberService'
 
 // Route guard for admin-only pages (US-29), the same shape as RequireAuth but
@@ -14,7 +14,10 @@ import { getMemberProfile } from '../services/memberService'
 // first genuinely needs to log in, the second is authenticated but not
 // authorized, so "log in" would be misleading.
 function RequireAdmin() {
-  const memberId = window.localStorage.getItem('memberId') ?? ''
+  // The stored login, held in state so a logout partway through the session
+  // (anywhere in the app, via clearStoredLogin) takes effect without a
+  // navigation or a reload. Same pattern RequireAuth follows.
+  const [memberId, setMemberId] = useState(window.localStorage.getItem('memberId') ?? '')
 
   // "checking" - confirming the stored id belongs to an admin
   // "logged_out" - no stored id, or the backend rejected it (401)
@@ -26,6 +29,22 @@ function RequireAdmin() {
     }
     return 'checking'
   })
+
+  // Re-read the stored login whenever any code clears it (a 401 anywhere in
+  // the app) or sets it (a fresh login). Same listener RequireAuth uses.
+  useEffect(function listenForAuthStateChange() {
+    function handleAuthStateChange() {
+      const storedMemberId = window.localStorage.getItem('memberId') ?? ''
+      setMemberId(storedMemberId)
+      if (storedMemberId === '') {
+        setAuthStatus('logged_out')
+      }
+    }
+    window.addEventListener(authStateChangedEventName, handleAuthStateChange)
+    return function removeAuthStateListener() {
+      window.removeEventListener(authStateChangedEventName, handleAuthStateChange)
+    }
+  }, [])
 
   useEffect(
     function validateAdminAccess() {
@@ -42,11 +61,10 @@ function RequireAdmin() {
         }
 
         if (result.status === 401) {
-          window.localStorage.removeItem('memberId')
-          window.localStorage.removeItem('memberName')
-          window.localStorage.removeItem('memberEmail')
-          window.dispatchEvent(new Event(authStateChangedEventName))
-          setAuthStatus('logged_out')
+          // The same helper every page calls on a 401, so this guard clears a
+          // login the same way RequireAuth does. The event it fires comes
+          // back to the listener above, which blocks the page.
+          clearStoredLogin()
           return
         }
 

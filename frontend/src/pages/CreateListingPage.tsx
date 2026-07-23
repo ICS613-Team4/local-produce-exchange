@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link, Navigate, useNavigate } from 'react-router'
+import { Link, useNavigate } from 'react-router'
 
 import {
   sendCreateListingRequest,
@@ -215,12 +215,6 @@ function CreateListingPage() {
     } else {
       setErrorMessage('Could not create the listing (HTTP ' + result.status + ').')
     }
-  }
-
-  // Not logged in: send the visitor to the login page. Returning <Navigate>
-  // from render is the correct way; calling navigate() during render warns.
-  if (memberId === '') {
-    return <Navigate to="/login" replace />
   }
 
   // Build the error area only when there is an error to show.
