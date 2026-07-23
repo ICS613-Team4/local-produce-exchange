@@ -1,6 +1,8 @@
 import { BrowserRouter, Route, Routes } from 'react-router'
 import Layout from './components/Layout.tsx'
 import AboutPage from './pages/AboutPage.tsx'
+import AdminMemberDetailPage from './pages/AdminMemberDetailPage.tsx'
+import AdminMemberSearchPage from './pages/AdminMemberSearchPage.tsx'
 import BrowsePage from './pages/BrowsePage.tsx'
 import CreateListingPage from './pages/CreateListingPage.tsx'
 import DashboardPage from './pages/DashboardPage.tsx'
@@ -20,6 +22,7 @@ import MyRequestsPage from './pages/MyRequestsPage.tsx'
 import ProfilePage from './pages/ProfilePage.tsx'
 import RegisterPage from './pages/RegisterPage.tsx'
 import RequestQueuesPage from './pages/RequestQueuesPage.tsx'
+import RequireAdmin from './components/RequireAdmin.tsx'
 import RequireAuth from './components/RequireAuth.tsx'
 import TestPage from './pages/TestPage.tsx'
 
@@ -39,6 +42,10 @@ function App() {
               "please log in" message instead of the page. */}
           <Route element={<RequireAuth />}>
             <Route path="/profile" element={<ProfilePage />} />
+            {/* US-08: view another member's public profile. Same page component
+                as /profile; the presence of :id switches it to a read-only view,
+                even when :id is the viewer's own id (see Scenario 2). */}
+            <Route path="/profile/:id" element={<ProfilePage />} />
             <Route path="/invite" element={<InvitePage />} />
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/requests" element={<RequestQueuesPage />} />
@@ -53,6 +60,14 @@ function App() {
             <Route path="/member-reviews" element={<MemberReviewsPage />} />
             <Route path="/browse" element={<BrowsePage />} />
             <Route path="/listings/:id" element={<ListingDetailPage />} />
+          </Route>
+          {/* Admin-only pages (US-29). Separate guard from RequireAuth: these
+              need role "admin", not just a logged-in member, and RequireAdmin
+              gives a distinct "not authorized" message for a logged-in
+              non-admin instead of the "please log in" one. */}
+          <Route element={<RequireAdmin />}>
+            <Route path="/admin/members" element={<AdminMemberSearchPage />} />
+            <Route path="/admin/members/:id" element={<AdminMemberDetailPage />} />
           </Route>
           {/* The "*" path matches only when no route above does, so every
               unknown URL shows the not-found page instead of a blank screen. */}

@@ -115,8 +115,8 @@ def test_seed_database_inserts_all_groups(db_connection, monkeypatch):
     seed.seed_database()
 
     assert count_rows(session_factory, SampleData) == 3
-    assert count_rows(session_factory, Member) == 4
-    assert count_rows(session_factory, MemberProfile) == 4
+    assert count_rows(session_factory, Member) == 5
+    assert count_rows(session_factory, MemberProfile) == 5
     assert count_rows(session_factory, InviteToken) == 2
     assert count_rows(session_factory, Listing) == 8
     assert count_rows(session_factory, ListingPhoto) == 8
@@ -239,8 +239,8 @@ def test_seed_database_does_not_duplicate_rows(db_connection, monkeypatch):
     seed.seed_database()
 
     assert count_rows(session_factory, SampleData) == 3
-    assert count_rows(session_factory, Member) == 4
-    assert count_rows(session_factory, MemberProfile) == 4
+    assert count_rows(session_factory, Member) == 5
+    assert count_rows(session_factory, MemberProfile) == 5
     assert count_rows(session_factory, InviteToken) == 2
     assert count_rows(session_factory, Listing) == 8
     assert count_rows(session_factory, ListingPhoto) == 8
@@ -263,8 +263,8 @@ def test_seed_restores_deleted_invite_tokens(db_connection, monkeypatch):
     seed.seed_database()
     assert count_rows(session_factory, InviteToken) == 2
     # The groups that were never deleted are untouched, not duplicated.
-    assert count_rows(session_factory, Member) == 4
-    assert count_rows(session_factory, MemberProfile) == 4
+    assert count_rows(session_factory, Member) == 5
+    assert count_rows(session_factory, MemberProfile) == 5
 
 
 def test_seed_restores_deleted_listings(db_connection, monkeypatch):
@@ -288,7 +288,7 @@ def test_seed_restores_deleted_listings(db_connection, monkeypatch):
     assert count_rows(session_factory, ListingPhoto) == 8
     assert count_rows(session_factory, Claim) == 7
     assert count_rows(session_factory, Notification) == 15
-    assert count_rows(session_factory, Member) == 4
+    assert count_rows(session_factory, Member) == 5
 
 
 def test_seed_restores_deleted_notifications(db_connection, monkeypatch):
@@ -419,7 +419,11 @@ def test_seed_database_gives_every_member_notifications(db_connection, monkeypat
     session = session_factory()
     try:
         members = session.scalars(select(Member)).all()
-        assert len(members) == 4
+        # Alice, Bob, Carol, Dave, plus Erin (US-29: a standing suspended-account
+        # fixture). Erin gets no notifications below: she is suspended from seed
+        # time, so login already refuses her (auth.py), and this test's point is
+        # that every member who *can* log in sees a populated notifications page.
+        assert len(members) == 5
         counts_by_email = {}
         for member in members:
             notifications = session.scalars(
@@ -619,8 +623,8 @@ def test_seed_restores_deleted_profiles(db_connection, monkeypatch):
     assert count_rows(session_factory, MemberProfile) == 0
 
     seed.seed_database()
-    assert count_rows(session_factory, MemberProfile) == 4
-    assert count_rows(session_factory, Member) == 4
+    assert count_rows(session_factory, MemberProfile) == 5
+    assert count_rows(session_factory, Member) == 5
 
 
 def test_seed_database_attaches_one_valid_photo_to_each_listing(

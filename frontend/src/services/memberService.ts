@@ -71,6 +71,23 @@ export async function getMemberProfile(memberId: string): Promise<MemberResult> 
   })
 }
 
+// Loads any member's profile (US-08: view another member's public profile).
+// Unlike getMemberProfile, the id in the URL (the profile being viewed) and
+// the id in the X-Member-Id header (the logged-in viewer making the request)
+// can differ, since a member can view someone else's profile.
+export async function getPublicMemberProfile(
+  targetMemberId: string,
+  actingMemberId: string,
+): Promise<MemberResult> {
+  return fetchMember(`/api/members/${targetMemberId}`, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Member-Id': actingMemberId,
+    },
+  })
+}
+
 export async function updateMemberProfile(
   memberId: string,
   payload: ProfileUpdatePayload,

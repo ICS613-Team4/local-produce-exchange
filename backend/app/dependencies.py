@@ -62,3 +62,12 @@ def get_current_member(
         raise HTTPException(status_code=401, detail="Not authenticated. Unknown member.")
 
     return member
+
+
+def require_admin(current_member: Member = Depends(get_current_member)) -> Member:
+    # US-29: admin-only routes layer this on top of get_current_member. A
+    # missing or invalid X-Member-Id still gets the 401 from get_current_member;
+    # this only adds the role check (Scenario 4: a non-admin is denied).
+    if current_member.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required.")
+    return current_member
