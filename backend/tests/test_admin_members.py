@@ -1,24 +1,32 @@
-# Tests for the admin member search and detail endpoints (US-29).
+# Tests for the admin member search, detail, suspend, and unsuspend endpoints
+# (US-29, US-25, US-26).
 # Run from the project root with: npm run test:backend
 #
-# Like test_members.py, the core tests call search_members() and
-# get_admin_member_detail() directly. The route-layer tests check the
-# passthrough and require_admin's 403/401 behavior.
+# Like test_members.py, the core tests call search_members(), suspend_member(),
+# etc. directly. The route-layer tests check the passthrough and
+# require_admin's 403/401 behavior.
 
 import uuid
 from datetime import datetime, timezone
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 
 from app.dependencies import get_current_member, require_admin
 from app.main import app
 from app.models.member import Member, MemberProfile
+from app.models.suspension_record import SuspensionRecord
 from app.routers.admin_members import (
     get_admin_member_detail,
     get_admin_member_endpoint,
     search_members,
     search_members_endpoint,
+    suspend_member,
+    suspend_member_endpoint,
+    unsuspend_member,
+    unsuspend_member_endpoint,
 )
 
 
@@ -42,6 +50,31 @@ def insert_member(session, name="Alice", email="alice@example.com", role="member
     session.add(profile)
     session.commit()
     return member
+
+
+class _CommitFailSession:
+    # Delegates reads to a real session but raises on commit, so tests can
+    # reach the commit-failure branch in suspend_member/unsuspend_member
+    # without also breaking the preceding scalars() calls that load the
+    # member and the open suspension record. Same pattern test_members.py
+    # uses for update_member_profile's commit-failure test.
+    def __init__(self, real_session):
+        self._s = real_session
+
+    def scalars(self, *args, **kwargs):
+        return self._s.scalars(*args, **kwargs)
+
+    def commit(self, *args, **kwargs):
+        raise OperationalError("stmt", {}, Exception("disk full"))
+
+    def rollback(self, *args, **kwargs):
+        pass
+
+    def add(self, *args, **kwargs):
+        pass
+
+    def close(self, *args, **kwargs):
+        pass
 
 
 # --- core: search_members (Scenario 1, search path) ---
@@ -184,6 +217,185 @@ def test_get_admin_member_detail_database_error_returns_503(broken_session):
     assert raised_error.value.status_code == 503
 
 
+# --- core: suspend_member (US-25, Scenario 1) ---
+
+
+def test_suspend_member_marks_account_suspended(db_session):
+    admin = insert_member(db_session, name="Admin Alice", email="admin@example.com", role="admin")
+    member = insert_member(db_session, name="Regular Bob", email="bob@example.com")
+
+    result = suspend_member(admin, member.id, "Repeated no-shows.", db_session)
+
+    assert result.status == "suspended"
+    assert result.suspended_at is not None
+
+
+def test_suspend_member_writes_a_suspension_record(db_session):
+    admin = insert_member(db_session, name="Admin Alice", email="admin@example.com", role="admin")
+    member = insert_member(db_session, name="Regular Bob", email="bob@example.com")
+
+    suspend_member(admin, member.id, "Repeated no-shows.", db_session)
+
+    record = db_session.scalars(
+        select(SuspensionRecord).where(SuspensionRecord.member_id == member.id)
+    ).first()
+    assert record is not None
+    assert record.admin_id == admin.id
+    assert record.reason == "Repeated no-shows."
+    assert record.lifted_at is None
+
+
+def test_suspend_member_reason_is_optional(db_session):
+    admin = insert_member(db_session, name="Admin Alice", email="admin@example.com", role="admin")
+    member = insert_member(db_session, name="Regular Bob", email="bob@example.com")
+
+    suspend_member(admin, member.id, None, db_session)
+
+    record = db_session.scalars(
+        select(SuspensionRecord).where(SuspensionRecord.member_id == member.id)
+    ).first()
+    assert record is not None
+    assert record.reason is None
+
+
+def test_suspend_member_unknown_id_returns_404(db_session):
+    admin = insert_member(db_session, name="Admin Alice", email="admin@example.com", role="admin")
+
+    with pytest.raises(HTTPException) as raised_error:
+        suspend_member(admin, uuid.uuid4(), None, db_session)
+
+    assert raised_error.value.status_code == 404
+
+
+def test_suspend_member_refuses_an_admin_target(db_session):
+    # No admin hierarchy exists to arbitrate this (same call US-29 made for
+    # viewing), and it also covers an admin suspending themselves, since that
+    # is the same role check.
+    admin = insert_member(db_session, name="Admin Alice", email="admin@example.com", role="admin")
+    other_admin = insert_member(db_session, name="Admin Andy", email="andy@example.com", role="admin")
+
+    with pytest.raises(HTTPException) as raised_error:
+        suspend_member(admin, other_admin.id, None, db_session)
+
+    assert raised_error.value.status_code == 403
+    assert "admin account" in raised_error.value.detail.lower()
+
+
+def test_suspend_member_already_suspended_returns_409(db_session):
+    admin = insert_member(db_session, name="Admin Alice", email="admin@example.com", role="admin")
+    member = insert_member(
+        db_session, name="Regular Bob", email="bob@example.com", status="suspended",
+        suspended_at=datetime.now(timezone.utc),
+    )
+
+    with pytest.raises(HTTPException) as raised_error:
+        suspend_member(admin, member.id, None, db_session)
+
+    assert raised_error.value.status_code == 409
+
+
+def test_suspend_member_fetch_database_error_returns_503(broken_session):
+    admin = Member(id=uuid.uuid4(), name="Admin", email="admin@example.com", password_hash="x", role="admin")
+
+    with pytest.raises(HTTPException) as raised_error:
+        suspend_member(admin, uuid.uuid4(), None, broken_session)
+
+    assert raised_error.value.status_code == 503
+
+
+def test_suspend_member_commit_failure_returns_503(db_session):
+    admin = insert_member(db_session, name="Admin Alice", email="admin@example.com", role="admin")
+    member = insert_member(db_session, name="Regular Bob", email="bob@example.com")
+    session = _CommitFailSession(db_session)
+
+    with pytest.raises(HTTPException) as raised_error:
+        suspend_member(admin, member.id, None, session)
+
+    assert raised_error.value.status_code == 503
+    assert "suspension" in raised_error.value.detail.lower()
+
+
+# --- core: unsuspend_member (US-26, Scenario 1) ---
+
+
+def test_unsuspend_member_marks_account_active(db_session):
+    admin = insert_member(db_session, name="Admin Alice", email="admin@example.com", role="admin")
+    member = insert_member(db_session, name="Regular Bob", email="bob@example.com")
+    suspend_member(admin, member.id, "Repeated no-shows.", db_session)
+
+    result = unsuspend_member(member.id, db_session)
+
+    assert result.status == "active"
+    assert result.suspended_at is None
+
+
+def test_unsuspend_member_closes_the_open_suspension_record(db_session):
+    admin = insert_member(db_session, name="Admin Alice", email="admin@example.com", role="admin")
+    member = insert_member(db_session, name="Regular Bob", email="bob@example.com")
+    suspend_member(admin, member.id, "Repeated no-shows.", db_session)
+
+    unsuspend_member(member.id, db_session)
+
+    record = db_session.scalars(
+        select(SuspensionRecord).where(SuspensionRecord.member_id == member.id)
+    ).first()
+    assert record is not None
+    assert record.lifted_at is not None
+
+
+def test_unsuspend_member_unknown_id_returns_404(db_session):
+    with pytest.raises(HTTPException) as raised_error:
+        unsuspend_member(uuid.uuid4(), db_session)
+
+    assert raised_error.value.status_code == 404
+
+
+def test_unsuspend_member_not_suspended_returns_409(db_session):
+    member = insert_member(db_session, name="Regular Bob", email="bob@example.com", status="active")
+
+    with pytest.raises(HTTPException) as raised_error:
+        unsuspend_member(member.id, db_session)
+
+    assert raised_error.value.status_code == 409
+
+
+def test_unsuspend_member_with_no_open_record_still_reinstates(db_session):
+    # Data suspended before this table existed, or written directly, has no
+    # SuspensionRecord row to close. Reinstating must still work.
+    member = insert_member(
+        db_session, name="Regular Bob", email="bob@example.com", status="suspended",
+        suspended_at=datetime.now(timezone.utc),
+    )
+
+    result = unsuspend_member(member.id, db_session)
+
+    assert result.status == "active"
+    record = db_session.scalars(
+        select(SuspensionRecord).where(SuspensionRecord.member_id == member.id)
+    ).first()
+    assert record is None
+
+
+def test_unsuspend_member_fetch_database_error_returns_503(broken_session):
+    with pytest.raises(HTTPException) as raised_error:
+        unsuspend_member(uuid.uuid4(), broken_session)
+
+    assert raised_error.value.status_code == 503
+
+
+def test_unsuspend_member_commit_failure_returns_503(db_session):
+    admin = insert_member(db_session, name="Admin Alice", email="admin@example.com", role="admin")
+    member = insert_member(db_session, name="Regular Bob", email="bob@example.com")
+    suspend_member(admin, member.id, None, db_session)
+    session = _CommitFailSession(db_session)
+
+    with pytest.raises(HTTPException) as raised_error:
+        unsuspend_member(member.id, session)
+
+    assert raised_error.value.status_code == 503
+    assert "reinstatement" in raised_error.value.detail.lower()
+
+
 # --- require_admin (Scenario 4: non-admin denied) ---
 
 
@@ -238,6 +450,28 @@ def test_get_admin_member_route_is_wired_into_the_app():
     assert found
 
 
+def test_suspend_member_route_is_wired_into_the_app():
+    from fastapi.routing import APIRoute
+
+    found = False
+    for route in app.routes:
+        if isinstance(route, APIRoute):
+            if route.path == "/api/admin/members/{member_id}/suspend" and "POST" in route.methods:
+                found = True
+    assert found
+
+
+def test_unsuspend_member_route_is_wired_into_the_app():
+    from fastapi.routing import APIRoute
+
+    found = False
+    for route in app.routes:
+        if isinstance(route, APIRoute):
+            if route.path == "/api/admin/members/{member_id}/unsuspend" and "POST" in route.methods:
+                found = True
+    assert found
+
+
 # --- route passthroughs ---
 
 
@@ -259,3 +493,29 @@ def test_get_admin_member_endpoint_delegates_to_core(db_session):
 
     assert result.id == str(member.id)
     assert result.name == "Carol Chen"
+
+
+def test_suspend_member_endpoint_delegates_to_core(db_session):
+    from app.schemas.admin_member import SuspendMemberRequest
+
+    admin = insert_member(db_session, name="Admin Alice", email="admin@example.com", role="admin")
+    member = insert_member(db_session, name="Carol Chen", email="carol@example.com")
+
+    result = suspend_member_endpoint(
+        member_id=member.id,
+        payload=SuspendMemberRequest(reason="Testing"),
+        current_member=admin,
+        session=db_session,
+    )
+
+    assert result.status == "suspended"
+
+
+def test_unsuspend_member_endpoint_delegates_to_core(db_session):
+    admin = insert_member(db_session, name="Admin Alice", email="admin@example.com", role="admin")
+    member = insert_member(db_session, name="Carol Chen", email="carol@example.com")
+    suspend_member(admin, member.id, None, db_session)
+
+    result = unsuspend_member_endpoint(member_id=member.id, current_member=admin, session=db_session)
+
+    assert result.status == "active"
