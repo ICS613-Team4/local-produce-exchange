@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 
 import { sendCreateInviteRequest } from '../services/inviteService'
 
@@ -20,11 +20,29 @@ function InvitePage() {
   // A short note shown after the copy button is used.
   const [copyMessage, setCopyMessage] = useState('')
 
+  // isSubmitting: a create request is in flight, which greys the button.
+  const [isSubmitting, setIsSubmitting] = useState(false)
+
+  // Blocks a second click fired in the same tick (a rapid double-click) before
+  // the isSubmitting state above has had a chance to disable the button. The
+  // ref updates immediately, so the second click returns right away.
+  const creatingInviteRef = useRef(false)
+
   async function handleCreateInvite() {
+    if (creatingInviteRef.current === true) {
+      return
+    }
+    creatingInviteRef.current = true
+
+    setIsSubmitting(true)
     setErrorMessage('')
     setCopyMessage('')
 
     const result = await sendCreateInviteRequest(memberId)
+
+    // Release the in-flight guard now the request has finished.
+    creatingInviteRef.current = false
+    setIsSubmitting(false)
 
     if (result.ok) {
       const data = result.data as { token: string }
@@ -130,7 +148,8 @@ function InvitePage() {
         </p>
         <button
           onClick={handleCreateInvite}
-          className="inline-flex items-center px-6 py-2.5 text-sm font-semibold text-text-inverse bg-primary-600 rounded-lg hover:bg-primary-700 shadow-sm hover:shadow transition-all duration-150"
+          disabled={isSubmitting}
+          className="inline-flex items-center px-6 py-2.5 text-sm font-semibold text-text-inverse bg-primary-600 rounded-lg hover:bg-primary-700 shadow-sm hover:shadow transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           Create an invite
         </button>

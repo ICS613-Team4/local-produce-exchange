@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import { afterEach, expect, test, vi } from 'vitest'
 
@@ -95,6 +95,52 @@ test('shows the shareable link with the token after a successful create', async 
 
   expect(linkBox.textContent).toContain('/register?token=')
   expect(linkBox.textContent).toContain('fresh-token-abc')
+})
+
+test('a double click cannot create two invites', async () => {
+  window.localStorage.setItem('memberId', 'member-123')
+
+  // The create response hangs until released, keeping the call in flight
+  // while the second click lands.
+  let releaseCreate: (value: FakeResponse) => void = () => {}
+  const createPromise = new Promise<FakeResponse>((resolve) => {
+    releaseCreate = resolve
+  })
+  let createCallCount = 0
+  vi.stubGlobal('fetch', async () => {
+    createCallCount = createCallCount + 1
+    return createPromise
+  })
+
+  renderInvitePage()
+  const createButton = screen.getByRole('button', { name: 'Create an invite' })
+  fireEvent.click(createButton)
+  fireEvent.click(createButton)
+
+  // Only the first click got through: one call, and the button stays
+  // disabled while the call runs.
+  await waitFor(() => {
+    const button = screen.getByRole('button', { name: 'Create an invite' }) as HTMLButtonElement
+    expect(button.disabled).toBe(true)
+  })
+  expect(createCallCount).toBe(1)
+
+  await act(async () => {
+    releaseCreate(
+      makeFakeResponse(true, 201, {
+        id: 'row-1',
+        token: 'fresh-token-abc',
+        status: 'pending',
+        expires_at: null,
+      }),
+    )
+  })
+
+  // The single create finished and the button is usable again.
+  const tokenBox = await screen.findByText('fresh-token-abc')
+  expect(tokenBox).toBeTruthy()
+  const buttonAfter = screen.getByRole('button', { name: 'Create an invite' }) as HTMLButtonElement
+  expect(buttonAfter.disabled).toBe(false)
 })
 
 test('shows the backend error message on a failed create', async () => {
