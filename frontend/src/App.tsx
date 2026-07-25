@@ -4,6 +4,7 @@ import AboutPage from './pages/AboutPage.tsx'
 import AdminMemberDetailPage from './pages/AdminMemberDetailPage.tsx'
 import AdminMemberSearchPage from './pages/AdminMemberSearchPage.tsx'
 import AdminListingsPage from './pages/AdminListingsPage.tsx'
+import AdminReportsPage from './pages/AdminReportsPage.tsx'
 import BrowsePage from './pages/BrowsePage.tsx'
 import CreateListingPage from './pages/CreateListingPage.tsx'
 import DashboardPage from './pages/DashboardPage.tsx'
@@ -70,6 +71,7 @@ function App() {
             <Route path="/admin/listings" element={<AdminListingsPage />} />
             <Route path="/admin/members" element={<AdminMemberSearchPage />} />
             <Route path="/admin/members/:id" element={<AdminMemberDetailPage />} />
+            <Route path="/admin/reports" element={<AdminReportsPage />} />
           </Route>
           {/* The "*" path matches only when no route above does, so every
               unknown URL shows the not-found page instead of a blank screen. */}
