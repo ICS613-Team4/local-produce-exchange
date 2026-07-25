@@ -27,6 +27,11 @@ function ExchangeThreadPage() {
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState('')
 
+  // Blocks a second send fired in the same tick (a rapid double-click) before
+  // the sending state above has had a chance to disable the button. The ref
+  // updates immediately, so the second click returns right away.
+  const sendingRef = useRef(false)
+
   // Workflow actions offered inside the thread: the requester confirms the
   // pickup while the exchange is approved, and the poster marks it complete
   // once picked up. Same guards as My Requests and Incoming Requests: a ref
@@ -74,15 +79,22 @@ function ExchangeThreadPage() {
 
   async function handleSend(event: React.FormEvent) {
     event.preventDefault()
+    if (sendingRef.current === true) {
+      return
+    }
     const trimmed = messageBody.trim()
     if (trimmed === '') {
       setSendError('Message cannot be empty.')
       return
     }
+    sendingRef.current = true
     setSending(true)
     setSendError('')
 
     const result = await sendMessage(memberId, claimId, trimmed)
+
+    // Release the in-flight guard now the request has finished.
+    sendingRef.current = false
     setSending(false)
 
     if (result.errorMessage !== '') {

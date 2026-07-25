@@ -144,6 +144,64 @@ test('sends message on form submit and reloads thread', async () => {
   await waitFor(() => screen.getByText('Hello!'))
 })
 
+test('a double click cannot send the message twice', async () => {
+  window.localStorage.setItem('memberId', 'member-1')
+  const newMessage = {
+    id: 'msg-3',
+    thread_id: 'thread-1',
+    sender_id: 'member-1',
+    sender_name: 'Alice',
+    body: 'Hello!',
+    sent_at: '2026-06-28T10:05:00Z',
+  }
+
+  // The send response hangs until released, keeping the call in flight
+  // while the second click lands.
+  let releaseSend: (value: FakeResponse) => void = () => {}
+  const sendPromise = new Promise<FakeResponse>((resolve) => {
+    releaseSend = resolve
+  })
+  let sendCallCount = 0
+  vi.stubGlobal('fetch', async (_url: string, options: RequestInit | undefined) => {
+    if (options?.method === 'POST') {
+      sendCallCount = sendCallCount + 1
+      return sendPromise
+    }
+    // The reload GET after the send shows the new message; before that the
+    // thread is empty.
+    if (sendCallCount > 0) {
+      return makeFakeResponse(true, 200, { ...makeEmptyThread(), messages: [newMessage] })
+    }
+    return makeFakeResponse(true, 200, makeEmptyThread())
+  })
+
+  renderPage()
+  await waitFor(() => screen.getByLabelText('Send a message'))
+
+  fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Hello!' } })
+  const sendButton = screen.getByRole('button', { name: 'Send' })
+  fireEvent.click(sendButton)
+  fireEvent.click(sendButton)
+
+  // Only the first click got through: one POST, and the button stays
+  // disabled while the call runs.
+  await waitFor(() => {
+    const button = screen.getByRole('button', { name: /Sending/ }) as HTMLButtonElement
+    expect(button.disabled).toBe(true)
+  })
+  expect(sendCallCount).toBe(1)
+
+  await act(async () => {
+    releaseSend(makeFakeResponse(true, 201, newMessage))
+  })
+
+  // The single send finished, the thread reloaded, and exactly one copy of
+  // the message shows.
+  await waitFor(() => screen.getByText('Hello!'))
+  expect(screen.getAllByText('Hello!').length).toBe(1)
+  expect(sendCallCount).toBe(1)
+})
+
 // ── send empty message shows error ────────────────────────────────────────
 
 test('shows validation error when message body is empty', async () => {
