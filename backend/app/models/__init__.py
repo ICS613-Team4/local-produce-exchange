@@ -10,6 +10,7 @@ from app.models.member import InviteToken, Member, MemberProfile
 from app.models.notification import Notification
 from app.models.review import Review
 from app.models.sample_data import SampleData
+from app.models.suspension_record import SuspensionRecord
 
 __all__ = [
     "Base",
@@ -22,4 +23,5 @@ __all__ = [
     "Notification",
     "Review",
     "SampleData",
+    "SuspensionRecord",
 ]
