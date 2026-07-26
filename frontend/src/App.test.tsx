@@ -129,6 +129,33 @@ test('wires the /test route to the test page for a logged-out visitor', () => {
   expect(screen.getByText('Valid JSON')).toBeTruthy()
 })
 
+test('wires /admin/listings inside RequireAdmin for an administrator', async () => {
+  window.history.pushState({}, '', '/admin/listings')
+  window.localStorage.setItem('memberId', 'admin-1')
+  window.localStorage.setItem('memberName', 'Alice Admin')
+
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    const urlText = String(url)
+    if (urlText === '/api/members/admin-1') {
+      return makeFakeResponse(true, 200, {
+        id: 'admin-1',
+        name: 'Alice Admin',
+        email: 'alice@example.com',
+        role: 'admin',
+        status: 'active',
+      })
+    }
+    if (urlText === '/api/admin/listings') {
+      return makeFakeResponse(true, 200, [])
+    }
+    return makeFakeResponse(true, 200, { unread_count: 0 })
+  })
+
+  render(<App />)
+
+  expect(await screen.findByRole('heading', { name: 'Manage Listings' })).toBeTruthy()
+})
+
 test('guards the /dashboard route, showing the log-in message when logged out', () => {
   // No stored login. The dashboard is a member-only route, so App wraps it in
   // RequireAuth. This proves the guard is wired in App.tsx, not just correct in

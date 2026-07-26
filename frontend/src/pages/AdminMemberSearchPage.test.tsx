@@ -37,6 +37,13 @@ function runSearch(searchText: string) {
   fireEvent.click(screen.getByRole('button', { name: 'Search' }))
 }
 
+test('links to admin listing management', () => {
+  renderSearchPage()
+
+  const listingLink = screen.getByRole('link', { name: 'Manage listings' })
+  expect(listingLink.getAttribute('href')).toBe('/admin/listings')
+})
+
 test('shows nothing before a search has run', () => {
   renderSearchPage()
 
