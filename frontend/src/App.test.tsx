@@ -478,3 +478,28 @@ test('guards the /admin/reports route, showing the log-in message when logged ou
   const loginLink = screen.getByRole('link', { name: 'log in' })
   expect(loginLink.getAttribute('href')).toBe('/login')
 })
+
+test('wires the /admin route inside RequireAdmin for a logged-in admin', async () => {
+  window.history.pushState({}, '', '/admin')
+  window.localStorage.setItem('memberId', 'admin-123')
+  window.localStorage.setItem('memberName', 'Alice Admin')
+
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, { id: 'admin-123', role: 'admin' })
+  })
+
+  render(<App />)
+
+  // The dashboard hub heading renders, which only happens if App registered
+  // the route inside RequireAdmin and let a logged-in admin through.
+  expect(await screen.findByRole('heading', { name: 'Admin Dashboard' })).toBeTruthy()
+})
+
+test('guards the /admin route, showing the log-in message when logged out', () => {
+  window.history.pushState({}, '', '/admin')
+  render(<App />)
+
+  expect(screen.queryByRole('heading', { name: 'Admin Dashboard' })).toBeNull()
+  const loginLink = screen.getByRole('link', { name: 'log in' })
+  expect(loginLink.getAttribute('href')).toBe('/login')
+})

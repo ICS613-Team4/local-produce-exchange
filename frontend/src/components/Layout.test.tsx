@@ -338,7 +338,23 @@ test('the mobile menu lists a Notifications row with the count spelled out', asy
   expect(screen.queryByRole('link', { name: 'Notifications (2)' })).toBeNull()
 })
 
-test('the mobile menu gives an administrator a Manage Listings link', async () => {
+test('the desktop nav gives an administrator an Admin link, with no menu toggle needed', async () => {
+  setLoggedInMember()
+  vi.mocked(getMemberProfile).mockResolvedValueOnce({
+    ok: true,
+    status: 200,
+    data: { id: 'member-123', role: 'admin' },
+    errorMessage: '',
+  })
+  renderLayoutAt('/dashboard')
+
+  // desktopNavItems renders unconditionally (no mobile menu toggle), so this
+  // proves the link is not mobile-only.
+  const adminLink = await screen.findByRole('link', { name: 'Admin' })
+  expect(adminLink.getAttribute('href')).toBe('/admin')
+})
+
+test('the mobile menu also gives an administrator an Admin link', async () => {
   setLoggedInMember()
   vi.mocked(getMemberProfile).mockResolvedValueOnce({
     ok: true,
@@ -350,11 +366,17 @@ test('the mobile menu gives an administrator a Manage Listings link', async () =
 
   fireEvent.click(screen.getByRole('button', { name: 'Toggle navigation menu' }))
 
-  const adminLink = await screen.findByRole('link', { name: 'Manage Listings' })
-  expect(adminLink.getAttribute('href')).toBe('/admin/listings')
+  // The desktop link is already in the DOM at this point too, so there are
+  // now two - one per nav - the same pattern the other shared links (like
+  // Dashboard) use in the tests above.
+  const adminLinks = await screen.findAllByRole('link', { name: 'Admin' })
+  expect(adminLinks.length).toBeGreaterThanOrEqual(2)
+  for (const link of adminLinks) {
+    expect(link.getAttribute('href')).toBe('/admin')
+  }
 })
 
-test('the mobile menu hides Manage Listings from a regular member', async () => {
+test('the nav hides the Admin link from a regular member', async () => {
   setLoggedInMember()
   vi.mocked(getMemberProfile).mockResolvedValueOnce({
     ok: true,
@@ -368,7 +390,7 @@ test('the mobile menu hides Manage Listings from a regular member', async () => 
   fireEvent.click(screen.getByRole('button', { name: 'Toggle navigation menu' }))
 
   expect(getMemberProfile).toHaveBeenCalledWith('member-123')
-  expect(screen.queryByRole('link', { name: 'Manage Listings' })).toBeNull()
+  expect(screen.queryByRole('link', { name: 'Admin' })).toBeNull()
 })
 
 test('changing identity hides a previously authorized admin link immediately', async () => {
@@ -384,13 +406,12 @@ test('changing identity hides a previously authorized admin link immediately', a
     .mockImplementationOnce(() => new Promise(() => {}))
   renderLayoutAt('/switch')
 
-  fireEvent.click(screen.getByRole('button', { name: 'Toggle navigation menu' }))
-  expect(await screen.findByRole('link', { name: 'Manage Listings' })).toBeTruthy()
+  expect((await screen.findAllByRole('link', { name: 'Admin' })).length).toBeGreaterThanOrEqual(1)
 
   fireEvent.click(screen.getByRole('button', { name: 'switch account' }))
 
   expect(getMemberProfile).toHaveBeenLastCalledWith('member-123')
-  expect(screen.queryByRole('link', { name: 'Manage Listings' })).toBeNull()
+  expect(screen.queryByRole('link', { name: 'Admin' })).toBeNull()
 })
 
 test('a slow answer is never stacked with a second request', async () => {

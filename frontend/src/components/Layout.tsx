@@ -65,8 +65,8 @@ function Layout() {
   const memberName = window.localStorage.getItem('memberName') ?? ''
   const isLoggedIn = memberId !== ''
 
-  // Learn whether the current member is an administrator so the shared mobile
-  // menu can expose the listing-management shortcut. This does not grant access:
+  // Learn whether the current member is an administrator so the nav can
+  // expose the Admin link (desktop and mobile). This does not grant access:
   // the destination is still wrapped in RequireAdmin and every API route uses
   // require_admin.
   useEffect(function loadNavigationRole() {
@@ -292,6 +292,9 @@ function Layout() {
         <Link to="/my-listings" className={getNavLinkClasses('/my-listings')} aria-current={getAriaCurrent('/my-listings')} onClick={closeMobileMenu}>My Listings</Link>
         <Link to="/my-requests" className={getNavLinkClasses('/my-requests')} aria-current={getAriaCurrent('/my-requests')} onClick={closeMobileMenu}>My Requests</Link>
         <Link to="/requests" className={getNavLinkClasses('/requests')} aria-current={getAriaCurrent('/requests')} onClick={closeMobileMenu}>Incoming Requests</Link>
+        {authorizedAdminMemberId === memberId && (
+          <Link to="/admin" className={getNavLinkClasses('/admin')} aria-current={getAriaCurrent('/admin')} onClick={closeMobileMenu}>Admin</Link>
+        )}
       </>
     )
     mobileNavItems = (
@@ -304,7 +307,7 @@ function Layout() {
         <Link to="/requests" className={getMobileNavLinkClasses('/requests')} aria-current={getAriaCurrent('/requests')} onClick={closeMobileMenu}>Incoming Requests</Link>
         <Link to="/invite" className={getMobileNavLinkClasses('/invite')} aria-current={getAriaCurrent('/invite')} onClick={closeMobileMenu}>Invite</Link>
         {authorizedAdminMemberId === memberId && (
-          <Link to="/admin/listings" className={getMobileNavLinkClasses('/admin/listings')} aria-current={getAriaCurrent('/admin/listings')} onClick={closeMobileMenu}>Manage Listings</Link>
+          <Link to="/admin" className={getMobileNavLinkClasses('/admin')} aria-current={getAriaCurrent('/admin')} onClick={closeMobileMenu}>Admin</Link>
         )}
       </>
     )
