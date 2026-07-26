@@ -140,7 +140,7 @@ def create_claim(
     # ------------------------------------------------------------------
     try:
         listing = session.scalars(
-            select(Listing).where(Listing.id == listing_uuid)
+            select(Listing).where(Listing.id == listing_uuid).with_for_update()
         ).first()
     except Exception as error:
         logger.error("Loading listing for claim failed: %s", error)

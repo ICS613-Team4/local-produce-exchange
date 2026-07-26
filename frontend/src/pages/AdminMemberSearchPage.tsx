@@ -109,7 +109,15 @@ function AdminMemberSearchPage() {
 
   return (
     <section>
-      <h1 className="text-3xl font-bold text-text mb-6">Search members</h1>
+      <div className="mb-6 flex items-center justify-between gap-4">
+        <h1 className="text-3xl font-bold text-text">Search members</h1>
+        <Link
+          to="/admin/listings"
+          className="inline-flex items-center rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-text-inverse hover:bg-primary-700"
+        >
+          Manage listings
+        </Link>
+      </div>
 
       <div className="bg-surface rounded-xl border border-border p-6 shadow-sm mb-8">
         <form onSubmit={handleSubmit} className="flex items-end gap-4">

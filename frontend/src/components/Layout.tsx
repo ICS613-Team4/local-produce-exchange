@@ -12,6 +12,7 @@ import {
   unreadCountPollIntervalMilliseconds,
 } from '../services/notificationService'
 import type { UnreadCountResponse } from '../services/notificationService'
+import { getMemberProfile } from '../services/memberService'
 
 function Layout() {
   // Subscribe to the current location. Calling this hook makes the nav
@@ -33,6 +34,10 @@ function Layout() {
   // shows this as a badge. Zero means no badge is drawn.
   const [unreadCount, setUnreadCount] = useState(0)
 
+  // Controls admin-only navigation affordances. This is display logic only;
+  // RequireAdmin and the backend remain the authorization boundaries.
+  const [authorizedAdminMemberId, setAuthorizedAdminMemberId] = useState('')
+
   useEffect(function listenForAuthStateChange() {
     function handleAuthStateChange() {
       setAuthEventTick(function bumpTick(previousTick) {
@@ -43,6 +48,7 @@ function Layout() {
       const storedMemberId = window.localStorage.getItem('memberId') ?? ''
       if (storedMemberId === '') {
         setUnreadCount(0)
+        setAuthorizedAdminMemberId('')
       }
     }
     window.addEventListener(authStateChangedEventName, handleAuthStateChange)
@@ -58,6 +64,39 @@ function Layout() {
   const memberId = window.localStorage.getItem('memberId') ?? ''
   const memberName = window.localStorage.getItem('memberName') ?? ''
   const isLoggedIn = memberId !== ''
+
+  // Learn whether the current member is an administrator so the shared mobile
+  // menu can expose the listing-management shortcut. This does not grant access:
+  // the destination is still wrapped in RequireAdmin and every API route uses
+  // require_admin.
+  useEffect(function loadNavigationRole() {
+    if (memberId === '') {
+      return
+    }
+
+    let cancelled = false
+    async function loadRole() {
+      const result = await getMemberProfile(memberId)
+      if (cancelled) {
+        return
+      }
+      if (result.status === 401) {
+        clearStoredLogin()
+        return
+      }
+      if (result.ok && typeof result.data === 'object' && result.data !== null) {
+        const role = (result.data as { role?: unknown }).role
+        setAuthorizedAdminMemberId(role === 'admin' ? memberId : '')
+        return
+      }
+      setAuthorizedAdminMemberId('')
+    }
+    loadRole()
+
+    return function cancelRoleLookup() {
+      cancelled = true
+    }
+  }, [memberId])
 
   // Keep the bell's unread count fresh. This asks the count-only endpoint right
   // away, then every unreadCountPollIntervalMilliseconds after that. It skips
@@ -264,6 +303,9 @@ function Layout() {
         <Link to="/my-requests" className={getMobileNavLinkClasses('/my-requests')} aria-current={getAriaCurrent('/my-requests')} onClick={closeMobileMenu}>My Requests</Link>
         <Link to="/requests" className={getMobileNavLinkClasses('/requests')} aria-current={getAriaCurrent('/requests')} onClick={closeMobileMenu}>Incoming Requests</Link>
         <Link to="/invite" className={getMobileNavLinkClasses('/invite')} aria-current={getAriaCurrent('/invite')} onClick={closeMobileMenu}>Invite</Link>
+        {authorizedAdminMemberId === memberId && (
+          <Link to="/admin/listings" className={getMobileNavLinkClasses('/admin/listings')} aria-current={getAriaCurrent('/admin/listings')} onClick={closeMobileMenu}>Manage Listings</Link>
+        )}
       </>
     )
   } else {

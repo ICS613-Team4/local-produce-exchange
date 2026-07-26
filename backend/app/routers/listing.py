@@ -803,10 +803,19 @@ def deactivate_listing(
     except (ValueError, AttributeError, TypeError):
         raise HTTPException(status_code=404, detail="This listing is unavailable.")
 
-    # Load the row. A down or unmigrated database returns 503, matching the other
-    # endpoints.
+    # Lock pending claims before the listing to match the claim-decision lock
+    # order. The second pending-claim query below refreshes after the listing lock
+    # and catches a request creator that committed while this operation waited.
     try:
-        row = session.scalars(select(Listing).where(Listing.id == listing_uuid)).first()
+        session.scalars(
+            select(Claim)
+            .where(Claim.listing_id == listing_uuid)
+            .where(Claim.status == "requested")
+            .with_for_update()
+        ).all()
+        row = session.scalars(
+            select(Listing).where(Listing.id == listing_uuid).with_for_update()
+        ).first()
     except Exception as error:
         logger.error("Reading a listing for deactivate failed: %s", error)
         raise HTTPException(
@@ -912,10 +921,12 @@ def reactivate_listing(
     except (ValueError, AttributeError, TypeError):
         raise HTTPException(status_code=404, detail="This listing is unavailable.")
 
-    # Load the row. A down or unmigrated database returns 503, matching the other
-    # endpoints.
+    # Lock the row so concurrent owner/admin transitions serialize and each
+    # caller validates the status and administrative marker after prior commits.
     try:
-        row = session.scalars(select(Listing).where(Listing.id == listing_uuid)).first()
+        row = session.scalars(
+            select(Listing).where(Listing.id == listing_uuid).with_for_update()
+        ).first()
     except Exception as error:
         logger.error("Reading a listing for reactivate failed: %s", error)
         raise HTTPException(

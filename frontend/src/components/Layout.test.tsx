@@ -6,6 +6,7 @@ import { afterEach, expect, test, vi } from 'vitest'
 
 import Layout from './Layout'
 import { sendLogoutRequest } from '../services/authService'
+import { getMemberProfile } from '../services/memberService'
 import {
   notificationsChangedEventName,
   sendGetUnreadCountRequest,
@@ -29,6 +30,12 @@ vi.mock('../services/authService', async (importOriginal) => {
     }),
   }
 })
+
+vi.mock('../services/memberService', () => ({
+  getMemberProfile: vi.fn(async () => {
+    return { ok: false, status: 0, data: '', errorMessage: 'not stubbed in this test' }
+  }),
+}))
 
 // Mock only the polled count request in the notification service; the real
 // poll-interval constant passes through so the timer tests advance by the same
@@ -85,6 +92,15 @@ function FakeLoginRoute() {
   return <button onClick={handleClick}>fake login</button>
 }
 
+function FakeAccountSwitchRoute() {
+  const navigate = useNavigate()
+  function handleClick() {
+    window.localStorage.setItem('memberId', 'member-123')
+    navigate('/dashboard')
+  }
+  return <button onClick={handleClick}>switch account</button>
+}
+
 // A child route that mimics a stale-session clear: it removes memberId and fires
 // the shared event without navigating. The event test uses it to prove the nav
 // re-reads without a route change.
@@ -106,6 +122,7 @@ function renderLayoutAt(initialPath: string) {
           <Route path="/" element={<p>home content</p>} />
           <Route path="/login" element={<FakeLoginRoute />} />
           <Route path="/dashboard" element={<p>dashboard content</p>} />
+          <Route path="/switch" element={<FakeAccountSwitchRoute />} />
           <Route path="/detail" element={<FakeStaleClearRoute />} />
         </Route>
       </Routes>
@@ -319,6 +336,61 @@ test('the mobile menu lists a Notifications row with the count spelled out', asy
   // Choosing the row closes the menu, like every other mobile nav row.
   fireEvent.click(mobileRow)
   expect(screen.queryByRole('link', { name: 'Notifications (2)' })).toBeNull()
+})
+
+test('the mobile menu gives an administrator a Manage Listings link', async () => {
+  setLoggedInMember()
+  vi.mocked(getMemberProfile).mockResolvedValueOnce({
+    ok: true,
+    status: 200,
+    data: { id: 'member-123', role: 'admin' },
+    errorMessage: '',
+  })
+  renderLayoutAt('/dashboard')
+
+  fireEvent.click(screen.getByRole('button', { name: 'Toggle navigation menu' }))
+
+  const adminLink = await screen.findByRole('link', { name: 'Manage Listings' })
+  expect(adminLink.getAttribute('href')).toBe('/admin/listings')
+})
+
+test('the mobile menu hides Manage Listings from a regular member', async () => {
+  setLoggedInMember()
+  vi.mocked(getMemberProfile).mockResolvedValueOnce({
+    ok: true,
+    status: 200,
+    data: { id: 'member-123', role: 'member' },
+    errorMessage: '',
+  })
+  renderLayoutAt('/dashboard')
+  await act(async () => {})
+
+  fireEvent.click(screen.getByRole('button', { name: 'Toggle navigation menu' }))
+
+  expect(getMemberProfile).toHaveBeenCalledWith('member-123')
+  expect(screen.queryByRole('link', { name: 'Manage Listings' })).toBeNull()
+})
+
+test('changing identity hides a previously authorized admin link immediately', async () => {
+  window.localStorage.setItem('memberId', 'admin-123')
+  window.localStorage.setItem('memberName', 'Alice Admin')
+  vi.mocked(getMemberProfile)
+    .mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { id: 'admin-123', role: 'admin' },
+      errorMessage: '',
+    })
+    .mockImplementationOnce(() => new Promise(() => {}))
+  renderLayoutAt('/switch')
+
+  fireEvent.click(screen.getByRole('button', { name: 'Toggle navigation menu' }))
+  expect(await screen.findByRole('link', { name: 'Manage Listings' })).toBeTruthy()
+
+  fireEvent.click(screen.getByRole('button', { name: 'switch account' }))
+
+  expect(getMemberProfile).toHaveBeenLastCalledWith('member-123')
+  expect(screen.queryByRole('link', { name: 'Manage Listings' })).toBeNull()
 })
 
 test('a slow answer is never stacked with a second request', async () => {
