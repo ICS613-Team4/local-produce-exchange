@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { afterEach, expect, test, vi } from 'vitest'
 
@@ -69,16 +69,17 @@ test('shows full account details for a regular member', async () => {
   expect(screen.getByText('either')).toBeTruthy()
 })
 
-test('shows a disabled Suspend control for an active, non-admin member', async () => {
+test('shows an enabled Suspend control and a reason field for an active, non-admin member', async () => {
   vi.stubGlobal('fetch', async () => makeFakeResponse(true, 200, REGULAR_MEMBER))
 
   renderDetailPage('member-2')
 
   const suspendButton = await screen.findByRole('button', { name: 'Suspend account' })
-  expect(suspendButton.hasAttribute('disabled')).toBe(true)
+  expect(suspendButton.hasAttribute('disabled')).toBe(false)
+  expect(screen.getByLabelText('Reason (optional)')).toBeTruthy()
 })
 
-test('shows a disabled Reinstate control and a suspended-since row for a suspended member', async () => {
+test('shows an enabled Reinstate control and a suspended-since row for a suspended member', async () => {
   const suspendedMember = {
     ...REGULAR_MEMBER,
     status: 'suspended',
@@ -89,7 +90,7 @@ test('shows a disabled Reinstate control and a suspended-since row for a suspend
   renderDetailPage('member-2')
 
   const reinstateButton = await screen.findByRole('button', { name: 'Reinstate account' })
-  expect(reinstateButton.hasAttribute('disabled')).toBe(true)
+  expect(reinstateButton.hasAttribute('disabled')).toBe(false)
   expect(screen.getByText('Suspended since')).toBeTruthy()
 })
 
@@ -153,4 +154,110 @@ test('clears the stale login on a 401 instead of showing a generic error', async
   })
   expect(window.localStorage.getItem('memberName')).toBeNull()
   expect(screen.queryByRole('alert')).toBeNull()
+})
+
+// --- suspend action (US-25) ---
+
+test('does nothing when the admin cancels the confirm dialog', async () => {
+  let callCount = 0
+  vi.stubGlobal('fetch', async () => {
+    callCount += 1
+    return makeFakeResponse(true, 200, REGULAR_MEMBER)
+  })
+  vi.stubGlobal('confirm', () => false)
+
+  renderDetailPage('member-2')
+  fireEvent.click(await screen.findByRole('button', { name: 'Suspend account' }))
+
+  // Only the initial GET happened; the confirm dialog blocked the POST.
+  expect(callCount).toBe(1)
+  expect(screen.getByText('active')).toBeTruthy()
+})
+
+test('suspends the member and shows the updated status after confirming, sending the typed reason', async () => {
+  let requestCount = 0
+  let suspendUrl = ''
+  let suspendBody = ''
+  vi.stubGlobal('fetch', async (url: string | URL | Request, options?: RequestInit) => {
+    requestCount += 1
+    if (requestCount === 1) {
+      return makeFakeResponse(true, 200, REGULAR_MEMBER)
+    }
+    suspendUrl = String(url)
+    suspendBody = String(options?.body ?? '')
+    return makeFakeResponse(true, 200, { ...REGULAR_MEMBER, status: 'suspended', suspended_at: '2026-07-25T00:00:00+00:00' })
+  })
+  vi.stubGlobal('confirm', () => true)
+
+  renderDetailPage('member-2')
+  await screen.findByRole('button', { name: 'Suspend account' })
+  fireEvent.change(screen.getByLabelText('Reason (optional)'), { target: { value: 'Repeated no-shows.' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Suspend account' }))
+
+  expect(await screen.findByRole('button', { name: 'Reinstate account' })).toBeTruthy()
+  expect(screen.getByText('suspended')).toBeTruthy()
+  expect(suspendUrl).toBe('/api/admin/members/member-2/suspend')
+  expect(suspendBody).toBe(JSON.stringify({ reason: 'Repeated no-shows.' }))
+})
+
+test('shows the backend error and keeps the account active when suspending fails', async () => {
+  let requestCount = 0
+  vi.stubGlobal('fetch', async () => {
+    requestCount += 1
+    if (requestCount === 1) {
+      return makeFakeResponse(true, 200, REGULAR_MEMBER)
+    }
+    return makeFakeResponse(false, 409, { detail: 'Member is already suspended.' })
+  })
+  vi.stubGlobal('confirm', () => true)
+
+  renderDetailPage('member-2')
+  fireEvent.click(await screen.findByRole('button', { name: 'Suspend account' }))
+
+  const errorArea = await screen.findByRole('alert')
+  expect(errorArea.textContent).toContain('Member is already suspended.')
+  expect(screen.getByText('active')).toBeTruthy()
+})
+
+// --- unsuspend action (US-26) ---
+
+test('reinstates the member and shows the updated status after confirming', async () => {
+  const suspendedMember = { ...REGULAR_MEMBER, status: 'suspended', suspended_at: '2026-05-01T00:00:00+00:00' }
+  let requestCount = 0
+  let unsuspendUrl = ''
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    requestCount += 1
+    if (requestCount === 1) {
+      return makeFakeResponse(true, 200, suspendedMember)
+    }
+    unsuspendUrl = String(url)
+    return makeFakeResponse(true, 200, { ...REGULAR_MEMBER, status: 'active', suspended_at: null })
+  })
+  vi.stubGlobal('confirm', () => true)
+
+  renderDetailPage('member-2')
+  fireEvent.click(await screen.findByRole('button', { name: 'Reinstate account' }))
+
+  expect(await screen.findByRole('button', { name: 'Suspend account' })).toBeTruthy()
+  expect(screen.getByText('active')).toBeTruthy()
+  expect(unsuspendUrl).toBe('/api/admin/members/member-2/unsuspend')
+})
+
+test('clears the stale login when an action gets a 401', async () => {
+  let requestCount = 0
+  vi.stubGlobal('fetch', async () => {
+    requestCount += 1
+    if (requestCount === 1) {
+      return makeFakeResponse(true, 200, REGULAR_MEMBER)
+    }
+    return makeFakeResponse(false, 401, { detail: 'Not authenticated.' })
+  })
+  vi.stubGlobal('confirm', () => true)
+
+  renderDetailPage('member-2')
+  fireEvent.click(await screen.findByRole('button', { name: 'Suspend account' }))
+
+  await waitFor(() => {
+    expect(window.localStorage.getItem('memberId')).toBeNull()
+  })
 })

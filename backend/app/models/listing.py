@@ -75,6 +75,11 @@ class Listing(Base):
         PGUUID(as_uuid=True),
         ForeignKey("member.id"),
     )
+    # Null on the same schedule as deactivated_by (US-27 sets it, US-32's
+    # reactivation clears it back to null): when this happened, so the admin
+    # activity report (US-28) can count deactivations within a date range the
+    # same way it counts member suspensions from suspension_record.created_at.
+    deactivated_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=text("now()"),

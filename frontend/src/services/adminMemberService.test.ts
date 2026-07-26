@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from 'vitest'
-import { getAdminMemberDetail, searchMembers } from './adminMemberService'
+import { getAdminMemberDetail, searchMembers, suspendMember, unsuspendMember } from './adminMemberService'
 
 type FakeResponse = {
   ok: boolean
@@ -108,4 +108,78 @@ test('getAdminMemberDetail returns ok:false on a 404', async () => {
 
   expect(result.ok).toBe(false)
   expect(result.status).toBe(404)
+})
+
+// ── suspendMember ──────────────────────────────────────────────────────────
+
+test('suspendMember sends POST with the reason in the body', async () => {
+  let requestUrl = ''
+  let requestOptions: RequestInit = {}
+  vi.stubGlobal('fetch', async (url: string | URL | Request, options: RequestInit | undefined) => {
+    requestUrl = String(url)
+    if (options !== undefined) requestOptions = options
+    return makeFakeResponse(true, 200, JSON.stringify({ id: 'member-2', status: 'suspended' }))
+  })
+
+  const result = await suspendMember('member-2', 'admin-1', 'Repeated no-shows.')
+
+  expect(result.ok).toBe(true)
+  expect(requestUrl).toBe('/api/admin/members/member-2/suspend')
+  expect(requestOptions.method).toBe('POST')
+  const headers = requestOptions.headers as Record<string, string>
+  expect(headers['X-Member-Id']).toBe('admin-1')
+  expect(requestOptions.body).toBe(JSON.stringify({ reason: 'Repeated no-shows.' }))
+})
+
+test('suspendMember sends a null reason when left blank', async () => {
+  let requestOptions: RequestInit = {}
+  vi.stubGlobal('fetch', async (_url: string | URL | Request, options: RequestInit | undefined) => {
+    if (options !== undefined) requestOptions = options
+    return makeFakeResponse(true, 200, JSON.stringify({ id: 'member-2', status: 'suspended' }))
+  })
+
+  await suspendMember('member-2', 'admin-1', '   ')
+
+  expect(requestOptions.body).toBe(JSON.stringify({ reason: null }))
+})
+
+test('suspendMember returns ok:false on a 409 (already suspended)', async () => {
+  vi.stubGlobal('fetch', async () =>
+    makeFakeResponse(false, 409, JSON.stringify({ detail: 'Member is already suspended.' })),
+  )
+
+  const result = await suspendMember('member-2', 'admin-1', '')
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(409)
+})
+
+// ── unsuspendMember ────────────────────────────────────────────────────────
+
+test('unsuspendMember sends POST with no body', async () => {
+  let requestUrl = ''
+  let requestOptions: RequestInit = {}
+  vi.stubGlobal('fetch', async (url: string | URL | Request, options: RequestInit | undefined) => {
+    requestUrl = String(url)
+    if (options !== undefined) requestOptions = options
+    return makeFakeResponse(true, 200, JSON.stringify({ id: 'member-2', status: 'active' }))
+  })
+
+  const result = await unsuspendMember('member-2', 'admin-1')
+
+  expect(result.ok).toBe(true)
+  expect(requestUrl).toBe('/api/admin/members/member-2/unsuspend')
+  expect(requestOptions.method).toBe('POST')
+  expect(requestOptions.body).toBeUndefined()
+})
+
+test('unsuspendMember returns ok:false on a 409 (not suspended)', async () => {
+  vi.stubGlobal('fetch', async () =>
+    makeFakeResponse(false, 409, JSON.stringify({ detail: 'Member is not suspended.' })),
+  )
+
+  const result = await unsuspendMember('member-2', 'admin-1')
+
+  expect(result.ok).toBe(false)
+  expect(result.status).toBe(409)
 })

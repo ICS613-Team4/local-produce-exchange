@@ -1,4 +1,5 @@
-// API calls for the admin member search and detail views (US-29).
+// API calls for the admin member search and detail views (US-29), and the
+// suspend/unsuspend actions (US-25, US-26).
 
 const adminMemberTimeoutMilliseconds = 3000
 
@@ -29,16 +30,25 @@ export type AdminMemberDetail = {
   contact_preference: string | null
 }
 
-async function fetchAdminMembers(url: string, actingMemberId: string): Promise<AdminMemberResult> {
+async function fetchAdminMembers(
+  url: string,
+  actingMemberId: string,
+  method: string = 'GET',
+  body?: unknown,
+): Promise<AdminMemberResult> {
   try {
-    const response = await fetch(url, {
-      method: 'GET',
+    const options: RequestInit = {
+      method,
       headers: {
         'Content-Type': 'application/json',
         'X-Member-Id': actingMemberId,
       },
       signal: AbortSignal.timeout(adminMemberTimeoutMilliseconds),
-    })
+    }
+    if (body !== undefined) {
+      options.body = JSON.stringify(body)
+    }
+    const response = await fetch(url, options)
 
     const responseText = await response.text()
     let data: unknown = ''
@@ -73,4 +83,30 @@ export async function getAdminMemberDetail(
   actingMemberId: string,
 ): Promise<AdminMemberResult> {
   return fetchAdminMembers(`/api/admin/members/${targetMemberId}`, actingMemberId)
+}
+
+// US-25: reason is optional, so callers can pass '' for "no reason given"
+// without needing an extra undefined/empty branch of their own; this sends
+// null in that case so the backend stores no reason rather than an empty
+// string.
+export async function suspendMember(
+  targetMemberId: string,
+  actingMemberId: string,
+  reason: string,
+): Promise<AdminMemberResult> {
+  const trimmedReason = reason.trim()
+  return fetchAdminMembers(
+    `/api/admin/members/${targetMemberId}/suspend`,
+    actingMemberId,
+    'POST',
+    { reason: trimmedReason === '' ? null : trimmedReason },
+  )
+}
+
+// US-26.
+export async function unsuspendMember(
+  targetMemberId: string,
+  actingMemberId: string,
+): Promise<AdminMemberResult> {
+  return fetchAdminMembers(`/api/admin/members/${targetMemberId}/unsuspend`, actingMemberId, 'POST')
 }

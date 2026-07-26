@@ -4,6 +4,8 @@ import { Link, useParams } from 'react-router'
 import { clearStoredLogin } from '../services/authService'
 import {
   getAdminMemberDetail,
+  suspendMember,
+  unsuspendMember,
   type AdminMemberDetail,
   type AdminMemberResult,
 } from '../services/adminMemberService'
@@ -31,6 +33,13 @@ function AdminMemberDetailPage() {
   // null synchronously inside the effect.
   const [resultForId, setResultForId] = useState('')
 
+  // US-25/US-26: the optional reason typed before suspending, whether the
+  // suspend/reinstate call is in flight (disables the button so a double
+  // click cannot fire it twice), and the error line from a failed action.
+  const [reasonText, setReasonText] = useState('')
+  const [actionPending, setActionPending] = useState(false)
+  const [actionError, setActionError] = useState('')
+
   useEffect(() => {
     if (memberId === '' || targetMemberId === '') {
       return
@@ -48,6 +57,50 @@ function AdminMemberDetailPage() {
   }, [memberId, targetMemberId])
 
   const isCurrent = result !== null && resultForId === targetMemberId
+
+  // Shared by handleSuspend and handleUnsuspend: send the action, and either
+  // show the member's new state (the endpoint returns the updated detail
+  // directly, so there is no need to re-fetch) or show why it failed.
+  async function runAction(actionResult: Promise<AdminMemberResult>) {
+    setActionPending(true)
+    setActionError('')
+    const loadedResult = await actionResult
+    setActionPending(false)
+
+    if (loadedResult.status === 401) {
+      clearStoredLogin()
+      return
+    }
+    if (loadedResult.ok) {
+      setResult(loadedResult)
+      setReasonText('')
+      return
+    }
+
+    let detail: unknown = undefined
+    if (typeof loadedResult.data === 'object' && loadedResult.data !== null) {
+      detail = (loadedResult.data as { detail?: unknown }).detail
+    }
+    let detailMessage = 'Could not update this account (HTTP ' + loadedResult.status + ').'
+    if (typeof detail === 'string') {
+      detailMessage = detail
+    }
+    setActionError(detailMessage)
+  }
+
+  function handleSuspend() {
+    if (!window.confirm('Suspend this account? They will no longer be able to log in or take member actions.')) {
+      return
+    }
+    runAction(suspendMember(targetMemberId, memberId, reasonText))
+  }
+
+  function handleUnsuspend() {
+    if (!window.confirm('Reinstate this account? They will be able to log in and take member actions again.')) {
+      return
+    }
+    runAction(unsuspendMember(targetMemberId, memberId))
+  }
 
   const backLink = (
     <Link to="/admin/members" className="text-sm font-medium text-primary-600 hover:text-primary-700">
@@ -98,28 +151,55 @@ function AdminMemberDetailPage() {
 
   // US-29, admin-viewing-admin: full detail is fine (transparency), but no
   // suspend/reinstate control, since there is no admin hierarchy in this
-  // schema to arbitrate one admin acting on another.
+  // schema to arbitrate one admin acting on another - the same role check
+  // also stops an admin from suspending themselves.
+  const actionErrorLine =
+    actionError !== '' ? (
+      <p className="text-sm text-error mt-2" role="alert">
+        {actionError}
+      </p>
+    ) : null
+
   let suspendControl = null
   if (member.role !== 'admin') {
     if (member.status === 'suspended') {
       suspendControl = (
-        <button
-          type="button"
-          disabled
-          className="mt-6 inline-flex items-center px-6 py-2.5 text-sm font-semibold text-text-muted border border-border rounded-lg opacity-50 cursor-not-allowed"
-        >
-          Reinstate account
-        </button>
+        <div className="mt-6">
+          <button
+            type="button"
+            disabled={actionPending}
+            onClick={handleUnsuspend}
+            className="inline-flex items-center px-6 py-2.5 text-sm font-semibold text-text-inverse bg-primary-600 rounded-lg hover:bg-primary-700 shadow-sm transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {actionPending ? 'Reinstating…' : 'Reinstate account'}
+          </button>
+          {actionErrorLine}
+        </div>
       )
     } else {
       suspendControl = (
-        <button
-          type="button"
-          disabled
-          className="mt-6 inline-flex items-center px-6 py-2.5 text-sm font-semibold text-text-muted border border-border rounded-lg opacity-50 cursor-not-allowed"
-        >
-          Suspend account
-        </button>
+        <div className="mt-6">
+          <label htmlFor="suspend-reason" className="block text-sm font-medium text-text mb-1.5">
+            Reason (optional)
+          </label>
+          <input
+            id="suspend-reason"
+            type="text"
+            value={reasonText}
+            onChange={(event) => setReasonText(event.target.value)}
+            className="w-full px-4 py-2.5 text-sm bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-150 mb-3"
+            placeholder="Why is this account being suspended?"
+          />
+          <button
+            type="button"
+            disabled={actionPending}
+            onClick={handleSuspend}
+            className="inline-flex items-center px-6 py-2.5 text-sm font-semibold text-error border border-red-200 rounded-lg hover:bg-error-bg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {actionPending ? 'Suspending…' : 'Suspend account'}
+          </button>
+          {actionErrorLine}
+        </div>
       )
     }
   }
