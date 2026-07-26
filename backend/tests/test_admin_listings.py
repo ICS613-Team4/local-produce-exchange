@@ -34,7 +34,7 @@ def insert_member(session, *, name, email, role="member"):
     return member
 
 
-def insert_listing(session, owner, *, status="active", deactivated_by=None):
+def insert_listing(session, owner, *, status="active", deactivated_by=None, deactivated_at=None):
     start = datetime(2026, 7, 1, 9, 0, tzinfo=timezone.utc)
     end = datetime(2026, 7, 1, 11, 0, tzinfo=timezone.utc)
     listing = Listing(
@@ -49,6 +49,7 @@ def insert_listing(session, owner, *, status="active", deactivated_by=None):
         pickup_window=Range(start, end, bounds="[)"),
         status=status,
         deactivated_by=deactivated_by,
+        deactivated_at=deactivated_at,
     )
     session.add(listing)
     session.commit()
@@ -93,6 +94,7 @@ def snapshot_listing(session, listing_id):
         "pickup_bounds": row.pickup_window.bounds,
         "status": row.status,
         "deactivated_by": row.deactivated_by,
+        "deactivated_at": row.deactivated_at,
     }
 
 
@@ -115,9 +117,11 @@ def test_admin_deactivates_any_active_listing_and_preserves_the_record(db_sessio
 
     assert response is None
     after = snapshot_listing(db_session, listing.id)
+    assert after["deactivated_at"] is not None
     expected = dict(before)
     expected["status"] = "deactivated"
     expected["deactivated_by"] = admin.id
+    expected["deactivated_at"] = after["deactivated_at"]
     assert after == expected
 
 
@@ -233,6 +237,7 @@ def test_admin_reactivates_an_admin_deactivated_listing_and_clears_marker(db_ses
         owner,
         status="deactivated",
         deactivated_by=admin.id,
+        deactivated_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
     )
 
     reactivate_listing_as_admin(listing.id, db_session)
@@ -240,6 +245,7 @@ def test_admin_reactivates_an_admin_deactivated_listing_and_clears_marker(db_ses
     saved = snapshot_listing(db_session, listing.id)
     assert saved["status"] == "active"
     assert saved["deactivated_by"] is None
+    assert saved["deactivated_at"] is None
 
 
 def test_admin_reactivation_makes_listing_visible_in_browsing(db_session):

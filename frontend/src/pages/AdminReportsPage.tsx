@@ -80,13 +80,42 @@ function AdminReportsPage() {
         rangeNote = 'Covers everything through ' + report.end_date + '.'
       }
 
+      const memberStatusRows = []
+      for (const status of Object.keys(report.members_by_status)) {
+        memberStatusRows.push(
+          <div key={status} className="flex items-center justify-between py-1.5">
+            <span className="text-sm text-text-muted capitalize">{status.replace('_', ' ')}</span>
+            <span className="text-sm font-medium text-text">{report.members_by_status[status]}</span>
+          </div>,
+        )
+      }
+
       resultsArea = (
         <div>
           <p className="text-sm text-text-muted mb-4">{rangeNote}</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {buildBreakdownCard('Listings', report.total_listings, report.listings_by_status)}
             {buildBreakdownCard('Requests', report.total_requests, report.requests_by_status)}
-            {buildBreakdownCard('Members', report.total_members, report.members_by_status)}
+            <div className="bg-surface rounded-xl border border-border p-6 shadow-sm">
+              <div className="flex items-baseline justify-between mb-2">
+                <h2 className="text-base font-semibold text-text">Members</h2>
+                <span className="text-2xl font-bold text-text">{report.total_members}</span>
+              </div>
+              <div className="divide-y divide-border">{memberStatusRows}</div>
+              {/* Suspension activity (US-25/US-26), from suspension_record:
+                  actions taken during the range, not the current status mix
+                  above (which is filtered by join date). */}
+              <div className="border-t border-border mt-3 pt-3 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-text-muted">Suspended in this period</span>
+                  <span className="text-sm font-medium text-text">{report.members_suspended}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-text-muted">Reinstated in this period</span>
+                  <span className="text-sm font-medium text-text">{report.members_reinstated}</span>
+                </div>
+              </div>
+            </div>
             <div className="bg-surface rounded-xl border border-border p-6 shadow-sm">
               <div className="flex items-baseline justify-between">
                 <h2 className="text-base font-semibold text-text">Completed exchanges</h2>

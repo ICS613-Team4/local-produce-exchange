@@ -24,3 +24,12 @@ class AdminReport(BaseModel):
     completed_exchanges: int
     members_by_status: Dict[str, int]
     total_members: int
+
+    # Suspension activity (US-25/US-26), from suspension_record - distinct
+    # from members_by_status, which is a snapshot of current status filtered
+    # by join date. These count actions taken during the range: a member
+    # suspended before the range and still suspended does not count here,
+    # and one suspended inside the range but not yet reinstated counts as
+    # suspended but not reinstated.
+    members_suspended: int
+    members_reinstated: int

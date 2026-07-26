@@ -106,6 +106,7 @@ def deactivate_listing_as_admin(
 
     listing.status = "deactivated"
     listing.deactivated_by = acting_admin.id
+    listing.deactivated_at = now
 
     try:
         session.commit()
@@ -149,6 +150,7 @@ def reactivate_listing_as_admin(
 
     listing.status = "active"
     listing.deactivated_by = None
+    listing.deactivated_at = None
 
     try:
         session.commit()

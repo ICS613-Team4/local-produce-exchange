@@ -16,6 +16,7 @@ from app.main import app
 from app.models.claim import Claim
 from app.models.listing import Listing
 from app.models.member import Member
+from app.models.suspension_record import SuspensionRecord
 from app.routers.admin_reports import generate_report, generate_report_endpoint
 
 
@@ -69,6 +70,19 @@ def insert_claim(session, listing, claimant, status="requested", requested_at=No
     return claim
 
 
+def insert_suspension_record(session, member, admin, created_at=None, lifted_at=None):
+    record = SuspensionRecord(
+        member_id=member.id,
+        admin_id=admin.id,
+        reason=None,
+        created_at=created_at if created_at is not None else datetime.now(timezone.utc),
+        lifted_at=lifted_at,
+    )
+    session.add(record)
+    session.commit()
+    return record
+
+
 # --- core: status breakdowns, zero-filled ---
 
 
@@ -86,6 +100,8 @@ def test_generate_report_with_no_data_zero_fills_every_status(db_session):
     assert result.total_requests == 0
     assert result.total_members == 0
     assert result.completed_exchanges == 0
+    assert result.members_suspended == 0
+    assert result.members_reinstated == 0
 
 
 def test_generate_report_counts_listings_by_status(db_session):
@@ -154,6 +170,58 @@ def test_generate_report_completed_exchanges_counts_by_completion_date(db_sessio
     assert result.completed_exchanges == 1
     assert result.requests_by_status["requested"] == 1
     assert result.requests_by_status["completed"] == 0
+
+
+# --- core: suspension activity from suspension_record (US-25/US-26) ---
+
+
+def test_generate_report_counts_members_suspended_in_range(db_session):
+    admin = insert_member(db_session, name="Admin", email="admin@example.com")
+    member = insert_member(db_session, email="bob@example.com")
+    insert_suspension_record(db_session, member, admin, created_at=datetime(2026, 6, 15, tzinfo=timezone.utc))
+
+    result = generate_report(date(2026, 6, 1), date(2026, 6, 30), db_session)
+
+    assert result.members_suspended == 1
+
+
+def test_generate_report_excludes_suspensions_outside_the_range(db_session):
+    admin = insert_member(db_session, name="Admin", email="admin@example.com")
+    member = insert_member(db_session, email="bob@example.com")
+    insert_suspension_record(db_session, member, admin, created_at=datetime(2026, 5, 1, tzinfo=timezone.utc))
+
+    result = generate_report(date(2026, 6, 1), date(2026, 6, 30), db_session)
+
+    assert result.members_suspended == 0
+
+
+def test_generate_report_counts_members_reinstated_in_range(db_session):
+    admin = insert_member(db_session, name="Admin", email="admin@example.com")
+    member = insert_member(db_session, email="bob@example.com")
+    # Suspended before the range, reinstated inside it: this is reinstatement
+    # activity that happened during the window, even though the suspension
+    # itself did not.
+    insert_suspension_record(
+        db_session, member, admin,
+        created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        lifted_at=datetime(2026, 6, 15, tzinfo=timezone.utc),
+    )
+
+    result = generate_report(date(2026, 6, 1), date(2026, 6, 30), db_session)
+
+    assert result.members_suspended == 0
+    assert result.members_reinstated == 1
+
+
+def test_generate_report_open_suspension_does_not_count_as_reinstated(db_session):
+    admin = insert_member(db_session, name="Admin", email="admin@example.com")
+    member = insert_member(db_session, email="bob@example.com")
+    insert_suspension_record(db_session, member, admin, created_at=datetime(2026, 6, 15, tzinfo=timezone.utc))
+
+    result = generate_report(date(2026, 6, 1), date(2026, 6, 30), db_session)
+
+    assert result.members_suspended == 1
+    assert result.members_reinstated == 0
 
 
 # --- core: date range filters by each metric's own created_at ---

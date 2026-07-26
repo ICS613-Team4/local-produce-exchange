@@ -47,6 +47,8 @@ const SAMPLE_REPORT = {
   completed_exchanges: 4,
   members_by_status: { active: 6, suspended: 1, inactive: 0 },
   total_members: 7,
+  members_suspended: 2,
+  members_reinstated: 1,
 }
 
 test('shows nothing before a report has been generated', () => {
@@ -73,6 +75,19 @@ test('shows the breakdown cards with totals and per-status counts', async () => 
   expect(screen.getAllByText('4').length).toBeGreaterThan(0)
 })
 
+test('shows suspension activity counts alongside the member status breakdown', async () => {
+  vi.stubGlobal('fetch', async () => makeFakeResponse(true, 200, SAMPLE_REPORT))
+
+  renderReportsPage()
+  clickGenerate()
+
+  const suspendedLabel = await screen.findByText('Suspended in this period')
+  expect(suspendedLabel.parentElement?.textContent).toBe('Suspended in this period2')
+
+  const reinstatedLabel = screen.getByText('Reinstated in this period')
+  expect(reinstatedLabel.parentElement?.textContent).toBe('Reinstated in this period1')
+})
+
 test('shows an all-time note when no date range was set', async () => {
   vi.stubGlobal('fetch', async () => makeFakeResponse(true, 200, SAMPLE_REPORT))
 
@@ -80,6 +95,24 @@ test('shows an all-time note when no date range was set', async () => {
   clickGenerate()
 
   expect(await screen.findByText('Covers all activity, with no date range set.')).toBeTruthy()
+})
+
+test('shows an "onward" note when only a start date was set', async () => {
+  vi.stubGlobal('fetch', async () => makeFakeResponse(true, 200, { ...SAMPLE_REPORT, start_date: '2026-06-01' }))
+
+  renderReportsPage()
+  clickGenerate()
+
+  expect(await screen.findByText('Covers 2026-06-01 onward.')).toBeTruthy()
+})
+
+test('shows a "through" note when only an end date was set', async () => {
+  vi.stubGlobal('fetch', async () => makeFakeResponse(true, 200, { ...SAMPLE_REPORT, end_date: '2026-06-30' }))
+
+  renderReportsPage()
+  clickGenerate()
+
+  expect(await screen.findByText('Covers everything through 2026-06-30.')).toBeTruthy()
 })
 
 test('sends the typed start and end dates as query params', async () => {
@@ -109,6 +142,16 @@ test('shows the backend error message when the date range is invalid', async () 
 
   const errorArea = await screen.findByRole('alert')
   expect(errorArea.textContent).toContain('start_date must not be after end_date.')
+})
+
+test('shows a generic error message when the failure body has no usable detail', async () => {
+  vi.stubGlobal('fetch', async () => makeFakeResponse(false, 503, 'Internal Server Error'))
+
+  renderReportsPage()
+  clickGenerate()
+
+  const errorArea = await screen.findByRole('alert')
+  expect(errorArea.textContent).toContain('Could not generate the report (HTTP 503).')
 })
 
 test('shows an error message on a network failure (transport error, not an HTTP status)', async () => {

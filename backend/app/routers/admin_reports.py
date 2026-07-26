@@ -2,9 +2,10 @@
 #
 # The AC and UC-25 do not specify exact report content, so this covers the
 # manual test plan's own placeholder assumption: counts of listings,
-# requests, and completed exchanges, plus member counts (everything already
-# modeled, no new tables). Computed live on every call - nothing is stored,
-# so there is no report history to browse, only "generate one now".
+# requests, and completed exchanges, plus member counts and suspension
+# activity from suspension_record (everything already modeled, no new
+# tables). Computed live on every call - nothing is stored, so there is no
+# report history to browse, only "generate one now".
 #
 # Like the other admin routers, the code is split into a pure core function
 # (generate_report), which the unit tests call directly, and a thin HTTP
@@ -23,6 +24,7 @@ from app.dependencies import require_admin
 from app.models.claim import Claim
 from app.models.listing import Listing
 from app.models.member import Member
+from app.models.suspension_record import SuspensionRecord
 from app.schemas.admin_report import AdminReport
 
 logger = logging.getLogger(__name__)
@@ -61,6 +63,24 @@ def _count_by_status(
     return counts
 
 
+def _count_in_range(
+    session: Session,
+    model,
+    date_column,
+    start_at: Optional[datetime],
+    end_at: Optional[datetime],
+    extra_filter=None,
+) -> int:
+    statement = select(func.count()).select_from(model)
+    if extra_filter is not None:
+        statement = statement.where(extra_filter)
+    if start_at is not None:
+        statement = statement.where(date_column >= start_at)
+    if end_at is not None:
+        statement = statement.where(date_column <= end_at)
+    return session.execute(statement).scalar_one()
+
+
 def generate_report(
     start_date: Optional[date],
     end_date: Optional[date],
@@ -95,12 +115,25 @@ def generate_report(
         # not have completed yet. requests_by_status['completed'] answers a
         # different question (requests submitted in range that are now
         # complete), so this is a separate query, not a reuse of that count.
-        completed_statement = select(func.count()).select_from(Claim).where(Claim.completed_at.is_not(None))
-        if start_at is not None:
-            completed_statement = completed_statement.where(Claim.completed_at >= start_at)
-        if end_at is not None:
-            completed_statement = completed_statement.where(Claim.completed_at <= end_at)
-        completed_exchanges = session.execute(completed_statement).scalar_one()
+        completed_exchanges = _count_in_range(
+            session, Claim, Claim.completed_at, start_at, end_at,
+            extra_filter=Claim.completed_at.is_not(None),
+        )
+
+        # Suspension activity from suspension_record (US-25/US-26), distinct
+        # from members_by_status above: these count actions taken during the
+        # range, not who currently holds which status. Reinstated is filtered
+        # on lifted_at with an is_not(None) guard for the same reason
+        # completed_exchanges filters on completed_at: an open suspension's
+        # lifted_at is null, and null >= / <= a bound is never true in SQL, so
+        # the guard only documents that intent rather than changing it.
+        members_suspended = _count_in_range(
+            session, SuspensionRecord, SuspensionRecord.created_at, start_at, end_at,
+        )
+        members_reinstated = _count_in_range(
+            session, SuspensionRecord, SuspensionRecord.lifted_at, start_at, end_at,
+            extra_filter=SuspensionRecord.lifted_at.is_not(None),
+        )
     except Exception as error:
         logger.error("Generating the admin report failed: %s", error)
         raise HTTPException(status_code=503, detail="Could not generate the report right now.")
@@ -119,6 +152,8 @@ def generate_report(
         completed_exchanges=completed_exchanges,
         members_by_status=members_by_status,
         total_members=sum(members_by_status.values()),
+        members_suspended=members_suspended,
+        members_reinstated=members_reinstated,
     )
 
 

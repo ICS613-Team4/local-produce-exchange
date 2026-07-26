@@ -20,6 +20,8 @@ export type AdminReport = {
   completed_exchanges: number
   members_by_status: Record<string, number>
   total_members: number
+  members_suspended: number
+  members_reinstated: number
 }
 
 // startDate/endDate are 'YYYY-MM-DD' strings straight from a date input, or
