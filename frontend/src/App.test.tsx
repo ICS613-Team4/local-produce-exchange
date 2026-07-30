@@ -484,7 +484,19 @@ test('wires the /admin route inside RequireAdmin for a logged-in admin', async (
   window.localStorage.setItem('memberId', 'admin-123')
   window.localStorage.setItem('memberName', 'Alice Admin')
 
-  vi.stubGlobal('fetch', async () => {
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    const urlText = String(url)
+    if (urlText === '/api/admin/dashboard') {
+      return makeFakeResponse(true, 200, {
+        generated_at: '2026-07-30T00:00:00.000Z',
+        active_listings: 0,
+        open_requests: 0,
+        members_currently_suspended: 0,
+        open_member_reports_count: 0,
+        recent_member_reports: [],
+        recent_admin_actions: [],
+      })
+    }
     return makeFakeResponse(true, 200, { id: 'admin-123', role: 'admin' })
   })
 
