@@ -179,3 +179,10 @@ test('clears the stale login on a 401 instead of showing a generic error', async
   expect(window.localStorage.getItem('memberName')).toBeNull()
   expect(screen.queryByRole('alert')).toBeNull()
 })
+
+test('links to the admin audit log', () => {
+  renderReportsPage()
+
+  const link = screen.getByRole('link', { name: 'View admin audit log →' })
+  expect(link.getAttribute('href')).toBe('/admin/audit-log')
+})

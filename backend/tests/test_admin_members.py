@@ -16,6 +16,7 @@ from sqlalchemy.exc import OperationalError
 
 from app.dependencies import get_current_member, require_admin
 from app.main import app
+from app.models.admin_audit_log import AdminAuditLog
 from app.models.member import Member, MemberProfile
 from app.models.suspension_record import SuspensionRecord
 from app.routers.admin_members import (
@@ -245,6 +246,22 @@ def test_suspend_member_writes_a_suspension_record(db_session):
     assert record.lifted_at is None
 
 
+def test_suspend_member_writes_an_audit_log_entry(db_session):
+    admin = insert_member(db_session, name="Admin Alice", email="admin@example.com", role="admin")
+    member = insert_member(db_session, name="Regular Bob", email="bob@example.com")
+
+    suspend_member(admin, member.id, "Repeated no-shows.", db_session)
+
+    entry = db_session.scalars(
+        select(AdminAuditLog).where(AdminAuditLog.target_id == member.id)
+    ).first()
+    assert entry is not None
+    assert entry.admin_id == admin.id
+    assert entry.action == "member_suspended"
+    assert entry.target_type == "member"
+    assert entry.reason == "Repeated no-shows."
+
+
 def test_suspend_member_reason_is_optional(db_session):
     admin = insert_member(db_session, name="Admin Alice", email="admin@example.com", role="admin")
     member = insert_member(db_session, name="Regular Bob", email="bob@example.com")
@@ -323,7 +340,7 @@ def test_unsuspend_member_marks_account_active(db_session):
     member = insert_member(db_session, name="Regular Bob", email="bob@example.com")
     suspend_member(admin, member.id, "Repeated no-shows.", db_session)
 
-    result = unsuspend_member(member.id, db_session)
+    result = unsuspend_member(admin, member.id, db_session)
 
     assert result.status == "active"
     assert result.suspended_at is None
@@ -334,7 +351,7 @@ def test_unsuspend_member_closes_the_open_suspension_record(db_session):
     member = insert_member(db_session, name="Regular Bob", email="bob@example.com")
     suspend_member(admin, member.id, "Repeated no-shows.", db_session)
 
-    unsuspend_member(member.id, db_session)
+    unsuspend_member(admin, member.id, db_session)
 
     record = db_session.scalars(
         select(SuspensionRecord).where(SuspensionRecord.member_id == member.id)
@@ -343,18 +360,38 @@ def test_unsuspend_member_closes_the_open_suspension_record(db_session):
     assert record.lifted_at is not None
 
 
+def test_unsuspend_member_writes_an_audit_log_entry(db_session):
+    admin = insert_member(db_session, name="Admin Alice", email="admin@example.com", role="admin")
+    member = insert_member(db_session, name="Regular Bob", email="bob@example.com")
+    suspend_member(admin, member.id, "Repeated no-shows.", db_session)
+
+    unsuspend_member(admin, member.id, db_session)
+
+    entry = db_session.scalars(
+        select(AdminAuditLog)
+        .where(AdminAuditLog.target_id == member.id)
+        .where(AdminAuditLog.action == "member_unsuspended")
+    ).first()
+    assert entry is not None
+    assert entry.admin_id == admin.id
+    assert entry.target_type == "member"
+
+
 def test_unsuspend_member_unknown_id_returns_404(db_session):
+    admin = insert_member(db_session, name="Admin Alice", email="admin@example.com", role="admin")
+
     with pytest.raises(HTTPException) as raised_error:
-        unsuspend_member(uuid.uuid4(), db_session)
+        unsuspend_member(admin, uuid.uuid4(), db_session)
 
     assert raised_error.value.status_code == 404
 
 
 def test_unsuspend_member_not_suspended_returns_409(db_session):
+    admin = insert_member(db_session, name="Admin Alice", email="admin@example.com", role="admin")
     member = insert_member(db_session, name="Regular Bob", email="bob@example.com", status="active")
 
     with pytest.raises(HTTPException) as raised_error:
-        unsuspend_member(member.id, db_session)
+        unsuspend_member(admin, member.id, db_session)
 
     assert raised_error.value.status_code == 409
 
@@ -362,12 +399,13 @@ def test_unsuspend_member_not_suspended_returns_409(db_session):
 def test_unsuspend_member_with_no_open_record_still_reinstates(db_session):
     # Data suspended before this table existed, or written directly, has no
     # SuspensionRecord row to close. Reinstating must still work.
+    admin = insert_member(db_session, name="Admin Alice", email="admin@example.com", role="admin")
     member = insert_member(
         db_session, name="Regular Bob", email="bob@example.com", status="suspended",
         suspended_at=datetime.now(timezone.utc),
     )
 
-    result = unsuspend_member(member.id, db_session)
+    result = unsuspend_member(admin, member.id, db_session)
 
     assert result.status == "active"
     record = db_session.scalars(
@@ -377,8 +415,10 @@ def test_unsuspend_member_with_no_open_record_still_reinstates(db_session):
 
 
 def test_unsuspend_member_fetch_database_error_returns_503(broken_session):
+    admin = Member(id=uuid.uuid4(), name="Admin", email="admin@example.com", password_hash="x", role="admin")
+
     with pytest.raises(HTTPException) as raised_error:
-        unsuspend_member(uuid.uuid4(), broken_session)
+        unsuspend_member(admin, uuid.uuid4(), broken_session)
 
     assert raised_error.value.status_code == 503
 
@@ -390,7 +430,7 @@ def test_unsuspend_member_commit_failure_returns_503(db_session):
     session = _CommitFailSession(db_session)
 
     with pytest.raises(HTTPException) as raised_error:
-        unsuspend_member(member.id, session)
+        unsuspend_member(admin, member.id, session)
 
     assert raised_error.value.status_code == 503
     assert "reinstatement" in raised_error.value.detail.lower()

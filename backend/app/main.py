@@ -7,6 +7,8 @@ import os
 from fastapi import FastAPI
 
 from app.routers import (
+    admin_audit_log,
+    admin_dashboard,
     admin_listings,
     admin_members,
     admin_reports,
@@ -17,6 +19,7 @@ from app.routers import (
     invite,
     listing,
     listing_photo,
+    member_report,
     members,
     notification,
     review,
@@ -53,6 +56,8 @@ logging.getLogger().setLevel(log_level)
 app = FastAPI(title="Surplus: A Local Produce Exchange API")
 
 # Every route in this router starts with /api.
+app.include_router(admin_audit_log.router, prefix="/api")
+app.include_router(admin_dashboard.router, prefix="/api")
 app.include_router(admin_listings.router, prefix="/api")
 app.include_router(admin_members.router, prefix="/api")
 app.include_router(admin_reports.router, prefix="/api")
@@ -63,6 +68,7 @@ app.include_router(health.router, prefix="/api")
 app.include_router(invite.router, prefix="/api")
 app.include_router(listing.router, prefix="/api")
 app.include_router(listing_photo.router, prefix="/api")
+app.include_router(member_report.router, prefix="/api")
 app.include_router(members.router, prefix="/api")
 app.include_router(notification.router, prefix="/api")
 app.include_router(review.router, prefix="/api")

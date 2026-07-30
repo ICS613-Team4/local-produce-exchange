@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.audit_log import record_audit_log_entry
 from app.db import get_db_session
 from app.dependencies import require_admin
 from app.models.claim import Claim
@@ -107,6 +108,10 @@ def deactivate_listing_as_admin(
     listing.status = "deactivated"
     listing.deactivated_by = acting_admin.id
     listing.deactivated_at = now
+    record_audit_log_entry(
+        session, acting_admin.id, "listing_deactivated", "listing", listing.id,
+        occurred_at=now,
+    )
 
     try:
         session.commit()

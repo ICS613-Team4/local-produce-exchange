@@ -2,17 +2,20 @@
 # all tables on Base.metadata. Alembic autogenerate depends on this.
 # When you add a new model file, add it to this list.
 
+from app.models.admin_audit_log import AdminAuditLog
 from app.models.base import Base
 from app.models.claim import Claim
 from app.models.listing import Listing
 from app.models.listing_photo import ListingPhoto
 from app.models.member import InviteToken, Member, MemberProfile
+from app.models.member_report import MemberReport
 from app.models.notification import Notification
 from app.models.review import Review
 from app.models.sample_data import SampleData
 from app.models.suspension_record import SuspensionRecord
 
 __all__ = [
+    "AdminAuditLog",
     "Base",
     "Claim",
     "InviteToken",
@@ -20,6 +23,7 @@ __all__ = [
     "ListingPhoto",
     "Member",
     "MemberProfile",
+    "MemberReport",
     "Notification",
     "Review",
     "SampleData",

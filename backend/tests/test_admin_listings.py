@@ -10,6 +10,7 @@ from sqlalchemy.dialects.postgresql import Range
 
 from app.dependencies import require_admin
 from app.main import app
+from app.models.admin_audit_log import AdminAuditLog
 from app.models.claim import Claim
 from app.models.listing import Listing
 from app.models.member import Member
@@ -123,6 +124,25 @@ def test_admin_deactivates_any_active_listing_and_preserves_the_record(db_sessio
     expected["deactivated_by"] = admin.id
     expected["deactivated_at"] = after["deactivated_at"]
     assert after == expected
+
+
+def test_admin_deactivation_writes_an_audit_log_entry(db_session):
+    admin = insert_member(
+        db_session, name="Alice Admin", email="admin@example.com", role="admin",
+    )
+    owner = insert_member(db_session, name="Olivia Owner", email="owner@example.com")
+    listing = insert_listing(db_session, owner)
+
+    deactivate_listing_as_admin(admin, listing.id, db_session)
+
+    entry = db_session.scalars(
+        select(AdminAuditLog).where(AdminAuditLog.target_id == listing.id)
+    ).first()
+    assert entry is not None
+    assert entry.admin_id == admin.id
+    assert entry.action == "listing_deactivated"
+    assert entry.target_type == "listing"
+    assert entry.reason is None
 
 
 def test_admin_reactivates_an_owner_deactivated_listing(db_session):

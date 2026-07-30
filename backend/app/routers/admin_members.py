@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
+from app.audit_log import record_audit_log_entry
 from app.db import get_db_session
 from app.dependencies import require_admin
 from app.models.member import Member
@@ -136,6 +137,10 @@ def suspend_member(
             created_at=now,
         )
     )
+    record_audit_log_entry(
+        session, acting_admin.id, "member_suspended", "member", member.id,
+        reason=reason, occurred_at=now,
+    )
 
     try:
         session.commit()
@@ -147,7 +152,7 @@ def suspend_member(
     return _to_admin_member_detail(member)
 
 
-def unsuspend_member(member_id: uuid.UUID, session: Session) -> AdminMemberDetail:
+def unsuspend_member(acting_admin: Member, member_id: uuid.UUID, session: Session) -> AdminMemberDetail:
     # US-26, Scenario 1.
     try:
         member = session.scalars(select(Member).where(Member.id == member_id)).first()
@@ -182,6 +187,10 @@ def unsuspend_member(member_id: uuid.UUID, session: Session) -> AdminMemberDetai
     # to close.
     if open_record is not None:
         open_record.lifted_at = datetime.now(timezone.utc)
+
+    record_audit_log_entry(
+        session, acting_admin.id, "member_unsuspended", "member", member.id,
+    )
 
     try:
         session.commit()
@@ -227,4 +236,4 @@ def unsuspend_member_endpoint(
     current_member: Member = Depends(require_admin),
     session: Session = Depends(get_db_session),
 ) -> AdminMemberDetail:
-    return unsuspend_member(member_id, session)
+    return unsuspend_member(current_member, member_id, session)

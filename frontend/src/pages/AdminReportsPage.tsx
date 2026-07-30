@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Link } from 'react-router'
 
 import { clearStoredLogin } from '../services/authService'
 import { generateReport, type AdminReport, type AdminReportResult } from '../services/adminReportService'
@@ -150,7 +151,12 @@ function AdminReportsPage() {
 
   return (
     <section>
-      <h1 className="text-3xl font-bold text-text mb-6">Activity report</h1>
+      <div className="flex items-baseline justify-between mb-6">
+        <h1 className="text-3xl font-bold text-text">Activity report</h1>
+        <Link to="/admin/audit-log" className="text-sm font-semibold text-primary-600 hover:text-primary-700">
+          View admin audit log →
+        </Link>
+      </div>
 
       <div className="bg-surface rounded-xl border border-border p-6 shadow-sm mb-8">
         <form onSubmit={handleSubmit} className="flex flex-wrap items-end gap-4">
