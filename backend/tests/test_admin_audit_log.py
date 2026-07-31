@@ -13,7 +13,7 @@ from app.main import app
 from app.models.admin_audit_log import AdminAuditLog
 from app.models.listing import Listing
 from app.models.member import Member
-from app.routers.admin_audit_log import generate_audit_log_pdf, list_audit_log
+from app.routers.admin_audit_log import _format_pdf_timestamp, generate_audit_log_pdf, list_audit_log
 from app.schemas.admin_audit_log import AdminAuditLogEntry
 
 
@@ -181,6 +181,17 @@ def test_list_audit_log_echoes_the_requested_date_range(db_session):
     assert result.end_date == "2026-02-01"
 
 
+# --- _format_pdf_timestamp ---
+
+
+def test_format_pdf_timestamp_produces_a_compact_display_string():
+    assert _format_pdf_timestamp("2026-07-29T00:00:00+00:00") == "2026-07-29 00:00 UTC"
+
+
+def test_format_pdf_timestamp_falls_back_to_the_raw_string_on_bad_input():
+    assert _format_pdf_timestamp("not-a-timestamp") == "not-a-timestamp"
+
+
 # --- generate_audit_log_pdf ---
 
 
@@ -203,6 +214,52 @@ def test_generate_audit_log_pdf_returns_pdf_bytes():
 
     assert pdf_bytes.startswith(b"%PDF")
     assert len(pdf_bytes) > 0
+
+
+def test_generate_audit_log_pdf_timestamp_column_does_not_clip():
+    # Regression: the full ISO timestamp ("2026-07-29T00:00:00+00:00") is
+    # wider in DejaVu Sans than the Timestamp column, and fpdf2's cell() does
+    # not wrap or shrink text to fit - it clips against the border instead.
+    # _format_pdf_timestamp's compact display string must stay narrower than
+    # the column fpdf2 actually renders it in.
+    from fpdf import FPDF
+
+    from app.routers.admin_audit_log import _FONTS_DIR, _PDF_FONT_FAMILY
+
+    timestamp_column_width_mm = 45
+
+    pdf = FPDF(orientation="L", unit="mm", format="A4")
+    pdf.add_font(_PDF_FONT_FAMILY, style="", fname=str(_FONTS_DIR / "DejaVuSans.ttf"))
+    pdf.set_font(_PDF_FONT_FAMILY, size=9)
+    pdf.add_page()
+
+    formatted = _format_pdf_timestamp("2026-07-29T00:00:00+00:00")
+
+    assert pdf.get_string_width(formatted) < timestamp_column_width_mm
+
+
+def test_generate_audit_log_pdf_handles_smart_typography_in_free_text():
+    # Regression: fpdf2's built-in core font only supports Latin-1, and a
+    # curly apostrophe (the kind autocorrect produces) is outside that range.
+    # DejaVu Sans is embedded so this no longer raises
+    # FPDFUnicodeEncodingException.
+    entries = [
+        AdminAuditLogEntry(
+            id=str(uuid.uuid4()),
+            admin_id=str(uuid.uuid4()),
+            admin_name="Admin Alice",
+            action="member_suspended",
+            target_type="member",
+            target_id=str(uuid.uuid4()),
+            target_label="Regular Bob",
+            reason="Repeated no show’s.",
+            created_at="2026-07-29T00:00:00+00:00",
+        )
+    ]
+
+    pdf_bytes = generate_audit_log_pdf(entries)
+
+    assert pdf_bytes.startswith(b"%PDF")
 
 
 def test_generate_audit_log_pdf_handles_an_empty_list():

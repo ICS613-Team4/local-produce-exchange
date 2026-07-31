@@ -6,6 +6,7 @@
 
 import logging
 from datetime import date, datetime, time, timezone
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -134,12 +135,45 @@ def list_audit_log(
     )
 
 
+# fpdf2's built-in "Helvetica" is a PDF core font limited to strict Latin-1
+# (ISO-8859-1): any codepoint above 0xFF raises FPDFUnicodeEncodingException
+# and aborts the whole export. Admin-entered free text (suspension reasons,
+# report notes) routinely picks up "smart" typography from autocorrect -
+# curly quotes, em/en dashes, an ellipsis - none of which are in that range.
+# DejaVu Sans is embedded instead so any text renders correctly. fpdf2 does
+# not bundle a Unicode-capable font itself; the .ttf files live in
+# app/fonts/ (Bitstream Vera license, see app/fonts/DEJAVU-LICENSE.txt).
+_FONTS_DIR = Path(__file__).resolve().parent.parent / "fonts"
+_PDF_FONT_FAMILY = "DejaVuSans"
+
+
+def _register_pdf_font(pdf: FPDF) -> None:
+    pdf.add_font(_PDF_FONT_FAMILY, style="", fname=str(_FONTS_DIR / "DejaVuSans.ttf"))
+    pdf.add_font(_PDF_FONT_FAMILY, style="B", fname=str(_FONTS_DIR / "DejaVuSans-Bold.ttf"))
+
+
+def _format_pdf_timestamp(created_at: str) -> str:
+    # The full ISO string (e.g. "2026-07-29T00:00:00+00:00") is precise but
+    # wider than DejaVu Sans renders comfortably in the Timestamp column at
+    # this font size - it was clipping against the cell border. Every
+    # created_at here is already UTC (see AdminAuditLog.created_at), so this
+    # is just a shorter, still-unambiguous display format, not a timezone
+    # conversion. Falls back to the raw string if it cannot be parsed, so a
+    # bad value stays visible for debugging rather than disappearing.
+    try:
+        parsed = datetime.fromisoformat(created_at)
+    except ValueError:
+        return created_at
+    return parsed.strftime("%Y-%m-%d %H:%M UTC")
+
+
 def generate_audit_log_pdf(entries: list[AdminAuditLogEntry]) -> bytes:
     # Pure: no DB access, so this is unit-testable with a hand-built list.
     pdf = FPDF(orientation="L", unit="mm", format="A4")
     pdf.set_auto_page_break(auto=True, margin=15)
+    _register_pdf_font(pdf)
     pdf.add_page()
-    pdf.set_font("Helvetica", size=9)
+    pdf.set_font(_PDF_FONT_FAMILY, size=9)
 
     columns = [
         ("Timestamp", 45),
@@ -149,17 +183,17 @@ def generate_audit_log_pdf(entries: list[AdminAuditLogEntry]) -> bytes:
         ("Reason", 80),
     ]
 
-    pdf.set_font("Helvetica", style="B", size=9)
+    pdf.set_font(_PDF_FONT_FAMILY, style="B", size=9)
     for heading, width in columns:
         pdf.cell(width, 8, heading, border=1)
     pdf.ln()
 
-    pdf.set_font("Helvetica", size=9)
+    pdf.set_font(_PDF_FONT_FAMILY, size=9)
     for entry in entries:
         admin_text = entry.admin_name or "(unknown)"
         target_text = entry.target_label or (entry.target_type + " " + entry.target_id[:8])
         reason_text = entry.reason or ""
-        pdf.cell(columns[0][1], 8, entry.created_at, border=1)
+        pdf.cell(columns[0][1], 8, _format_pdf_timestamp(entry.created_at), border=1)
         pdf.cell(columns[1][1], 8, admin_text, border=1)
         pdf.cell(columns[2][1], 8, entry.action, border=1)
         pdf.cell(columns[3][1], 8, target_text, border=1)
