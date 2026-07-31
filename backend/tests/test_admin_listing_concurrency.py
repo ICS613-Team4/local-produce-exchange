@@ -13,6 +13,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import Range
 
 from app.db import SessionLocal
+from app.models.admin_audit_log import AdminAuditLog
 from app.models.claim import Claim
 from app.models.listing import Listing
 from app.models.member import Member
@@ -117,6 +118,17 @@ def clean_up(ids):
         )
         session.execute(delete(Claim).where(Claim.listing_id == ids["listing_id"]))
         session.execute(delete(Listing).where(Listing.id == ids["listing_id"]))
+        # deactivate_listing_as_admin (US-35) writes a real, committed
+        # admin_audit_log row referencing the winning admin's id. That row
+        # must go before the member delete below, the same reason the
+        # notification/claim deletes above run first.
+        session.execute(
+            delete(AdminAuditLog).where(
+                AdminAuditLog.admin_id.in_(
+                    [ids["admin_a_id"], ids["admin_b_id"]],
+                )
+            )
+        )
         session.execute(
             delete(Member).where(
                 Member.id.in_(

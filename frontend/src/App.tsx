@@ -1,6 +1,7 @@
 import { BrowserRouter, Route, Routes } from 'react-router'
 import Layout from './components/Layout.tsx'
 import AboutPage from './pages/AboutPage.tsx'
+import AdminAuditLogPage from './pages/AdminAuditLogPage.tsx'
 import AdminDashboardPage from './pages/AdminDashboardPage.tsx'
 import AdminMemberDetailPage from './pages/AdminMemberDetailPage.tsx'
 import AdminMemberSearchPage from './pages/AdminMemberSearchPage.tsx'
@@ -24,6 +25,7 @@ import MyListingsPage from './pages/MyListingsPage.tsx'
 import MyRequestsPage from './pages/MyRequestsPage.tsx'
 import ProfilePage from './pages/ProfilePage.tsx'
 import RegisterPage from './pages/RegisterPage.tsx'
+import ReportMemberPage from './pages/ReportMemberPage.tsx'
 import RequestQueuesPage from './pages/RequestQueuesPage.tsx'
 import RequireAdmin from './components/RequireAdmin.tsx'
 import RequireAuth from './components/RequireAuth.tsx'
@@ -61,6 +63,7 @@ function App() {
             <Route path="/review" element={<LeaveReviewPage />} />
             <Route path="/exchange-reviews" element={<ExchangeReviewsPage />} />
             <Route path="/member-reviews" element={<MemberReviewsPage />} />
+            <Route path="/report" element={<ReportMemberPage />} />
             <Route path="/browse" element={<BrowsePage />} />
             <Route path="/listings/:id" element={<ListingDetailPage />} />
           </Route>
@@ -70,6 +73,7 @@ function App() {
               non-admin instead of the "please log in" one. */}
           <Route element={<RequireAdmin />}>
             <Route path="/admin" element={<AdminDashboardPage />} />
+            <Route path="/admin/audit-log" element={<AdminAuditLogPage />} />
             <Route path="/admin/listings" element={<AdminListingsPage />} />
             <Route path="/admin/members" element={<AdminMemberSearchPage />} />
             <Route path="/admin/members/:id" element={<AdminMemberDetailPage />} />

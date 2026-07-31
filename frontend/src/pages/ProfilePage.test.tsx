@@ -253,6 +253,8 @@ test('shows only the display name and review links for another member', async ()
   expect(listingOwnerLink.getAttribute('href')).toBe('/member-reviews?member=' + OTHER_MEMBER_ID + '&role=listing_owner')
   const requestorLink = screen.getByRole('link', { name: 'View Reviews as a Requestor' })
   expect(requestorLink.getAttribute('href')).toBe('/member-reviews?member=' + OTHER_MEMBER_ID + '&role=requestor')
+  const reportLink = screen.getByRole('link', { name: 'Report this user' })
+  expect(reportLink.getAttribute('href')).toBe('/report?member=' + OTHER_MEMBER_ID)
   expect(screen.queryByText('bob@example.com')).toBeNull()
   expect(screen.queryByText('Kaimuki')).toBeNull()
   expect(screen.queryByRole('button', { name: 'Edit profile' })).toBeNull()
@@ -270,6 +272,9 @@ test('shows the read-only public view, not the editable one, when viewing your o
   expect(screen.getByRole('link', { name: 'View Reviews as a Listing Owner' })).toBeTruthy()
   expect(screen.queryByText('alice@example.com')).toBeNull()
   expect(screen.queryByRole('button', { name: 'Edit profile' })).toBeNull()
+  // Reporting yourself makes no sense, so the link is hidden on your own
+  // profile even through the public-view route.
+  expect(screen.queryByRole('link', { name: 'Report this user' })).toBeNull()
 })
 
 test('requests the target member id in the URL but the viewer id in the X-Member-Id header', async () => {

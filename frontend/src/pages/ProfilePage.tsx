@@ -192,6 +192,18 @@ function ProfilePage() {
     // MemberReviewsPage shows its own "no reviews yet" message in that case.
     const reviewLinkClasses =
       'inline-flex items-center px-3 py-1.5 text-xs font-medium text-primary-600 border border-primary-200 rounded-md hover:bg-primary-50 transition-colors'
+    const reportLinkClasses =
+      'inline-flex items-center px-3 py-1.5 text-xs font-medium text-error border border-red-200 rounded-md hover:bg-error-bg transition-colors'
+
+    // US-37: reporting yourself makes no sense, so the link only shows on
+    // someone else's profile.
+    const reportLink = isOwnProfile(member.id) ? null : (
+      <div className="border-t border-border mt-6 pt-4">
+        <Link to={'/report?member=' + member.id} className={reportLinkClasses}>
+          Report this user
+        </Link>
+      </div>
+    )
 
     return (
       <div className="max-w-lg mx-auto">
@@ -214,6 +226,7 @@ function ProfilePage() {
               </Link>
             </div>
           </div>
+          {reportLink}
         </div>
       </div>
     )
