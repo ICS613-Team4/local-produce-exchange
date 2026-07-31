@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link } from 'react-router'
+import { Link, useSearchParams } from 'react-router'
 
 import {
   sendCancelExchangeRequest,
@@ -10,17 +10,47 @@ import {
 import type {
   MyRequestItem,
   MyRequestsResponse,
+  MyRequestsSectionPages,
   RequestQueuesResult,
 } from '../services/requestQueueService'
 import { clearStoredLogin } from '../services/authService'
 import { formatTimestamp, getLocalTimeZoneNote } from '../utils/formatTimestamp'
+import { DEFAULT_PAGE_SIZE, readPageParam } from '../utils/pagination'
+import type { PagedResponse } from '../utils/pagination'
+import Pagination from '../components/Pagination'
 import ReviewLinks from '../components/ReviewLinks'
+
+// The five sections, in the order the page stacks them. Each one owns its own
+// URL param, which is what lets a member page one section while the other four
+// hold their place (Scenario 7). Keeping the list in one place means the load,
+// the paging, and the rendering below can never disagree about the five.
+const SECTIONS = [
+  { key: 'pending', heading: 'Pending', param: 'pending_page', emptyText: 'You have no pending requests.' },
+  { key: 'approved', heading: 'Approved', param: 'approved_page', emptyText: 'You have no approved requests.' },
+  { key: 'completed', heading: 'Completed', param: 'completed_page', emptyText: 'You have no completed exchanges.' },
+  { key: 'denied', heading: 'Denied', param: 'denied_page', emptyText: 'You have no denied requests.' },
+  { key: 'withdrawn', heading: 'Withdrawn', param: 'withdrawn_page', emptyText: 'You have no withdrawn requests.' },
+] as const
+
+// An empty section, used when a response is missing one (an older cached body)
+// so the page can render it as empty instead of guarding every read.
+const EMPTY_SECTION: PagedResponse<MyRequestItem> = {
+  items: [],
+  total: 0,
+  page: 1,
+  page_size: DEFAULT_PAGE_SIZE,
+}
 
 function MyRequestsPage() {
   const latestRequestNumber = useRef(0)
   const memberId = window.localStorage.getItem('memberId') ?? ''
   const [result, setResult] = useState<RequestQueuesResult | null>(null)
   const [reloadCounter, setReloadCounter] = useState(0)
+
+  // Five page numbers, all in the URL, so a link to this page can name where
+  // each section stands and the back button restores all five together.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const currentQueryText = searchParams.toString()
   const [withdrawingClaimId, setWithdrawingClaimId] = useState('')
   const withdrawInFlightRef = useRef('')
 
@@ -33,12 +63,27 @@ function MyRequestsPage() {
   const cancelInFlightRef = useRef('')
 
   // Load the caller's outgoing requests when the page has a logged-in member,
-  // and again whenever reloadCounter changes after a successful action.
+  // again whenever reloadCounter changes after a successful action, and again
+  // whenever any section's page number in the URL changes. One request carries
+  // all five page numbers, so paging a section still costs a single round trip
+  // and the five sections always come from one consistent read.
   useEffect(() => {
     latestRequestNumber.current = latestRequestNumber.current + 1
     const requestNumber = latestRequestNumber.current
+    const urlParams = new URLSearchParams(currentQueryText)
+    const sectionPages: MyRequestsSectionPages = {
+      pending: readPageParam(urlParams, 'pending_page'),
+      approved: readPageParam(urlParams, 'approved_page'),
+      completed: readPageParam(urlParams, 'completed_page'),
+      denied: readPageParam(urlParams, 'denied_page'),
+      withdrawn: readPageParam(urlParams, 'withdrawn_page'),
+    }
     async function loadMyRequests() {
-      const loadedResult = await sendGetMyRequestsRequest(memberId)
+      const loadedResult = await sendGetMyRequestsRequest(
+        memberId,
+        sectionPages,
+        DEFAULT_PAGE_SIZE,
+      )
       if (requestNumber !== latestRequestNumber.current) { return }
       if (loadedResult.status === 401) {
         clearStoredLogin()
@@ -47,7 +92,15 @@ function MyRequestsPage() {
       setResult(loadedResult)
     }
     loadMyRequests()
-  }, [memberId, reloadCounter])
+  }, [memberId, reloadCounter, currentQueryText])
+
+  // Move one section to another page. Only that section's param changes, so the
+  // other four keep whatever page they were on (Scenario 7).
+  function changeSectionPage(paramName: string, nextPage: number) {
+    const nextParams = new URLSearchParams(currentQueryText)
+    nextParams.set(paramName, String(nextPage))
+    setSearchParams(nextParams)
+  }
 
   async function handleWithdraw(claimId: string) {
     if (withdrawInFlightRef.current === claimId) { return }
@@ -372,21 +425,38 @@ function MyRequestsPage() {
     )
   }
 
-  function buildSection(heading: string, items: MyRequestItem[], emptyText: string) {
+  function buildSection(
+    heading: string,
+    section: PagedResponse<MyRequestItem>,
+    emptyText: string,
+    paramName: string,
+  ) {
     let body
-    if (items.length === 0) {
+    if (section.items.length === 0) {
+      // The existing empty state, unchanged. A section with nothing in it shows
+      // this and no controls (Scenario 5).
       body = <p className="text-sm text-text-muted py-3">{emptyText}</p>
     } else {
       const rows = []
-      for (let index = 0; index < items.length; index = index + 1) {
-        rows.push(buildRequestRow(items[index]))
+      for (let index = 0; index < section.items.length; index = index + 1) {
+        rows.push(buildRequestRow(section.items[index]))
       }
       body = <ul>{rows}</ul>
     }
     return (
-      <div className="bg-surface rounded-xl border border-border p-6 shadow-sm">
+      <div key={paramName} className="bg-surface rounded-xl border border-border p-6 shadow-sm">
         <h2 className="text-base font-semibold text-text mb-4">{heading}</h2>
         {body}
+        {/* This section's own controls, which render only when this section has
+            more rows than fit on one page. The label names the section, so a
+            screen reader can tell the five controls apart. */}
+        <Pagination
+          page={section.page}
+          pageSize={section.page_size}
+          total={section.total}
+          onPageChange={(nextPage) => changeSectionPage(paramName, nextPage)}
+          label={heading + ' requests'}
+        />
       </div>
     )
   }
@@ -404,33 +474,26 @@ function MyRequestsPage() {
     )
   } else if (result.ok) {
     const responseData = result.data as MyRequestsResponse
-    // An older cached response may lack the completed or withdrawn lists;
-    // treat a missing list as empty.
-    let completedItems = responseData.completed
-    if (completedItems === undefined) {
-      completedItems = []
+    // Build the five sections from the one list, in order, so each gets the same
+    // treatment. An older cached response may lack the completed or withdrawn
+    // section; a missing one renders as empty.
+    const sectionViews = []
+    for (let index = 0; index < SECTIONS.length; index = index + 1) {
+      const definition = SECTIONS[index]
+      let section = responseData[definition.key]
+      if (section === undefined) {
+        section = EMPTY_SECTION
+      }
+      sectionViews.push(
+        buildSection(definition.heading, section, definition.emptyText, definition.param),
+      )
     }
-    let withdrawnItems = responseData.withdrawn
-    if (withdrawnItems === undefined) {
-      withdrawnItems = []
-    }
-    const pendingSection = buildSection('Pending', responseData.pending, 'You have no pending requests.')
-    const approvedSection = buildSection('Approved', responseData.approved, 'You have no approved requests.')
-    const completedSection = buildSection('Completed', completedItems, 'You have no completed exchanges.')
-    const deniedSection = buildSection('Denied', responseData.denied, 'You have no denied requests.')
-    const withdrawnSection = buildSection('Withdrawn', withdrawnItems, 'You have no withdrawn requests.')
     // The time-zone note shows above and below the sections, so it is visible
     // without scrolling and again next to the last timestamps on the page.
     contentArea = (
       <>
         <p className="text-xs text-text-muted mb-4">{timeZoneNote}</p>
-        <div className="space-y-6">
-          {pendingSection}
-          {approvedSection}
-          {completedSection}
-          {deniedSection}
-          {withdrawnSection}
-        </div>
+        <div className="space-y-6">{sectionViews}</div>
         <p className="text-xs text-text-muted mt-4">{timeZoneNote}</p>
       </>
     )

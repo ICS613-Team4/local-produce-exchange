@@ -14,13 +14,21 @@ import type {
 } from '../services/requestQueueService'
 import { clearStoredLogin } from '../services/authService'
 import { formatTimestamp, getLocalTimeZoneNote } from '../utils/formatTimestamp'
+import { DEFAULT_PAGE_SIZE, clampPage, countPages, readPageParam } from '../utils/pagination'
 import MemberRatingChip from '../components/MemberRatingChip'
+import Pagination from '../components/Pagination'
 import ReviewLinks from '../components/ReviewLinks'
 
 function RequestQueuesPage() {
   const latestRequestNumber = useRef(0)
-  const [searchParams] = useSearchParams()
+  // This page's URL already carried the listing filter; the page number joins it
+  // (US-33). What pages here are the LISTINGS: a page holds up to twelve of the
+  // caller's listings, and every request on a listed listing stays visible,
+  // because one listing's request count is small.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const currentQueryText = searchParams.toString()
   const listingFilter = searchParams.get('listing') ?? ''
+  const requestedPage = readPageParam(searchParams, 'page')
   const memberId = window.localStorage.getItem('memberId') ?? ''
   const [result, setResult] = useState<RequestQueuesResult | null>(null)
   const [resultFilter, setResultFilter] = useState('')
@@ -90,7 +98,14 @@ function RequestQueuesPage() {
     latestRequestNumber.current = latestRequestNumber.current + 1
     const requestNumber = latestRequestNumber.current
     async function loadAllRequests() {
-      const loadedResult = await sendGetAllRequestsRequest(memberId, listingFilter)
+      // The filter and the page go together, so a filtered view pages by the
+      // same rules as the unfiltered one (Scenario 8).
+      const loadedResult = await sendGetAllRequestsRequest(
+        memberId,
+        listingFilter,
+        requestedPage,
+        DEFAULT_PAGE_SIZE,
+      )
       if (requestNumber !== latestRequestNumber.current) { return }
       if (loadedResult.status === 401) {
         clearStoredLogin()
@@ -100,7 +115,33 @@ function RequestQueuesPage() {
       setResultFilter(listingFilter)
     }
     loadAllRequests()
-  }, [memberId, listingFilter, reloadCounter])
+  }, [memberId, listingFilter, requestedPage, reloadCounter])
+
+  // A page past the end comes back empty with the true total, so move to the
+  // last real page and show its listings (Scenario 6). Replacing the history
+  // entry keeps the back button pointed at where the member came from.
+  useEffect(() => {
+    if (result === null || result.ok === false) {
+      return
+    }
+    const pagedGroups = result.data as AllRequestsResponse
+    const totalPages = countPages(pagedGroups.total, pagedGroups.page_size)
+    const pageToShow = clampPage(pagedGroups.page, totalPages)
+    if (pageToShow === pagedGroups.page) {
+      return
+    }
+    const clampedParams = new URLSearchParams(currentQueryText)
+    clampedParams.set('page', String(pageToShow))
+    setSearchParams(clampedParams, { replace: true })
+  }, [result, currentQueryText, setSearchParams])
+
+  // Move to another page of listings. The ?listing= filter is part of the query
+  // text being copied, so it survives the move.
+  function handlePageChange(nextPage: number) {
+    const nextParams = new URLSearchParams(currentQueryText)
+    nextParams.set('page', String(nextPage))
+    setSearchParams(nextParams)
+  }
 
   // Map a claim status to its badge colors. Pickup and completion use distinct
   // tokens so they read differently from the green approved badge.
@@ -398,7 +439,9 @@ function RequestQueuesPage() {
     )
   } else if (result.ok) {
     const responseData = result.data as AllRequestsResponse
-    const groups = responseData.groups
+    // items holds this page's listing groups; total counts the caller's listings
+    // across every page.
+    const groups = responseData.items
     if (listingFilter !== '') {
       let matchingGroup = null
       for (let index = 0; index < groups.length; index = index + 1) {
@@ -429,6 +472,15 @@ function RequestQueuesPage() {
       contentArea = (
         <>
           <div className="space-y-6">{groupViews}</div>
+          {/* The controls page the listings, not the requests, and render
+              nothing when all of the caller's listings fit on one page. */}
+          <Pagination
+            page={responseData.page}
+            pageSize={responseData.page_size}
+            total={responseData.total}
+            onPageChange={handlePageChange}
+            label="Listings with requests"
+          />
           <p className="text-xs text-text-muted mt-4">{timeZoneNote}</p>
         </>
       )

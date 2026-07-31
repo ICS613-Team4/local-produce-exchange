@@ -1,5 +1,7 @@
 // API call for creating a listing.
 
+import { DEFAULT_PAGE_SIZE } from '../utils/pagination'
+
 export const listingTimeoutMilliseconds = 3000
 export const listingPhotoUploadTimeoutMilliseconds = 30000
 
@@ -68,12 +70,19 @@ export type ListingFields = {
 // The optional search text and filters the browse page sends. Every field is
 // optional: a field left out does not narrow the results. dietary_tags and
 // allergen_tags are sent as repeated query params, one per selected tag.
+//
+// page and page_size are the window to fetch (US-33). They are optional here
+// because the backend already defaults to page 1 with 12 rows, so a caller that
+// does not page (a test, or a preview that wants the newest few) can leave them
+// out. Callers that page always send both, so the URL the member sees and the
+// request that follows it can never disagree about which window is showing.
 export type BrowseListingFilters = {
   q?: string
   category?: string
   dietary_tags?: string[]
   allergen_tags?: string[]
-  limit?: number
+  page?: number
+  page_size?: number
 }
 
 export async function sendCreateListingRequest(
@@ -415,8 +424,11 @@ export async function sendBrowseListingsRequest(
       params.append('allergen_tags', filters.allergen_tags[index])
     }
   }
-  if (filters.limit !== undefined) {
-    params.append('limit', String(filters.limit))
+  if (filters.page !== undefined) {
+    params.append('page', String(filters.page))
+  }
+  if (filters.page_size !== undefined) {
+    params.append('page_size', String(filters.page_size))
   }
 
   // With no params, ask for the plain /api/listings; otherwise append the query.
@@ -476,14 +488,25 @@ export async function sendBrowseListingsRequest(
   }
 }
 
-export async function sendGetMyListingsRequest(memberId: string): Promise<ListingResult> {
-  // The caller's own listings, active and deactivated (US-24). GET
+export async function sendGetMyListingsRequest(
+  memberId: string,
+  page: number = 1,
+  pageSize: number = DEFAULT_PAGE_SIZE,
+): Promise<ListingResult> {
+  // One page of the caller's own listings, active and deactivated (US-24). GET
   // /api/my-listings with the member id in the X-Member-Id header, the same
   // identity path the other listing calls use. This is a GET, so there is no
-  // request body. The body shape copies sendBrowseListingsRequest, minus the
-  // query-string building, since this endpoint takes no filters.
+  // request body. The body shape copies sendBrowseListingsRequest; this endpoint
+  // takes no filters, so paging is the whole query string.
+  //
+  // The two paging arguments default to the first page of 12, so a caller that
+  // does not page still asks for a sane window rather than the whole table.
+  const params = new URLSearchParams()
+  params.append('page', String(page))
+  params.append('page_size', String(pageSize))
+
   try {
-    const response = await fetch('/api/my-listings', {
+    const response = await fetch('/api/my-listings?' + params.toString(), {
       method: 'GET',
       headers: {
         'X-Member-Id': memberId,

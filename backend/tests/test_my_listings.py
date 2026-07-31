@@ -73,7 +73,7 @@ def test_my_listings_returns_active_and_deactivated_for_caller(db_session):
     insert_listing(db_session, owner, title="Active", status="active")
     insert_listing(db_session, owner, title="Down", status="deactivated")
 
-    response = get_my_listings(owner, db_session)
+    response = get_my_listings(current_member=owner, session=db_session).items
 
     titles = []
     for item in response:
@@ -90,7 +90,7 @@ def test_my_listings_excludes_other_members(db_session):
     insert_listing(db_session, owner, title="Mine")
     insert_listing(db_session, other, title="Theirs")
 
-    response = get_my_listings(owner, db_session)
+    response = get_my_listings(current_member=owner, session=db_session).items
 
     assert len(response) == 1
     assert response[0].title == "Mine"
@@ -108,7 +108,7 @@ def test_my_listings_ordered_created_at_desc_then_id_desc(db_session):
     tied_one = insert_listing(db_session, owner, title="TiedOne", created_at=tied_time)
     tied_two = insert_listing(db_session, owner, title="TiedTwo", created_at=tied_time)
 
-    response = get_my_listings(owner, db_session)
+    response = get_my_listings(current_member=owner, session=db_session).items
 
     ids_in_order = []
     for item in response:
@@ -125,7 +125,7 @@ def test_my_listings_ordered_created_at_desc_then_id_desc(db_session):
 def test_my_listings_empty_when_caller_owns_nothing(db_session):
     owner = insert_member(db_session, email="owner@example.com")
 
-    response = get_my_listings(owner, db_session)
+    response = get_my_listings(current_member=owner, session=db_session).items
 
     assert response == []
 
@@ -139,7 +139,7 @@ def test_my_listings_coerces_null_description_and_category(db_session):
     listing.category = None
     db_session.commit()
 
-    response = get_my_listings(owner, db_session)
+    response = get_my_listings(current_member=owner, session=db_session).items
 
     assert len(response) == 1
     assert response[0].description == ""
@@ -158,7 +158,7 @@ def test_my_listings_sets_deactivated_by_for_admin_takedown(db_session):
     insert_listing(db_session, owner, title="OwnerDown", status="deactivated", deactivated_by=None)
     insert_listing(db_session, owner, title="ActiveOne", status="active")
 
-    response = get_my_listings(owner, db_session)
+    response = get_my_listings(current_member=owner, session=db_session).items
 
     admin_down_item = None
     owner_down_item = None
@@ -175,6 +175,78 @@ def test_my_listings_sets_deactivated_by_for_admin_takedown(db_session):
     assert active_item.deactivated_by is None
 
 
+# --- US-33: paging the caller's own listings ---------------------------------
+
+
+def insert_numbered_listings(session, owner, count):
+    # count listings titled "Item 00", "Item 01", ... each one minute newer than
+    # the last, so newest-first order is the exact reverse of the titles.
+    for index in range(count):
+        insert_listing(
+            session,
+            owner,
+            title="Item " + str(index).zfill(2),
+            created_at=datetime(2026, 1, 1, 9, index, tzinfo=timezone.utc),
+        )
+
+
+def collect_titles(items):
+    titles = []
+    for item in items:
+        titles.append(item.title)
+    return titles
+
+
+def test_my_listings_defaults_to_page_one_and_twelve_rows(db_session):
+    owner = insert_member(db_session, email="owner@example.com")
+    insert_numbered_listings(db_session, owner, 14)
+
+    response = get_my_listings(current_member=owner, session=db_session)
+
+    assert response.page == 1
+    assert response.page_size == 12
+    assert response.total == 14
+    assert len(response.items) == 12
+    assert response.items[0].title == "Item 13"
+
+
+def test_my_listings_second_page_is_the_next_window(db_session):
+    owner = insert_member(db_session, email="owner@example.com")
+    insert_numbered_listings(db_session, owner, 14)
+
+    response = get_my_listings(page=2, current_member=owner, session=db_session)
+
+    # The two rows page 1 did not reach, and the same total behind them.
+    assert response.page == 2
+    assert response.total == 14
+    assert collect_titles(response.items) == ["Item 01", "Item 00"]
+
+
+def test_my_listings_page_past_the_end_is_empty_with_the_true_total(db_session):
+    owner = insert_member(db_session, email="owner@example.com")
+    insert_numbered_listings(db_session, owner, 14)
+
+    response = get_my_listings(page=4, current_member=owner, session=db_session)
+
+    assert response.items == []
+    assert response.total == 14
+    assert response.page == 4
+
+
+def test_my_listings_total_counts_only_the_callers_listings(db_session):
+    # The total is counted with the same owner filter the window uses, so another
+    # member's listings never inflate it.
+    owner = insert_member(db_session, email="owner@example.com")
+    other = insert_member(db_session, email="other@example.com", name="Other")
+    insert_numbered_listings(db_session, owner, 3)
+    insert_numbered_listings(db_session, other, 7)
+
+    response = get_my_listings(page_size=2, current_member=owner, session=db_session)
+
+    assert response.total == 3
+    assert len(response.items) == 2
+
+
 # --- caller status gate -----------------------------------------------------
 
 
@@ -182,7 +254,7 @@ def test_my_listings_denies_suspended_caller(db_session):
     caller = insert_member(db_session, status="suspended", email="suspended@example.com")
 
     with pytest.raises(HTTPException) as raised_error:
-        get_my_listings(caller, db_session)
+        get_my_listings(current_member=caller, session=db_session)
 
     assert raised_error.value.status_code == 403
     assert "suspended" in raised_error.value.detail.lower()
@@ -192,7 +264,7 @@ def test_my_listings_denies_inactive_caller(db_session):
     caller = insert_member(db_session, status="inactive", email="inactive@example.com")
 
     with pytest.raises(HTTPException) as raised_error:
-        get_my_listings(caller, db_session)
+        get_my_listings(current_member=caller, session=db_session)
 
     assert raised_error.value.status_code == 403
     assert "not active" in raised_error.value.detail.lower()
@@ -211,7 +283,7 @@ def test_my_listings_returns_503_on_listing_load_error(broken_session):
     )
 
     with pytest.raises(HTTPException) as raised_error:
-        get_my_listings(member, broken_session)
+        get_my_listings(current_member=member, session=broken_session)
 
     assert raised_error.value.status_code == 503
 

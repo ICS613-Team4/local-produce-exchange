@@ -47,7 +47,7 @@ function makeFakeResponse(ok: boolean, status: number, body: object): FakeRespon
 // (actionable) request and Carol's already-approved (read-only) request.
 function makeAllRequestsBody(): AllRequestsResponse {
   const body = {
-    groups: [
+    items: [
       {
         listing_id: 'lemons',
         listing_title: 'Backyard Meyer Lemons',
@@ -87,6 +87,9 @@ function makeAllRequestsBody(): AllRequestsResponse {
         ],
       },
     ],
+    total: 1,
+    page: 1,
+    page_size: 12,
   }
   return body
 }
@@ -95,7 +98,7 @@ function makeAllRequestsBody(): AllRequestsResponse {
 // filter-change stale-response test.
 function makeOneGroupBody(listingId: string, title: string) {
   const body = {
-    groups: [
+    items: [
       {
         listing_id: listingId,
         listing_title: title,
@@ -119,6 +122,9 @@ function makeOneGroupBody(listingId: string, title: string) {
         ],
       },
     ],
+    total: 1,
+    page: 1,
+    page_size: 12,
   }
   return body
 }
@@ -137,17 +143,17 @@ function makePendingResponse() {
 
 function makePickedUpBody(): AllRequestsResponse {
   const body = makeAllRequestsBody()
-  const pickedUpRequest = body.groups[0].requests[1]
+  const pickedUpRequest = body.items[0].requests[1]
   pickedUpRequest.id = 'c3'
   pickedUpRequest.status = 'picked_up'
   pickedUpRequest.picked_up_at = '2026-07-03T09:00:00.000Z'
-  body.groups[0].requests = [pickedUpRequest]
+  body.items[0].requests = [pickedUpRequest]
   return body
 }
 
 function makeCompletedBody(): AllRequestsResponse {
   const body = makePickedUpBody()
-  const completedRequest = body.groups[0].requests[0]
+  const completedRequest = body.items[0].requests[0]
   completedRequest.status = 'completed'
   completedRequest.completed_at = '2026-07-04T09:00:00.000Z'
   return body
@@ -214,9 +220,9 @@ test('renders the group with every request status in the backend order', async (
 test("a group shows its listing's first photo as a thumbnail", async () => {
   setLoggedIn()
   const body = makeAllRequestsBody() as AllRequestsResponse & {
-    groups: Array<{ photos?: Array<{ id: string; content_type: string; position: number }> }>
+    items: Array<{ photos?: Array<{ id: string; content_type: string; position: number }> }>
   }
-  body.groups[0].photos = [
+  body.items[0].photos = [
     { id: 'photo-first', content_type: 'image/png', position: 0 },
     { id: 'photo-second', content_type: 'image/png', position: 1 },
   ]
@@ -352,7 +358,7 @@ test('a row stacks on a phone and its controls wrap', async () => {
 test('a deactivated listing group is marked in its heading', async () => {
   setLoggedIn()
   const body = makePickedUpBody()
-  body.groups[0].listing_status = 'deactivated'
+  body.items[0].listing_status = 'deactivated'
   vi.stubGlobal('fetch', async () => {
     return makeFakeResponse(true, 200, body)
   })
@@ -499,11 +505,11 @@ test('an actionable request shows Approve/Deny and a click reloads with the new 
     }
     // After the reload, Bob's request is approved and no longer actionable.
     const reloaded = makeAllRequestsBody()
-    reloaded.groups[0].requests[0].status = 'approved'
-    reloaded.groups[0].requests[0].approved_quantity = 3
-    reloaded.groups[0].requests[0].approved_at = '2026-07-02T10:00:00.000Z'
-    reloaded.groups[0].requests[0].can_decide = false
-    reloaded.groups[0].requests[0].can_deny = false
+    reloaded.items[0].requests[0].status = 'approved'
+    reloaded.items[0].requests[0].approved_quantity = 3
+    reloaded.items[0].requests[0].approved_at = '2026-07-02T10:00:00.000Z'
+    reloaded.items[0].requests[0].can_decide = false
+    reloaded.items[0].requests[0].can_deny = false
     return makeFakeResponse(true, 200, reloaded)
   })
 
@@ -556,8 +562,8 @@ test('a non-actionable request shows its status read-only with no buttons', asyn
   setLoggedIn()
   const body = makeAllRequestsBody()
   // Make Bob's request non-actionable too, so the whole group is read-only.
-  body.groups[0].requests[0].can_decide = false
-  body.groups[0].requests[0].can_deny = false
+  body.items[0].requests[0].can_decide = false
+  body.items[0].requests[0].can_deny = false
   vi.stubGlobal('fetch', async () => {
     return makeFakeResponse(true, 200, body)
   })
@@ -575,8 +581,8 @@ test('an exhausted listing still shows Deny (not Approve) on a pending request',
   // and can_deny true, so only the Deny button shows on the still-pending request.
   setLoggedIn()
   const body = makeAllRequestsBody()
-  body.groups[0].requests[0].can_decide = false
-  body.groups[0].requests[0].can_deny = true
+  body.items[0].requests[0].can_decide = false
+  body.items[0].requests[0].can_deny = true
   vi.stubGlobal('fetch', async () => {
     return makeFakeResponse(true, 200, body)
   })
@@ -619,7 +625,7 @@ test('cancelling the confirm does not send a decision', async () => {
 test('shows the global empty state when there are no active listings', async () => {
   setLoggedIn()
   vi.stubGlobal('fetch', async () => {
-    return makeFakeResponse(true, 200, { groups: [] })
+    return makeFakeResponse(true, 200, { items: [], total: 0, page: 1, page_size: 12 })
   })
 
   renderRequestsPage('/requests')
@@ -630,7 +636,7 @@ test('shows the global empty state when there are no active listings', async () 
 test('shows the per-listing empty note when a listing has no requests', async () => {
   setLoggedIn()
   const body = {
-    groups: [
+    items: [
       {
         listing_id: 'lemons',
         listing_title: 'Lemons',
@@ -638,6 +644,9 @@ test('shows the per-listing empty note when a listing has no requests', async ()
         requests: [],
       },
     ],
+    total: 1,
+    page: 1,
+    page_size: 12,
   }
   vi.stubGlobal('fetch', async () => {
     return makeFakeResponse(true, 200, body)
@@ -655,7 +664,7 @@ test('the filtered view requests the all-requests endpoint with the listing filt
   vi.stubGlobal('fetch', async (url: string | URL | Request) => {
     requestUrl = String(url)
     const body = {
-      groups: [
+      items: [
         {
           listing_id: 'lemons',
           listing_title: 'Lemons',
@@ -663,6 +672,9 @@ test('the filtered view requests the all-requests endpoint with the listing filt
           requests: [],
         },
       ],
+      total: 1,
+      page: 1,
+      page_size: 12,
     }
     return makeFakeResponse(true, 200, body)
   })
@@ -670,13 +682,13 @@ test('the filtered view requests the all-requests endpoint with the listing filt
   renderRequestsPage('/requests?listing=lemons')
 
   expect(await screen.findByText('Lemons')).toBeTruthy()
-  expect(requestUrl).toBe('/api/request-queues/all?listing=lemons')
+  expect(requestUrl).toBe('/api/request-queues/all?listing=lemons&page=1&page_size=12')
 })
 
 test('the filtered view shows the no-group empty message when the listing is not returned', async () => {
   setLoggedIn()
   vi.stubGlobal('fetch', async () => {
-    return makeFakeResponse(true, 200, { groups: [] })
+    return makeFakeResponse(true, 200, { items: [], total: 0, page: 1, page_size: 12 })
   })
 
   renderRequestsPage('/requests?listing=lemons')
@@ -868,10 +880,10 @@ test('shows a denied status outcome for a denied request', async () => {
   setLoggedIn()
   const body = makeAllRequestsBody()
   // Turn Carol's row into a denied request, which is read-only.
-  body.groups[0].requests[1].status = 'denied'
-  body.groups[0].requests[1].approved_quantity = null
-  body.groups[0].requests[1].approved_at = null
-  body.groups[0].requests[1].denied_at = '2026-07-02T10:00:00.000Z'
+  body.items[0].requests[1].status = 'denied'
+  body.items[0].requests[1].approved_quantity = null
+  body.items[0].requests[1].approved_at = null
+  body.items[0].requests[1].denied_at = '2026-07-02T10:00:00.000Z'
   vi.stubGlobal('fetch', async () => {
     return makeFakeResponse(true, 200, body)
   })
@@ -885,7 +897,7 @@ test('shows a denied status outcome for a denied request', async () => {
 test('a completed request the caller reviewed offers the edit label', async () => {
   setLoggedIn()
   const body = makeCompletedBody()
-  body.groups[0].requests[0].reviewed_by_me = true
+  body.items[0].requests[0].reviewed_by_me = true
   vi.stubGlobal('fetch', async () => {
     return makeFakeResponse(true, 200, body)
   })
@@ -900,8 +912,8 @@ test('a completed request the caller reviewed offers the edit label', async () =
 test('a request row shows the requestor rating inline after the name', async () => {
   setLoggedIn()
   const body = makeAllRequestsBody()
-  body.groups[0].requests[0].claimant_requestor_average = 4.3
-  body.groups[0].requests[0].claimant_requestor_count = 12
+  body.items[0].requests[0].claimant_requestor_average = 4.3
+  body.items[0].requests[0].claimant_requestor_count = 12
   vi.stubGlobal('fetch', async () => {
     return makeFakeResponse(true, 200, body)
   })
@@ -928,4 +940,214 @@ test('a request row shows the requestor rating inline after the name', async () 
     expect(carolLine.textContent).toContain('(no requestor rating)')
     expect(carolLine.textContent).not.toContain('★')
   }
+})
+
+// --- US-33: paging the listing groups ---
+
+// One listing group holding a single pending request, so a page of groups can
+// be built without repeating the whole request shape.
+function makeGroup(listingId: string, title: string) {
+  return {
+    listing_id: listingId,
+    listing_title: title,
+    listing_status: 'active',
+    remaining_quantity: 5,
+    created_at: '2026-06-19T00:00:00.000Z',
+    photos: [],
+    requests: [
+      {
+        id: 'req-' + listingId,
+        claimant_id: 'bob',
+        claimant_name: 'Bob Baker',
+        requested_quantity: 2,
+        approved_quantity: null,
+        status: 'requested',
+        requested_at: '2026-07-01T12:00:00.000Z',
+        approved_at: null,
+        picked_up_at: null,
+        completed_at: null,
+        denied_at: null,
+        cancelled_at: null,
+        can_decide: true,
+        can_deny: true,
+      },
+    ],
+  }
+}
+
+function makeGroupPage(count: number, total: number, page: number) {
+  const groups = []
+  for (let index = 0; index < count; index = index + 1) {
+    groups.push(makeGroup('listing-' + index, 'Listing ' + index))
+  }
+  return { items: groups, total: total, page: page, page_size: 12 }
+}
+
+test('shows the count and the controls when the owner has more listings than one page', async () => {
+  setLoggedIn()
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, makeGroupPage(12, 30, 1))
+  })
+
+  renderRequestsPage('/requests')
+
+  // Scenario 8: what pages here is the listings.
+  await screen.findByText('Showing 1-12 of 30')
+  expect((screen.getByRole('button', { name: 'Prev' }) as HTMLButtonElement).disabled).toBe(true)
+  expect((screen.getByRole('button', { name: 'Next' }) as HTMLButtonElement).disabled).toBe(false)
+})
+
+test('every request inside a listed listing stays visible', async () => {
+  // Only the outer groups page; a listing's own requests are never cut off.
+  setLoggedIn()
+  const body = makeGroupPage(1, 30, 1)
+  const extraRequest = { ...body.items[0].requests[0], id: 'req-second', claimant_name: 'Carol Cook' }
+  body.items[0].requests = [body.items[0].requests[0], extraRequest]
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, body)
+  })
+
+  renderRequestsPage('/requests')
+
+  expect(await screen.findByText('Bob Baker')).toBeTruthy()
+  expect(screen.getByText('Carol Cook')).toBeTruthy()
+})
+
+test('no controls appear when every listing fits on one page', async () => {
+  setLoggedIn()
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, makeGroupPage(2, 2, 1))
+  })
+
+  renderRequestsPage('/requests')
+
+  // Scenario 4.
+  await screen.findByText('Listing 0')
+  expect(screen.queryByRole('navigation', { name: 'Listings with requests pagination' })).toBeNull()
+})
+
+test('no controls appear on the empty state', async () => {
+  setLoggedIn()
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, { items: [], total: 0, page: 1, page_size: 12 })
+  })
+
+  renderRequestsPage('/requests')
+
+  // Scenario 5.
+  await screen.findByText('You have no active listings.')
+  expect(screen.queryByRole('navigation', { name: 'Listings with requests pagination' })).toBeNull()
+})
+
+test('the first load asks for page 1 of twelve', async () => {
+  setLoggedIn()
+  let lastUrl = ''
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    lastUrl = String(url)
+    return makeFakeResponse(true, 200, { items: [], total: 0, page: 1, page_size: 12 })
+  })
+
+  renderRequestsPage('/requests')
+
+  await waitFor(() => {
+    expect(lastUrl).toContain('page=1')
+  })
+  expect(lastUrl).toContain('page_size=12')
+})
+
+test('Next moves to the following page of listings', async () => {
+  setLoggedIn()
+  let lastUrl = ''
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    lastUrl = String(url)
+    const requestedPage = String(url).includes('page=2') ? 2 : 1
+    return makeFakeResponse(true, 200, makeGroupPage(12, 30, requestedPage))
+  })
+
+  renderRequestsPage('/requests')
+  await screen.findByText('Showing 1-12 of 30')
+
+  fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+
+  await waitFor(() => {
+    expect(lastUrl).toContain('page=2')
+  })
+  expect(await screen.findByText('Showing 13-24 of 30')).toBeTruthy()
+})
+
+test('opening ?page=2 renders page 2 and marks it as current', async () => {
+  // Scenario 2.
+  setLoggedIn()
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, makeGroupPage(12, 30, 2))
+  })
+
+  renderRequestsPage('/requests?page=2')
+
+  await screen.findByText('Showing 13-24 of 30')
+  expect(screen.getByRole('button', { name: 'Page 2' }).getAttribute('aria-current')).toBe('page')
+})
+
+test('the filtered view sends the filter and the page window together', async () => {
+  // Scenario 8: the ?listing= filter still applies while paging. A filter picks
+  // out one listing, so the filtered view is a single page and shows no
+  // controls (Scenario 4), but the request still carries both.
+  setLoggedIn()
+  let lastUrl = ''
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    lastUrl = String(url)
+    const body = makeGroupPage(1, 1, 1)
+    body.items[0].listing_id = 'lemons'
+    body.items[0].listing_title = 'Lemons'
+    return makeFakeResponse(true, 200, body)
+  })
+
+  renderRequestsPage('/requests?listing=lemons&page=1')
+  await screen.findByText('Lemons')
+
+  expect(lastUrl).toContain('listing=lemons')
+  expect(lastUrl).toContain('page=1')
+  expect(screen.queryByRole('navigation', { name: 'Listings with requests pagination' })).toBeNull()
+})
+
+test('paging the unfiltered list keeps any other query param in the URL', async () => {
+  // The page number is set on top of whatever the URL already carries, so no
+  // other param is dropped on the way to the next page.
+  setLoggedIn()
+  let lastUrl = ''
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    lastUrl = String(url)
+    const requestedPage = String(url).includes('page=2') ? 2 : 1
+    return makeFakeResponse(true, 200, makeGroupPage(12, 30, requestedPage))
+  })
+
+  renderRequestsPage('/requests?page=1')
+  await screen.findByText('Showing 1-12 of 30')
+
+  fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+
+  await waitFor(() => {
+    expect(lastUrl).toContain('page=2')
+  })
+})
+
+test('a page past the end falls back to the last page', async () => {
+  // Scenario 6.
+  setLoggedIn()
+  const requestedPages: number[] = []
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    const pageMatch = String(url).match(/page=(\d+)/)
+    const requestedPage = pageMatch === null ? 1 : Number(pageMatch[1])
+    requestedPages.push(requestedPage)
+    if (requestedPage > 2) {
+      return makeFakeResponse(true, 200, { items: [], total: 20, page: requestedPage, page_size: 12 })
+    }
+    return makeFakeResponse(true, 200, makeGroupPage(8, 20, requestedPage))
+  })
+
+  renderRequestsPage('/requests?page=7')
+
+  expect(await screen.findByText('Showing 13-20 of 20')).toBeTruthy()
+  expect(requestedPages).toContain(7)
+  expect(requestedPages).toContain(2)
 })

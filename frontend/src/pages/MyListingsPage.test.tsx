@@ -18,6 +18,17 @@ afterEach(() => {
   window.localStorage.clear()
 })
 
+// Wrap listings in the paged envelope the backend answers with. total defaults
+// to "they all fit", so only the paging tests below see any controls.
+function makePage(items: object[], total?: number, page?: number, pageSize?: number) {
+  return {
+    items: items,
+    total: total ?? items.length,
+    page: page ?? 1,
+    page_size: pageSize ?? 12,
+  }
+}
+
 function makeFakeResponse(ok: boolean, status: number, body: object): FakeResponse {
   const bodyText = JSON.stringify(body)
   const fakeResponse = {
@@ -98,7 +109,7 @@ test('renders owned listings in the returned order', async () => {
     makeListing('a', 'Apple', 'active', null),
     makeListing('b', 'Banana', 'deactivated', null),
   ]
-  stubMyListings(() => makeFakeResponse(true, 200, listings))
+  stubMyListings(() => makeFakeResponse(true, 200, makePage(listings)))
 
   renderMyListings()
 
@@ -118,7 +129,7 @@ test('a row with photos shows the first photo as a thumbnail', async () => {
     { id: 'photo-first', content_type: 'image/png', position: 0 },
     { id: 'photo-second', content_type: 'image/png', position: 1 },
   ]
-  stubMyListings(() => makeFakeResponse(true, 200, [withPhotos]))
+  stubMyListings(() => makeFakeResponse(true, 200, makePage([withPhotos])))
 
   renderMyListings()
 
@@ -130,7 +141,7 @@ test('a row with photos shows the first photo as a thumbnail', async () => {
 
 test('a row without photos shows no thumbnail image', async () => {
   setLoggedIn()
-  stubMyListings(() => makeFakeResponse(true, 200, [makeListing('a', 'Apple', 'active', null)]))
+  stubMyListings(() => makeFakeResponse(true, 200, makePage([makeListing('a', 'Apple', 'active', null)])))
 
   renderMyListings()
 
@@ -140,7 +151,7 @@ test('a row without photos shows no thumbnail image', async () => {
 
 test('an active row shows edit, an enabled deactivate, a disabled activate, and a title link', async () => {
   setLoggedIn()
-  stubMyListings(() => makeFakeResponse(true, 200, [makeListing('a', 'Apple', 'active', null)]))
+  stubMyListings(() => makeFakeResponse(true, 200, makePage([makeListing('a', 'Apple', 'active', null)])))
 
   renderMyListings()
 
@@ -159,7 +170,7 @@ test('an active row shows edit, an enabled deactivate, a disabled activate, and 
 
 test('an owner-deactivated row shows no edit, a plain title, an enabled Activate, and a disabled Deactivate', async () => {
   setLoggedIn()
-  stubMyListings(() => makeFakeResponse(true, 200, [makeListing('b', 'Banana', 'deactivated', null)]))
+  stubMyListings(() => makeFakeResponse(true, 200, makePage([makeListing('b', 'Banana', 'deactivated', null)])))
 
   renderMyListings()
 
@@ -198,9 +209,9 @@ test('clicking Activate calls the reactivate endpoint and reloads the list', asy
     }
     myListingsCalls = myListingsCalls + 1
     if (myListingsCalls === 1) {
-      return makeFakeResponse(true, 200, [makeListing('b', 'Banana', 'deactivated', null)])
+      return makeFakeResponse(true, 200, makePage([makeListing('b', 'Banana', 'deactivated', null)]))
     }
-    return makeFakeResponse(true, 200, [makeListing('b', 'Banana', 'active', null)])
+    return makeFakeResponse(true, 200, makePage([makeListing('b', 'Banana', 'active', null)]))
   })
 
   renderMyListings()
@@ -232,7 +243,7 @@ test('cancelling the reactivate confirm does not call the endpoint', async () =>
         },
       }
     }
-    return makeFakeResponse(true, 200, [makeListing('b', 'Banana', 'deactivated', null)])
+    return makeFakeResponse(true, 200, makePage([makeListing('b', 'Banana', 'deactivated', null)]))
   })
 
   renderMyListings()
@@ -256,7 +267,7 @@ test('a failed reactivate shows the server message and keeps the row deactivated
         detail: 'An administrator deactivated this listing, so you cannot reactivate it.',
       })
     }
-    return makeFakeResponse(true, 200, [makeListing('b', 'Banana', 'deactivated', null)])
+    return makeFakeResponse(true, 200, makePage([makeListing('b', 'Banana', 'deactivated', null)]))
   })
 
   renderMyListings()
@@ -283,7 +294,7 @@ test('a reactivate transport error shows its message and keeps the row deactivat
     if (urlText.includes('/reactivate')) {
       throw new TypeError('Failed to fetch')
     }
-    return makeFakeResponse(true, 200, [makeListing('b', 'Banana', 'deactivated', null)])
+    return makeFakeResponse(true, 200, makePage([makeListing('b', 'Banana', 'deactivated', null)]))
   })
 
   renderMyListings()
@@ -305,7 +316,7 @@ test('a 401 on reactivate clears the credentials', async () => {
     if (urlText.includes('/reactivate')) {
       return makeFakeResponse(false, 401, { detail: 'Not authenticated.' })
     }
-    return makeFakeResponse(true, 200, [makeListing('b', 'Banana', 'deactivated', null)])
+    return makeFakeResponse(true, 200, makePage([makeListing('b', 'Banana', 'deactivated', null)]))
   })
 
   renderMyListings()
@@ -323,7 +334,7 @@ test('a 401 on reactivate clears the credentials', async () => {
 test('an admin-deactivated row shows no edit, no buttons, and the explanation', async () => {
   setLoggedIn()
   stubMyListings(() =>
-    makeFakeResponse(true, 200, [makeListing('c', 'Cherry', 'deactivated', 'admin-1')]),
+    makeFakeResponse(true, 200, makePage([makeListing('c', 'Cherry', 'deactivated', 'admin-1')])),
   )
 
   renderMyListings()
@@ -361,9 +372,9 @@ test('clicking Deactivate calls the deactivate endpoint and reloads the list', a
     // reload after the deactivate succeeds.
     myListingsCalls = myListingsCalls + 1
     if (myListingsCalls === 1) {
-      return makeFakeResponse(true, 200, [makeListing('a', 'Apple', 'active', null)])
+      return makeFakeResponse(true, 200, makePage([makeListing('a', 'Apple', 'active', null)]))
     }
-    return makeFakeResponse(true, 200, [makeListing('a', 'Apple', 'deactivated', null)])
+    return makeFakeResponse(true, 200, makePage([makeListing('a', 'Apple', 'deactivated', null)]))
   })
 
   renderMyListings()
@@ -382,7 +393,7 @@ test('clicking Deactivate calls the deactivate endpoint and reloads the list', a
 
 test('shows the empty state when there are no listings', async () => {
   setLoggedIn()
-  stubMyListings(() => makeFakeResponse(true, 200, []))
+  stubMyListings(() => makeFakeResponse(true, 200, makePage([])))
 
   renderMyListings()
 
@@ -421,7 +432,7 @@ test('a failed deactivate shows the server message and keeps the row active', as
     if (urlText.includes('/deactivate')) {
       return makeFakeResponse(false, 403, { detail: 'You can only deactivate your own listing.' })
     }
-    return makeFakeResponse(true, 200, [makeListing('a', 'Apple', 'active', null)])
+    return makeFakeResponse(true, 200, makePage([makeListing('a', 'Apple', 'active', null)]))
   })
 
   renderMyListings()
@@ -453,7 +464,7 @@ test('cancelling the deactivate confirm does not call the endpoint', async () =>
       }
       return emptyResponse
     }
-    return makeFakeResponse(true, 200, [makeListing('a', 'Apple', 'active', null)])
+    return makeFakeResponse(true, 200, makePage([makeListing('a', 'Apple', 'active', null)]))
   })
 
   renderMyListings()
@@ -475,7 +486,7 @@ test('a 401 on deactivate clears the credentials', async () => {
     if (urlText.includes('/deactivate')) {
       return makeFakeResponse(false, 401, { detail: 'Not authenticated.' })
     }
-    return makeFakeResponse(true, 200, [makeListing('a', 'Apple', 'active', null)])
+    return makeFakeResponse(true, 200, makePage([makeListing('a', 'Apple', 'active', null)]))
   })
 
   renderMyListings()
@@ -488,4 +499,152 @@ test('a 401 on deactivate clears the credentials', async () => {
   await waitFor(() => {
     expect(window.localStorage.getItem('memberId')).toBeNull()
   })
+})
+
+// --- US-33: paging the owner's listings ---
+
+// Twelve rows, so a total above twelve means a second page exists.
+function makeFullPageOfListings() {
+  const listings = []
+  for (let index = 0; index < 12; index = index + 1) {
+    listings.push(makeListing('l' + index, 'Listing ' + index, 'active', null))
+  }
+  return listings
+}
+
+// Render at a chosen URL, so a test can deep-link straight to a page.
+function renderMyListingsAt(entry: string) {
+  render(
+    <MemoryRouter initialEntries={[entry]}>
+      <Routes>
+        <Route path="/my-listings" element={<MyListingsPage />} />
+      </Routes>
+    </MemoryRouter>,
+  )
+}
+
+test('shows the count and the controls when there is more than one page', async () => {
+  setLoggedIn()
+  stubMyListings(() => makeFakeResponse(true, 200, makePage(makeFullPageOfListings(), 40, 1, 12)))
+
+  renderMyListings()
+
+  // Scenario 1.
+  await screen.findByText('Listing 0')
+  expect(screen.getByText('Showing 1-12 of 40')).toBeTruthy()
+  expect((screen.getByRole('button', { name: 'Prev' }) as HTMLButtonElement).disabled).toBe(true)
+  expect((screen.getByRole('button', { name: 'Next' }) as HTMLButtonElement).disabled).toBe(false)
+})
+
+test('no controls appear when every listing fits on one page', async () => {
+  setLoggedIn()
+  stubMyListings(() =>
+    makeFakeResponse(true, 200, makePage([makeListing('a', 'Apple', 'active', null)], 1, 1, 12)),
+  )
+
+  renderMyListings()
+
+  // Scenario 4.
+  await screen.findByText('Apple')
+  expect(screen.queryByRole('navigation', { name: 'Your listings pagination' })).toBeNull()
+})
+
+test('no controls appear on the empty state', async () => {
+  setLoggedIn()
+  stubMyListings(() => makeFakeResponse(true, 200, makePage([], 0, 1, 12)))
+
+  renderMyListings()
+
+  // Scenario 5: the existing empty state stands on its own.
+  await screen.findByText('You have not posted any listings yet.')
+  expect(screen.queryByRole('navigation', { name: 'Your listings pagination' })).toBeNull()
+})
+
+test('the first load asks for page 1 of twelve', async () => {
+  setLoggedIn()
+  let lastUrl = ''
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    lastUrl = String(url)
+    return makeFakeResponse(true, 200, makePage([], 0, 1, 12))
+  })
+
+  renderMyListings()
+
+  await waitFor(() => {
+    expect(lastUrl).toContain('page=1')
+  })
+  expect(lastUrl).toContain('page_size=12')
+})
+
+test('Next moves to the following page and puts it in the URL', async () => {
+  setLoggedIn()
+  let lastUrl = ''
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    lastUrl = String(url)
+    const requestedPage = String(url).includes('page=2') ? 2 : 1
+    return makeFakeResponse(true, 200, makePage(makeFullPageOfListings(), 40, requestedPage, 12))
+  })
+
+  renderMyListings()
+  await screen.findByText('Showing 1-12 of 40')
+
+  fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+
+  await waitFor(() => {
+    expect(lastUrl).toContain('page=2')
+  })
+  expect(await screen.findByText('Showing 13-24 of 40')).toBeTruthy()
+})
+
+test('opening ?page=3 renders page 3 and marks it as current', async () => {
+  // Scenario 2: a deep link.
+  setLoggedIn()
+  let lastUrl = ''
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    lastUrl = String(url)
+    return makeFakeResponse(true, 200, makePage(makeFullPageOfListings(), 40, 3, 12))
+  })
+
+  renderMyListingsAt('/my-listings?page=3')
+
+  await screen.findByText('Showing 25-36 of 40')
+  expect(lastUrl).toContain('page=3')
+  expect(screen.getByRole('button', { name: 'Page 3' }).getAttribute('aria-current')).toBe('page')
+})
+
+test('a non-numeric page in the URL is treated as page 1', async () => {
+  // Scenario 10, the frontend half.
+  setLoggedIn()
+  let lastUrl = ''
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    lastUrl = String(url)
+    return makeFakeResponse(true, 200, makePage([], 0, 1, 12))
+  })
+
+  renderMyListingsAt('/my-listings?page=not-a-number')
+
+  await waitFor(() => {
+    expect(lastUrl).toContain('page=1')
+  })
+})
+
+test('a page past the end falls back to the last page', async () => {
+  // Scenario 6.
+  setLoggedIn()
+  const requestedPages: number[] = []
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    const pageMatch = String(url).match(/page=(\d+)/)
+    const requestedPage = pageMatch === null ? 1 : Number(pageMatch[1])
+    requestedPages.push(requestedPage)
+    if (requestedPage > 2) {
+      return makeFakeResponse(true, 200, makePage([], 20, requestedPage, 12))
+    }
+    return makeFakeResponse(true, 200, makePage(makeFullPageOfListings(), 20, requestedPage, 12))
+  })
+
+  renderMyListingsAt('/my-listings?page=9')
+
+  expect(await screen.findByText('Showing 13-20 of 20')).toBeTruthy()
+  expect(requestedPages).toContain(9)
+  expect(requestedPages).toContain(2)
 })

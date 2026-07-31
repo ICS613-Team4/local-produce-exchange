@@ -18,6 +18,25 @@ afterEach(() => {
   window.localStorage.clear()
 })
 
+// Wrap listings in the paged envelope the backend answers with, so the stubs
+// return the shape the page really reads. page and page_size default to the
+// first page of twelve, and total defaults to "they all fit", which is what
+// keeps the controls out of the tests that are not about paging.
+function makePage(
+  items: object[],
+  total?: number,
+  page?: number,
+  pageSize?: number,
+) {
+  const resolvedPageSize = pageSize ?? 12
+  return {
+    items: items,
+    total: total ?? items.length,
+    page: page ?? 1,
+    page_size: resolvedPageSize,
+  }
+}
+
 function makeFakeResponse(ok: boolean, status: number, body: object): FakeResponse {
   const bodyText = JSON.stringify(body)
   const fakeResponse = {
@@ -72,7 +91,7 @@ test('renders the controls and lists the active listings on open', async () => {
   window.localStorage.setItem('memberId', 'member-123')
   const listings = [makeListing('l1', 'Backyard Meyer Lemons')]
   vi.stubGlobal('fetch', async () => {
-    return makeFakeResponse(true, 200, listings)
+    return makeFakeResponse(true, 200, makePage(listings))
   })
 
   renderBrowse()
@@ -102,7 +121,7 @@ test('renders the controls and lists the active listings on open', async () => {
 test('shows the empty message when nothing matches', async () => {
   window.localStorage.setItem('memberId', 'member-123')
   vi.stubGlobal('fetch', async () => {
-    return makeFakeResponse(true, 200, [])
+    return makeFakeResponse(true, 200, makePage([]))
   })
 
   renderBrowse()
@@ -117,7 +136,7 @@ test('renders the first listing photo as the card cover', async () => {
     { id: 'cover-photo', content_type: 'image/webp', position: 0 },
   ]
   vi.stubGlobal('fetch', async () => {
-    return makeFakeResponse(true, 200, [listing])
+    return makeFakeResponse(true, 200, makePage([listing]))
   })
 
   renderBrowse()
@@ -131,7 +150,7 @@ test('submits the search text, category, and repeated tag params', async () => {
   let lastUrl = ''
   vi.stubGlobal('fetch', async (url: string | URL | Request) => {
     lastUrl = String(url)
-    return makeFakeResponse(true, 200, [])
+    return makeFakeResponse(true, 200, makePage([]))
   })
 
   renderBrowse()
@@ -157,7 +176,7 @@ test('Clear resets the controls and reloads the full list', async () => {
   let lastUrl = ''
   vi.stubGlobal('fetch', async (url: string | URL | Request) => {
     lastUrl = String(url)
-    return makeFakeResponse(true, 200, [])
+    return makeFakeResponse(true, 200, makePage([]))
   })
 
   renderBrowse()
@@ -174,10 +193,255 @@ test('Clear resets the controls and reloads the full list', async () => {
   expect(searchInput.value).toBe('')
   const veganCheckbox = screen.getByLabelText('vegan') as HTMLInputElement
   expect(veganCheckbox.checked).toBe(false)
-  // The reload asks for the plain list with no query string.
+  // The reload asks for the unfiltered list, back on page 1.
   await waitFor(() => {
-    expect(lastUrl.endsWith('/api/listings')).toBe(true)
+    expect(lastUrl).toContain('page=1')
   })
+  expect(lastUrl).not.toContain('q=')
+  expect(lastUrl).not.toContain('dietary_tags=')
+})
+
+// --- US-33: paging the browse results ---
+
+// Twelve listings, so a total above twelve means a second page exists.
+function makeFullPageOfListings() {
+  const listings = []
+  for (let index = 0; index < 12; index = index + 1) {
+    listings.push(makeListing('l' + index, 'Listing ' + index))
+  }
+  return listings
+}
+
+test('shows the count and the controls when there is more than one page', async () => {
+  window.localStorage.setItem('memberId', 'member-123')
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, makePage(makeFullPageOfListings(), 40, 1, 12))
+  })
+
+  renderBrowse()
+
+  // Scenario 1: the first window renders, the count names it, Prev is disabled
+  // and Next is not.
+  await screen.findByRole('link', { name: 'Listing 0' })
+  expect(screen.getByText('Showing 1-12 of 40')).toBeTruthy()
+  expect((screen.getByRole('button', { name: 'Prev' }) as HTMLButtonElement).disabled).toBe(true)
+  expect((screen.getByRole('button', { name: 'Next' }) as HTMLButtonElement).disabled).toBe(false)
+})
+
+test('no controls appear when every match fits on one page', async () => {
+  window.localStorage.setItem('memberId', 'member-123')
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, makePage([makeListing('l1', 'Only One')], 1, 1, 12))
+  })
+
+  renderBrowse()
+
+  // Scenario 4.
+  await screen.findByRole('link', { name: 'Only One' })
+  expect(screen.queryByRole('navigation', { name: 'Listings pagination' })).toBeNull()
+})
+
+test('no controls appear on the empty state', async () => {
+  window.localStorage.setItem('memberId', 'member-123')
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, makePage([], 0, 1, 12))
+  })
+
+  renderBrowse()
+
+  // Scenario 5: the existing empty state, and nothing else.
+  await screen.findByText('No listings match your search.')
+  expect(screen.queryByRole('navigation', { name: 'Listings pagination' })).toBeNull()
+})
+
+test('the first load asks for page 1 of twelve', async () => {
+  window.localStorage.setItem('memberId', 'member-123')
+  let lastUrl = ''
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    lastUrl = String(url)
+    return makeFakeResponse(true, 200, makePage([], 0, 1, 12))
+  })
+
+  renderBrowse()
+
+  await waitFor(() => {
+    expect(lastUrl).toContain('page=1')
+  })
+  expect(lastUrl).toContain('page_size=12')
+})
+
+test('Next moves to the following page and puts it in the URL', async () => {
+  window.localStorage.setItem('memberId', 'member-123')
+  let lastUrl = ''
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    lastUrl = String(url)
+    const requestedPage = String(url).includes('page=2') ? 2 : 1
+    return makeFakeResponse(true, 200, makePage(makeFullPageOfListings(), 40, requestedPage, 12))
+  })
+
+  renderBrowse()
+  await screen.findByText('Showing 1-12 of 40')
+
+  fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+
+  // Scenario 1: the next window is fetched and the count follows it.
+  await waitFor(() => {
+    expect(lastUrl).toContain('page=2')
+  })
+  expect(await screen.findByText('Showing 13-24 of 40')).toBeTruthy()
+})
+
+test('opening ?page=3 renders page 3 and marks it as current', async () => {
+  // Scenario 2: a deep link.
+  window.localStorage.setItem('memberId', 'member-123')
+  let lastUrl = ''
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    lastUrl = String(url)
+    return makeFakeResponse(true, 200, makePage(makeFullPageOfListings(), 40, 3, 12))
+  })
+
+  render(
+    <MemoryRouter initialEntries={['/browse?page=3']}>
+      <Routes>
+        <Route path="/browse" element={<BrowsePage />} />
+      </Routes>
+    </MemoryRouter>,
+  )
+
+  await screen.findByText('Showing 25-36 of 40')
+  expect(lastUrl).toContain('page=3')
+  expect(screen.getByRole('button', { name: 'Page 3' }).getAttribute('aria-current')).toBe('page')
+})
+
+test('a non-numeric page in the URL is treated as page 1', async () => {
+  // Scenario 10, the frontend half: a hand-edited URL must not become a bad
+  // request; it reads as the first page.
+  window.localStorage.setItem('memberId', 'member-123')
+  let lastUrl = ''
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    lastUrl = String(url)
+    return makeFakeResponse(true, 200, makePage([], 0, 1, 12))
+  })
+
+  render(
+    <MemoryRouter initialEntries={['/browse?page=abc']}>
+      <Routes>
+        <Route path="/browse" element={<BrowsePage />} />
+      </Routes>
+    </MemoryRouter>,
+  )
+
+  await waitFor(() => {
+    expect(lastUrl).toContain('page=1')
+  })
+})
+
+test('a page past the end falls back to the last page', async () => {
+  // Scenario 6: the backend answers an out-of-range page with an empty window
+  // and the true total; the page clamps and shows the last real page.
+  window.localStorage.setItem('memberId', 'member-123')
+  const requestedPages: number[] = []
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    const urlText = String(url)
+    const pageMatch = urlText.match(/page=(\d+)/)
+    const requestedPage = pageMatch === null ? 1 : Number(pageMatch[1])
+    requestedPages.push(requestedPage)
+    if (requestedPage > 2) {
+      return makeFakeResponse(true, 200, makePage([], 20, requestedPage, 12))
+    }
+    return makeFakeResponse(true, 200, makePage(makeFullPageOfListings(), 20, requestedPage, 12))
+  })
+
+  render(
+    <MemoryRouter initialEntries={['/browse?page=9']}>
+      <Routes>
+        <Route path="/browse" element={<BrowsePage />} />
+      </Routes>
+    </MemoryRouter>,
+  )
+
+  // 20 rows at 12 a page is 2 pages, so page 9 lands on page 2.
+  expect(await screen.findByText('Showing 13-20 of 20')).toBeTruthy()
+  expect(requestedPages).toContain(9)
+  expect(requestedPages).toContain(2)
+})
+
+test('applying a filter resets to page 1 and keeps the filter in the URL', async () => {
+  // Scenario 3.
+  window.localStorage.setItem('memberId', 'member-123')
+  let lastUrl = ''
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    lastUrl = String(url)
+    return makeFakeResponse(true, 200, makePage(makeFullPageOfListings(), 40, 3, 12))
+  })
+
+  render(
+    <MemoryRouter initialEntries={['/browse?page=3']}>
+      <Routes>
+        <Route path="/browse" element={<BrowsePage />} />
+      </Routes>
+    </MemoryRouter>,
+  )
+  await screen.findByText('Showing 25-36 of 40')
+
+  fireEvent.change(screen.getByLabelText('Search'), { target: { value: 'lemon' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Apply filters' }))
+
+  await waitFor(() => {
+    expect(lastUrl).toContain('q=lemon')
+  })
+  // The new filter and page 1 travel together: page 3 of the old list means
+  // nothing in the filtered one.
+  expect(lastUrl).toContain('page=1')
+  expect(lastUrl).not.toContain('page=3')
+})
+
+test('paging keeps the filters that are already applied', async () => {
+  window.localStorage.setItem('memberId', 'member-123')
+  let lastUrl = ''
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    lastUrl = String(url)
+    return makeFakeResponse(true, 200, makePage(makeFullPageOfListings(), 40, 1, 12))
+  })
+
+  render(
+    <MemoryRouter initialEntries={['/browse?q=lemon&category=Fruit&page=1']}>
+      <Routes>
+        <Route path="/browse" element={<BrowsePage />} />
+      </Routes>
+    </MemoryRouter>,
+  )
+  await screen.findByText('Showing 1-12 of 40')
+
+  fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+
+  await waitFor(() => {
+    expect(lastUrl).toContain('page=2')
+  })
+  expect(lastUrl).toContain('q=lemon')
+  expect(lastUrl).toContain('category=Fruit')
+})
+
+test('filters in the URL are shown in the form controls', async () => {
+  // The filters live in the URL, so a deep link fills the boxes too and the
+  // back button restores what the member had typed.
+  window.localStorage.setItem('memberId', 'member-123')
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, makePage([], 0, 1, 12))
+  })
+
+  render(
+    <MemoryRouter initialEntries={['/browse?q=lemon&category=Fruit&dietary_tags=vegan']}>
+      <Routes>
+        <Route path="/browse" element={<BrowsePage />} />
+      </Routes>
+    </MemoryRouter>,
+  )
+
+  await screen.findByText('No listings match your search.')
+  expect((screen.getByLabelText('Search') as HTMLInputElement).value).toBe('lemon')
+  expect((screen.getByLabelText('Category') as HTMLSelectElement).value).toBe('Fruit')
+  expect((screen.getByLabelText('vegan') as HTMLInputElement).checked).toBe(true)
 })
 
 test('shows the error state when the request fails', async () => {
@@ -209,7 +473,7 @@ test('renders a card for a listing that has no dietary tags', async () => {
   const listing = makeListing('l9', 'No Diet Tags')
   listing.dietary_tags = []
   vi.stubGlobal('fetch', async () => {
-    return makeFakeResponse(true, 200, [listing])
+    return makeFakeResponse(true, 200, makePage([listing]))
   })
 
   renderBrowse()
@@ -223,7 +487,7 @@ test('checking two tags then unchecking one keeps only the remaining tag', async
   let lastUrl = ''
   vi.stubGlobal('fetch', async (url: string | URL | Request) => {
     lastUrl = String(url)
-    return makeFakeResponse(true, 200, [])
+    return makeFakeResponse(true, 200, makePage([]))
   })
 
   renderBrowse()
@@ -255,7 +519,7 @@ test('a card shows the owner rating chip when the owner has reviews', async () =
   listing.owner_rating_average = 4.0
   listing.owner_rating_count = 1
   vi.stubGlobal('fetch', async () => {
-    return makeFakeResponse(true, 200, [listing])
+    return makeFakeResponse(true, 200, makePage([listing]))
   })
 
   renderBrowse()
@@ -273,7 +537,7 @@ test('a card shows the owner rating chip when the owner has reviews', async () =
 test('a card says no rating, without a link, for an unrated owner', async () => {
   window.localStorage.setItem('memberId', 'member-123')
   vi.stubGlobal('fetch', async () => {
-    return makeFakeResponse(true, 200, [makeListing('l1', 'Unrated Kale')])
+    return makeFakeResponse(true, 200, makePage([makeListing('l1', 'Unrated Kale')]))
   })
 
   renderBrowse()

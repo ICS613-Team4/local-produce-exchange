@@ -10,6 +10,8 @@ from fastapi import HTTPException
 from sqlalchemy.dialects.postgresql import Range
 from sqlalchemy.exc import OperationalError
 
+from app.db import get_db_session
+from app.dependencies import get_current_member
 from app.main import app
 from app.models.claim import Claim
 from app.models.listing import Listing
@@ -17,6 +19,7 @@ from app.models.listing_photo import ListingPhoto
 from app.models.member import Member
 from app.models.review import Review
 from app.routers.claim import get_all_requests, get_request_queues
+from tests.asgi_client import call_asgi_get
 
 
 # Far-future and far-past pickup windows. The can_decide rule compares the
@@ -671,11 +674,11 @@ def test_all_requests_happy_path_active_listings_grouped(db_session):
     insert_claim(db_session, apples, cara)
     insert_claim(db_session, zucchini, cara)
 
-    response = get_all_requests(None, owner, db_session)
+    response = get_all_requests(current_member=owner, session=db_session)
 
-    assert len(response.groups) == 2
-    assert response.groups[0].listing_title == "Zucchini"
-    assert response.groups[1].listing_title == "Apples"
+    assert len(response.items) == 2
+    assert response.items[0].listing_title == "Zucchini"
+    assert response.items[1].listing_title == "Apples"
 
 
 def test_all_requests_carries_each_listing_photos(db_session):
@@ -698,10 +701,10 @@ def test_all_requests_carries_each_listing_photos(db_session):
     db_session.add(photo)
     db_session.commit()
 
-    response = get_all_requests(None, owner, db_session)
+    response = get_all_requests(current_member=owner, session=db_session)
 
     groups_by_title = {}
-    for group in response.groups:
+    for group in response.items:
         groups_by_title[group.listing_title] = group
     assert len(groups_by_title["Apples"].photos) == 1
     assert groups_by_title["Apples"].photos[0].id == str(photo.id)
@@ -723,11 +726,11 @@ def test_all_requests_includes_every_status(db_session, claim_status):
     listing = insert_listing(db_session, owner, title="Lemons")
     insert_claim(db_session, listing, cara, status=claim_status)
 
-    response = get_all_requests(None, owner, db_session)
+    response = get_all_requests(current_member=owner, session=db_session)
 
-    assert len(response.groups) == 1
-    assert len(response.groups[0].requests) == 1
-    assert response.groups[0].requests[0].status == claim_status
+    assert len(response.items) == 1
+    assert len(response.items[0].requests) == 1
+    assert response.items[0].requests[0].status == claim_status
 
 
 def test_all_requests_carries_pickup_and_completion_timestamps(db_session):
@@ -750,10 +753,10 @@ def test_all_requests_carries_pickup_and_completion_timestamps(db_session):
     completed_claim.completed_at = completed_at
     db_session.commit()
 
-    response = get_all_requests(None, owner, db_session)
+    response = get_all_requests(current_member=owner, session=db_session)
 
     requests_by_status = {}
-    for request in response.groups[0].requests:
+    for request in response.items[0].requests:
         requests_by_status[request.status] = request
     assert requests_by_status["picked_up"].picked_up_at == picked_up_at
     assert requests_by_status["picked_up"].completed_at is None
@@ -772,11 +775,11 @@ def test_all_requests_keeps_deactivated_listing_with_requests(db_session):
     insert_claim(db_session, active, cara)
     insert_claim(db_session, deactivated, cara, status="picked_up")
 
-    response = get_all_requests(None, owner, db_session)
+    response = get_all_requests(current_member=owner, session=db_session)
 
-    assert len(response.groups) == 2
+    assert len(response.items) == 2
     groups_by_title = {}
-    for group in response.groups:
+    for group in response.items:
         groups_by_title[group.listing_title] = group
     assert groups_by_title["Active"].listing_status == "active"
     assert groups_by_title["Down"].listing_status == "deactivated"
@@ -790,11 +793,11 @@ def test_all_requests_drops_deactivated_listing_without_requests(db_session):
     insert_listing(db_session, owner, title="Active", status="active")
     insert_listing(db_session, owner, title="Down", status="deactivated")
 
-    response = get_all_requests(None, owner, db_session)
+    response = get_all_requests(current_member=owner, session=db_session)
 
-    assert len(response.groups) == 1
-    assert response.groups[0].listing_title == "Active"
-    assert response.groups[0].requests == []
+    assert len(response.items) == 1
+    assert response.items[0].listing_title == "Active"
+    assert response.items[0].requests == []
 
 
 def test_all_requests_excludes_other_members(db_session):
@@ -806,10 +809,10 @@ def test_all_requests_excludes_other_members(db_session):
     insert_claim(db_session, mine, cara)
     insert_claim(db_session, theirs, cara)
 
-    response = get_all_requests(None, owner, db_session)
+    response = get_all_requests(current_member=owner, session=db_session)
 
-    assert len(response.groups) == 1
-    assert response.groups[0].listing_title == "Mine"
+    assert len(response.items) == 1
+    assert response.items[0].listing_title == "Mine"
 
 
 def test_all_requests_includes_active_listing_with_no_requests(db_session):
@@ -818,11 +821,11 @@ def test_all_requests_includes_active_listing_with_no_requests(db_session):
     owner = insert_member(db_session, email="owner@example.com")
     insert_listing(db_session, owner, title="Empty", status="active")
 
-    response = get_all_requests(None, owner, db_session)
+    response = get_all_requests(current_member=owner, session=db_session)
 
-    assert len(response.groups) == 1
-    assert response.groups[0].listing_title == "Empty"
-    assert response.groups[0].requests == []
+    assert len(response.items) == 1
+    assert response.items[0].listing_title == "Empty"
+    assert response.items[0].requests == []
 
 
 def test_all_requests_orders_requests_oldest_first(db_session):
@@ -836,9 +839,9 @@ def test_all_requests_orders_requests_oldest_first(db_session):
     insert_claim(db_session, listing, ben, requested_at=newer_time)
     insert_claim(db_session, listing, ann, requested_at=older_time)
 
-    response = get_all_requests(None, owner, db_session)
+    response = get_all_requests(current_member=owner, session=db_session)
 
-    requests = response.groups[0].requests
+    requests = response.items[0].requests
     assert requests[0].claimant_name == "Ann"
     assert requests[1].claimant_name == "Ben"
 
@@ -854,10 +857,10 @@ def test_all_requests_listing_order_tiebreak_by_id_desc(db_session):
     for listing_id in listing_ids_desc:
         expected_listing_ids.append(str(listing_id))
 
-    response = get_all_requests(None, owner, db_session)
+    response = get_all_requests(current_member=owner, session=db_session)
 
     group_listing_ids = []
-    for group in response.groups:
+    for group in response.items:
         group_listing_ids.append(group.listing_id)
     assert group_listing_ids == expected_listing_ids
 
@@ -876,10 +879,10 @@ def test_all_requests_request_order_tiebreak_by_id_asc(db_session):
     for claim_id in ids_sorted:
         expected_ids.append(str(claim_id))
 
-    response = get_all_requests(None, owner, db_session)
+    response = get_all_requests(current_member=owner, session=db_session)
 
     request_ids = []
-    for item in response.groups[0].requests:
+    for item in response.items[0].requests:
         request_ids.append(item.id)
     assert request_ids == expected_ids
 
@@ -895,9 +898,9 @@ def test_all_requests_can_decide_true_for_normal_pending(db_session):
     )
     insert_claim(db_session, listing, cara, status="requested")
 
-    response = get_all_requests(None, owner, db_session)
+    response = get_all_requests(current_member=owner, session=db_session)
 
-    assert response.groups[0].requests[0].can_decide is True
+    assert response.items[0].requests[0].can_decide is True
 
 
 def test_all_requests_can_decide_false_when_not_pending(db_session):
@@ -908,9 +911,9 @@ def test_all_requests_can_decide_false_when_not_pending(db_session):
     )
     insert_claim(db_session, listing, cara, status="denied")
 
-    response = get_all_requests(None, owner, db_session)
+    response = get_all_requests(current_member=owner, session=db_session)
 
-    assert response.groups[0].requests[0].can_decide is False
+    assert response.items[0].requests[0].can_decide is False
 
 
 def test_all_requests_can_decide_false_when_claimant_suspended(db_session):
@@ -921,9 +924,9 @@ def test_all_requests_can_decide_false_when_claimant_suspended(db_session):
     )
     insert_claim(db_session, listing, cara, status="requested")
 
-    response = get_all_requests(None, owner, db_session)
+    response = get_all_requests(current_member=owner, session=db_session)
 
-    assert response.groups[0].requests[0].can_decide is False
+    assert response.items[0].requests[0].can_decide is False
 
 
 def test_all_requests_can_decide_false_when_pickup_window_passed(db_session):
@@ -934,9 +937,9 @@ def test_all_requests_can_decide_false_when_pickup_window_passed(db_session):
     )
     insert_claim(db_session, listing, cara, status="requested")
 
-    response = get_all_requests(None, owner, db_session)
+    response = get_all_requests(current_member=owner, session=db_session)
 
-    assert response.groups[0].requests[0].can_decide is False
+    assert response.items[0].requests[0].can_decide is False
 
 
 def test_all_requests_can_decide_false_when_no_remaining_quantity(db_session):
@@ -947,11 +950,11 @@ def test_all_requests_can_decide_false_when_no_remaining_quantity(db_session):
     )
     insert_claim(db_session, listing, cara, status="requested")
 
-    response = get_all_requests(None, owner, db_session)
+    response = get_all_requests(current_member=owner, session=db_session)
 
-    assert response.groups[0].requests[0].can_decide is False
+    assert response.items[0].requests[0].can_decide is False
     # Same fix as the pending queue: deny stays available with no remaining stock.
-    assert response.groups[0].requests[0].can_deny is True
+    assert response.items[0].requests[0].can_deny is True
 
 
 def test_all_requests_can_deny_false_when_not_pending(db_session):
@@ -963,10 +966,10 @@ def test_all_requests_can_deny_false_when_not_pending(db_session):
     )
     insert_claim(db_session, listing, cara, status="denied")
 
-    response = get_all_requests(None, owner, db_session)
+    response = get_all_requests(current_member=owner, session=db_session)
 
-    assert response.groups[0].requests[0].can_decide is False
-    assert response.groups[0].requests[0].can_deny is False
+    assert response.items[0].requests[0].can_decide is False
+    assert response.items[0].requests[0].can_deny is False
 
 
 # --- all-requests filtered single-listing query ------------------------------
@@ -980,36 +983,36 @@ def test_all_requests_filtered_owned_active_returns_one_group(db_session):
     insert_claim(db_session, lemons, cara)
     insert_claim(db_session, eggs, cara)
 
-    response = get_all_requests(str(lemons.id), owner, db_session)
+    response = get_all_requests(listing=str(lemons.id), current_member=owner, session=db_session)
 
-    assert len(response.groups) == 1
-    assert response.groups[0].listing_title == "Lemons"
+    assert len(response.items) == 1
+    assert response.items[0].listing_title == "Lemons"
 
 
 def test_all_requests_filtered_owned_active_no_requests_returns_empty_group(db_session):
     owner = insert_member(db_session, email="owner@example.com")
     listing = insert_listing(db_session, owner, title="Lemons")
 
-    response = get_all_requests(str(listing.id), owner, db_session)
+    response = get_all_requests(listing=str(listing.id), current_member=owner, session=db_session)
 
-    assert len(response.groups) == 1
-    assert response.groups[0].requests == []
+    assert len(response.items) == 1
+    assert response.items[0].requests == []
 
 
 def test_all_requests_filtered_malformed_id_returns_no_groups(db_session):
     owner = insert_member(db_session, email="owner@example.com")
 
-    response = get_all_requests("not-a-uuid", owner, db_session)
+    response = get_all_requests(listing="not-a-uuid", current_member=owner, session=db_session)
 
-    assert response.groups == []
+    assert response.items == []
 
 
 def test_all_requests_filtered_unknown_id_returns_no_groups(db_session):
     owner = insert_member(db_session, email="owner@example.com")
 
-    response = get_all_requests(str(uuid.uuid4()), owner, db_session)
+    response = get_all_requests(listing=str(uuid.uuid4()), current_member=owner, session=db_session)
 
-    assert response.groups == []
+    assert response.items == []
 
 
 def test_all_requests_filtered_owned_deactivated_without_requests_returns_no_groups(db_session):
@@ -1018,9 +1021,9 @@ def test_all_requests_filtered_owned_deactivated_without_requests_returns_no_gro
     owner = insert_member(db_session, email="owner@example.com")
     deactivated = insert_listing(db_session, owner, title="Down", status="deactivated")
 
-    response = get_all_requests(str(deactivated.id), owner, db_session)
+    response = get_all_requests(listing=str(deactivated.id), current_member=owner, session=db_session)
 
-    assert response.groups == []
+    assert response.items == []
 
 
 def test_all_requests_filtered_owned_deactivated_with_requests_returns_the_group(db_session):
@@ -1031,11 +1034,164 @@ def test_all_requests_filtered_owned_deactivated_with_requests_returns_the_group
     deactivated = insert_listing(db_session, owner, title="Down", status="deactivated")
     insert_claim(db_session, deactivated, cara, status="approved")
 
-    response = get_all_requests(str(deactivated.id), owner, db_session)
+    response = get_all_requests(listing=str(deactivated.id), current_member=owner, session=db_session)
 
-    assert len(response.groups) == 1
-    assert response.groups[0].listing_status == "deactivated"
-    assert response.groups[0].requests[0].status == "approved"
+    assert len(response.items) == 1
+    assert response.items[0].listing_status == "deactivated"
+    assert response.items[0].requests[0].status == "approved"
+
+
+# --- US-33: paging the all-requests groups (by listing) ----------------------
+
+
+def insert_numbered_listings_with_requests(session, owner, claimant, count):
+    # count active listings titled "Listing 00", "Listing 01", ... each one minute
+    # newer than the last and each holding two requests. Newest-listing-first order
+    # is the exact reverse of the numbering.
+    for index in range(count):
+        listing = insert_listing(
+            session,
+            owner,
+            title="Listing " + str(index).zfill(2),
+            created_at=datetime(2026, 6, 1, 9, index, tzinfo=timezone.utc),
+        )
+        insert_claim(session, listing, claimant, status="requested")
+        insert_claim(session, listing, claimant, status="completed")
+
+
+def collect_group_titles(groups):
+    titles = []
+    for group in groups:
+        titles.append(group.listing_title)
+    return titles
+
+
+def test_all_requests_defaults_to_page_one_and_twelve_groups(db_session):
+    owner = insert_member(db_session, email="owner@example.com")
+    cara = insert_member(db_session, email="cara@example.com", name="Cara")
+    insert_numbered_listings_with_requests(db_session, owner, cara, 14)
+
+    response = get_all_requests(current_member=owner, session=db_session)
+
+    # The paged unit is the listing, so page_size counts listings, not requests.
+    assert response.page == 1
+    assert response.page_size == 12
+    assert response.total == 14
+    assert len(response.items) == 12
+    assert response.items[0].listing_title == "Listing 13"
+
+
+def test_all_requests_second_page_is_the_next_window_of_listings(db_session):
+    owner = insert_member(db_session, email="owner@example.com")
+    cara = insert_member(db_session, email="cara@example.com", name="Cara")
+    insert_numbered_listings_with_requests(db_session, owner, cara, 14)
+
+    response = get_all_requests(page=2, current_member=owner, session=db_session)
+
+    assert response.page == 2
+    assert response.total == 14
+    assert collect_group_titles(response.items) == ["Listing 01", "Listing 00"]
+
+
+def test_all_requests_keeps_every_request_inside_a_paged_group(db_session):
+    # Only the outer groups page. A listing on the page still carries all of its
+    # requests, because one listing's request count is small.
+    owner = insert_member(db_session, email="owner@example.com")
+    cara = insert_member(db_session, email="cara@example.com", name="Cara")
+    listing = insert_listing(db_session, owner, title="Lemons")
+    for index in range(20):
+        insert_claim(
+            db_session,
+            listing,
+            cara,
+            status="completed",
+            requested_at=datetime(2026, 7, 1, 12, index, tzinfo=timezone.utc),
+        )
+
+    response = get_all_requests(page_size=1, current_member=owner, session=db_session)
+
+    assert response.total == 1
+    assert len(response.items) == 1
+    assert len(response.items[0].requests) == 20
+
+
+def test_all_requests_page_past_the_end_is_empty_with_the_true_total(db_session):
+    owner = insert_member(db_session, email="owner@example.com")
+    cara = insert_member(db_session, email="cara@example.com", name="Cara")
+    insert_numbered_listings_with_requests(db_session, owner, cara, 14)
+
+    response = get_all_requests(page=4, current_member=owner, session=db_session)
+
+    assert response.items == []
+    assert response.total == 14
+    assert response.page == 4
+
+
+def test_all_requests_total_excludes_deactivated_listings_without_requests(db_session):
+    # The total is counted from the same statement that decides which listings are
+    # listed, so a dropped listing cannot inflate the count the member reads.
+    owner = insert_member(db_session, email="owner@example.com")
+    cara = insert_member(db_session, email="cara@example.com", name="Cara")
+    insert_numbered_listings_with_requests(db_session, owner, cara, 2)
+    insert_listing(db_session, owner, title="Down and empty", status="deactivated")
+    kept = insert_listing(db_session, owner, title="Down with work", status="deactivated")
+    insert_claim(db_session, kept, cara, status="approved")
+
+    response = get_all_requests(current_member=owner, session=db_session)
+
+    # Two active plus the deactivated one that still has a request. The empty
+    # deactivated listing is counted nowhere and listed nowhere.
+    assert response.total == 3
+    titles = collect_group_titles(response.items)
+    assert "Down with work" in titles
+    assert "Down and empty" not in titles
+
+
+def test_all_requests_paging_keeps_the_listing_filter(db_session):
+    # Scenario 8: the ?listing= filter still applies while paging. The filtered
+    # list is one listing, so it is a single page.
+    owner = insert_member(db_session, email="owner@example.com")
+    cara = insert_member(db_session, email="cara@example.com", name="Cara")
+    insert_numbered_listings_with_requests(db_session, owner, cara, 14)
+    only = insert_listing(db_session, owner, title="Only This One")
+    insert_claim(db_session, only, cara)
+
+    response = get_all_requests(
+        listing=str(only.id), page=1, current_member=owner, session=db_session
+    )
+
+    assert response.total == 1
+    assert len(response.items) == 1
+    assert response.items[0].listing_title == "Only This One"
+
+
+def test_all_requests_filtered_page_past_the_end_is_empty(db_session):
+    owner = insert_member(db_session, email="owner@example.com")
+    cara = insert_member(db_session, email="cara@example.com", name="Cara")
+    listing = insert_listing(db_session, owner, title="Lemons")
+    insert_claim(db_session, listing, cara)
+
+    response = get_all_requests(
+        listing=str(listing.id), page=2, current_member=owner, session=db_session
+    )
+
+    # The filter matched one listing, so page 2 holds nothing while the total
+    # still reports the one match.
+    assert response.items == []
+    assert response.total == 1
+
+
+@pytest.mark.parametrize("query_text", ["page=0", "page_size=0", "page_size=101", "page=abc"])
+def test_all_requests_rejects_out_of_bounds_paging_with_422(db_session, query_text):
+    # The bounds live on the query params, so this goes through the ASGI layer.
+    active_member = Member(name="X", email="x@example.com", password_hash="x", status="active")
+    app.dependency_overrides[get_current_member] = lambda: active_member
+    app.dependency_overrides[get_db_session] = lambda: db_session
+    try:
+        status_code, _ = call_asgi_get("/api/request-queues/all?" + query_text)
+        assert status_code == 422
+    finally:
+        app.dependency_overrides.clear()
 
 
 def test_all_requests_filtered_foreign_listing_returns_403(db_session):
@@ -1044,7 +1200,7 @@ def test_all_requests_filtered_foreign_listing_returns_403(db_session):
     their_listing = insert_listing(db_session, other_owner, title="Theirs")
 
     with pytest.raises(HTTPException) as raised_error:
-        get_all_requests(str(their_listing.id), owner, db_session)
+        get_all_requests(listing=str(their_listing.id), current_member=owner, session=db_session)
 
     assert raised_error.value.status_code == 403
     assert raised_error.value.detail == "You can only view requests for your own listings."
@@ -1057,7 +1213,7 @@ def test_all_requests_denies_suspended_caller(db_session):
     caller = insert_member(db_session, status="suspended", email="suspended@example.com")
 
     with pytest.raises(HTTPException) as raised_error:
-        get_all_requests(None, caller, db_session)
+        get_all_requests(current_member=caller, session=db_session)
 
     assert raised_error.value.status_code == 403
     assert "suspended" in raised_error.value.detail.lower()
@@ -1067,7 +1223,7 @@ def test_all_requests_denies_inactive_caller(db_session):
     caller = insert_member(db_session, status="inactive", email="inactive@example.com")
 
     with pytest.raises(HTTPException) as raised_error:
-        get_all_requests(None, caller, db_session)
+        get_all_requests(current_member=caller, session=db_session)
 
     assert raised_error.value.status_code == 403
     assert "not active" in raised_error.value.detail.lower()
@@ -1086,7 +1242,7 @@ def test_all_requests_returns_503_on_listing_load_error(broken_session):
     )
 
     with pytest.raises(HTTPException) as raised_error:
-        get_all_requests(None, member, broken_session)
+        get_all_requests(current_member=member, session=broken_session)
 
     assert raised_error.value.status_code == 503
 
@@ -1101,7 +1257,7 @@ def test_all_requests_returns_503_on_filtered_listing_load_error(broken_session)
     )
 
     with pytest.raises(HTTPException) as raised_error:
-        get_all_requests(str(uuid.uuid4()), member, broken_session)
+        get_all_requests(listing=str(uuid.uuid4()), current_member=member, session=broken_session)
 
     assert raised_error.value.status_code == 503
 
@@ -1124,7 +1280,7 @@ def test_all_requests_returns_503_on_claim_query_error():
     session = ClaimQueryFailsSession([listing])
 
     with pytest.raises(HTTPException) as raised_error:
-        get_all_requests(None, member, session)
+        get_all_requests(current_member=member, session=session)
 
     assert raised_error.value.status_code == 503
 
@@ -1148,7 +1304,7 @@ def test_all_requests_returns_503_on_claimant_name_error():
     session = ClaimantNameFailsSession([listing], [failing_claim])
 
     with pytest.raises(HTTPException) as raised_error:
-        get_all_requests(None, member, session)
+        get_all_requests(current_member=member, session=session)
 
     assert raised_error.value.status_code == 503
 
@@ -1201,11 +1357,11 @@ def test_all_requests_flags_the_claims_the_caller_reviewed(db_session):
     insert_claim(db_session, listing, unreviewed_claimant, status="completed")
     insert_review_row(db_session, reviewed_claim.id, owner, reviewed_claimant, "requestor")
 
-    response = get_all_requests(None, owner, db_session)
+    response = get_all_requests(current_member=owner, session=db_session)
 
-    assert len(response.groups) == 1
+    assert len(response.items) == 1
     flags_by_claimant = {}
-    for item in response.groups[0].requests:
+    for item in response.items[0].requests:
         flags_by_claimant[item.claimant_name] = item.reviewed_by_me
     assert flags_by_claimant["Ra"] is True
     assert flags_by_claimant["Rb"] is False
@@ -1268,10 +1424,10 @@ def test_all_requests_rows_carry_the_requestor_rating(db_session):
     claim = insert_claim(db_session, listing, claimant, status="completed")
     insert_review_row(db_session, claim.id, owner, claimant, "requestor", rating=4)
 
-    response = get_all_requests(None, owner, db_session)
+    response = get_all_requests(current_member=owner, session=db_session)
 
-    assert len(response.groups) == 1
-    item = response.groups[0].requests[0]
+    assert len(response.items) == 1
+    item = response.items[0].requests[0]
     assert item.reviewed_by_me is True
     assert item.claimant_requestor_average == 4.0
     assert item.claimant_requestor_count == 1

@@ -3,6 +3,8 @@
 // after the backend checks the caller owns it.
 
 import type { ListingPhotoRef } from './listingService'
+import { DEFAULT_PAGE_SIZE } from '../utils/pagination'
+import type { PagedResponse } from '../utils/pagination'
 
 export const requestQueueTimeoutMilliseconds = 3000
 
@@ -99,11 +101,13 @@ export type ListingAllRequestsGroup = {
   photos?: ListingPhotoRef[]
 }
 
-// The all-requests response: one group per active listing the caller owns,
-// including listings with no requests. An empty list means no active listings.
-export type AllRequestsResponse = {
-  groups: ListingAllRequestsGroup[]
-}
+// The all-requests response: one PAGE of the listings the caller owns, each with
+// its requests, including active listings that have no requests (US-33). The
+// paged unit is the listing, so items holds listing groups and total counts
+// listings; every request inside a listed group is present, because one
+// listing's request count is small. An empty items list means nothing to show on
+// this page.
+export type AllRequestsResponse = PagedResponse<ListingAllRequestsGroup>
 
 // One of the caller's own requests, for the my-requests page.
 export type MyRequestItem = {
@@ -133,16 +137,28 @@ export type MyRequestItem = {
   reviewed_by_me?: boolean
 }
 
-// The my-requests response: the caller's requests split into five sections,
-// each newest-first. completed and withdrawn are optional so stubbed shapes
-// without the fields keep type-checking; the page treats a missing list as
-// empty.
+// The my-requests response: the caller's requests split into five sections, each
+// newest-first and each its own paged envelope with its own total (US-33),
+// because the page stacks all five and pages them independently. completed and
+// withdrawn are optional so stubbed shapes without the fields keep type-checking;
+// the page treats a missing section as an empty one.
 export type MyRequestsResponse = {
-  pending: MyRequestItem[]
-  approved: MyRequestItem[]
-  completed?: MyRequestItem[]
-  denied: MyRequestItem[]
-  withdrawn?: MyRequestItem[]
+  pending: PagedResponse<MyRequestItem>
+  approved: PagedResponse<MyRequestItem>
+  completed?: PagedResponse<MyRequestItem>
+  denied: PagedResponse<MyRequestItem>
+  withdrawn?: PagedResponse<MyRequestItem>
+}
+
+// Which page each of the five my-requests sections is on. Every field is
+// optional; a section left out stays on its first page, which is what makes
+// paging one section leave the other four alone.
+export type MyRequestsSectionPages = {
+  pending?: number
+  approved?: number
+  completed?: number
+  denied?: number
+  withdrawn?: number
 }
 
 // One exchange the caller is part of, for the dashboard's Exchange History
@@ -643,20 +659,24 @@ export async function sendCompleteExchangeRequest(
 export async function sendGetAllRequestsRequest(
   memberId: string,
   listingId: string,
+  page: number = 1,
+  pageSize: number = DEFAULT_PAGE_SIZE,
 ): Promise<RequestQueuesResult> {
   // The poster's full per-listing request history (US-24): every request on the
-  // caller's active listings, all statuses. With no listing id, ask for all of
-  // the caller's active listings; with one, append it as ?listing=<id> so the
-  // backend returns just that listing's group after the ownership check. The
-  // acting member's id travels in the X-Member-Id header. This is a GET, so
-  // there is no request body. Same shape as sendGetRequestQueuesRequest, only
-  // the path differs.
-  let url = '/api/request-queues/all'
+  // caller's listings, all statuses, one page of listings at a time (US-33).
+  // With no listing id, ask for all of the caller's listings; with one, append it
+  // as ?listing=<id> so the backend returns just that listing's group after the
+  // ownership check. The listing filter and the paging are sent together, so a
+  // filtered view pages by the same rules as the full one. The acting member's id
+  // travels in the X-Member-Id header. This is a GET, so there is no request
+  // body.
+  const params = new URLSearchParams()
   if (listingId !== '') {
-    const params = new URLSearchParams()
     params.append('listing', listingId)
-    url = '/api/request-queues/all?' + params.toString()
   }
+  params.append('page', String(page))
+  params.append('page_size', String(pageSize))
+  const url = '/api/request-queues/all?' + params.toString()
 
   try {
     const response = await fetch(url, {
@@ -754,13 +774,39 @@ export async function sendGetExchangeHistoryRequest(memberId: string): Promise<R
   }
 }
 
-export async function sendGetMyRequestsRequest(memberId: string): Promise<RequestQueuesResult> {
-  // The outgoing view: the caller's own pending requests on other members'
-  // listings. Same result shape and X-Member-Id header as the incoming queue
-  // call, but a different URL and no listing filter. This is a GET, so there is
-  // no request body.
+export async function sendGetMyRequestsRequest(
+  memberId: string,
+  sectionPages: MyRequestsSectionPages = {},
+  pageSize: number = DEFAULT_PAGE_SIZE,
+): Promise<RequestQueuesResult> {
+  // The outgoing view: the caller's own requests on other members' listings,
+  // split into five sections. Same result shape and X-Member-Id header as the
+  // incoming queue call, but a different URL and no listing filter. This is a
+  // GET, so there is no request body.
+  //
+  // Each section carries its own page number in its own query param (US-33), so
+  // one section can move while the other four hold their place. A section left
+  // out of sectionPages sends no param and the backend leaves it on page 1.
+  const params = new URLSearchParams()
+  if (sectionPages.pending !== undefined) {
+    params.append('pending_page', String(sectionPages.pending))
+  }
+  if (sectionPages.approved !== undefined) {
+    params.append('approved_page', String(sectionPages.approved))
+  }
+  if (sectionPages.completed !== undefined) {
+    params.append('completed_page', String(sectionPages.completed))
+  }
+  if (sectionPages.denied !== undefined) {
+    params.append('denied_page', String(sectionPages.denied))
+  }
+  if (sectionPages.withdrawn !== undefined) {
+    params.append('withdrawn_page', String(sectionPages.withdrawn))
+  }
+  params.append('page_size', String(pageSize))
+
   try {
-    const response = await fetch('/api/my-requests', {
+    const response = await fetch('/api/my-requests?' + params.toString(), {
       method: 'GET',
       headers: {
         'X-Member-Id': memberId,

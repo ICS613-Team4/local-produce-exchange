@@ -18,6 +18,34 @@ afterEach(() => {
   window.localStorage.clear()
 })
 
+// The listing endpoints answer with the paged envelope now, and the dashboard
+// reads the window out of it. These tests build plain arrays, so this wraps
+// them the way the backend would. The dashboard shows no controls of its own,
+// so the totals here only ever have to be truthful, not large.
+function makePage(items: object[]) {
+  return { items: items, total: items.length, page: 1, page_size: 12 }
+}
+
+// The same for the my-requests body, whose five sections are each their own
+// paged envelope.
+function pageSections(body: object) {
+  const sectionNames = ['pending', 'approved', 'completed', 'denied', 'withdrawn']
+  const source = body as Record<string, unknown>
+  const wrapped: Record<string, unknown> = { ...source }
+  for (let index = 0; index < sectionNames.length; index = index + 1) {
+    const items = source[sectionNames[index]]
+    if (Array.isArray(items)) {
+      wrapped[sectionNames[index]] = {
+        items: items,
+        total: items.length,
+        page: 1,
+        page_size: 12,
+      }
+    }
+  }
+  return wrapped
+}
+
 function makeFakeResponse(ok: boolean, status: number, body: object): FakeResponse {
   const bodyText = JSON.stringify(body)
   const fakeResponse = {
@@ -111,7 +139,7 @@ function installDashboardFetch(handlers: DashboardHandlers) {
       if (handlers.myListings !== undefined) {
         return handlers.myListings()
       }
-      return makeFakeResponse(true, 200, [])
+      return makeFakeResponse(true, 200, makePage([]))
     }
     if (urlText.includes('/api/exchange-history')) {
       if (handlers.history !== undefined) {
@@ -129,13 +157,13 @@ function installDashboardFetch(handlers: DashboardHandlers) {
       if (handlers.myRequests !== undefined) {
         return handlers.myRequests()
       }
-      return makeFakeResponse(true, 200, { pending: [], approved: [], denied: [] })
+      return makeFakeResponse(true, 200, pageSections({ pending: [], approved: [], denied: [] }))
     }
     // Default: the listings preview at /api/listings.
     if (handlers.listings !== undefined) {
       return handlers.listings(urlText, usableOptions)
     }
-    return makeFakeResponse(true, 200, [])
+    return makeFakeResponse(true, 200, makePage([]))
   })
 }
 
@@ -319,7 +347,7 @@ test('shows the latest-listings preview for a logged-in member', async () => {
       listingsUrl = urlText
       listingsOptions = options
       const listings = [makeListing('l1', 'Backyard Meyer Lemons', 'active')]
-      return makeFakeResponse(true, 200, listings)
+      return makeFakeResponse(true, 200, makePage(listings))
     },
   })
 
@@ -334,14 +362,14 @@ test('shows the latest-listings preview for a logged-in member', async () => {
   expect(previewListItem?.textContent).toContain(postedExpected)
 
   // The preview asks for the five newest listings with the stored member id.
-  expect(listingsUrl).toBe('/api/listings?limit=5')
+  expect(listingsUrl).toBe('/api/listings?page=1&page_size=5')
   expect(JSON.stringify(listingsOptions.headers)).toContain('X-Member-Id')
   expect(JSON.stringify(listingsOptions.headers)).toContain('me')
 })
 
 test('shows the empty preview message when there are no listings', async () => {
   setLoggedIn()
-  installDashboardFetch({ listings: () => makeFakeResponse(true, 200, []) })
+  installDashboardFetch({ listings: () => makeFakeResponse(true, 200, makePage([])) })
 
   renderDashboard()
 
@@ -378,11 +406,11 @@ test('My Active Listings shows only active listings in the returned order', asyn
   setLoggedIn()
   installDashboardFetch({
     myListings: () =>
-      makeFakeResponse(true, 200, [
+      makeFakeResponse(true, 200, makePage([
         makeListing('a', 'Active One', 'active'),
         makeListing('b', 'Down One', 'deactivated'),
         makeListing('c', 'Active Two', 'active'),
-      ]),
+      ])),
   })
 
   renderDashboard()
@@ -395,7 +423,7 @@ test('My Active Listings shows only active listings in the returned order', asyn
 
 test('My Active Listings shows its empty state when there are no active listings', async () => {
   setLoggedIn()
-  installDashboardFetch({ myListings: () => makeFakeResponse(true, 200, []) })
+  installDashboardFetch({ myListings: () => makeFakeResponse(true, 200, makePage([])) })
 
   renderDashboard()
 
@@ -603,7 +631,7 @@ function makeOutgoingBody() {
 
 test('Outgoing requests shows only pending requests, with a linked title and a Withdraw button', async () => {
   setLoggedIn()
-  installDashboardFetch({ myRequests: () => makeFakeResponse(true, 200, makeOutgoingBody()) })
+  installDashboardFetch({ myRequests: () => makeFakeResponse(true, 200, pageSections(makeOutgoingBody())) })
 
   renderDashboard()
 
@@ -618,7 +646,7 @@ test('an outgoing request on a deactivated listing shows its title as plain text
   setLoggedIn()
   const body = makeOutgoingBody()
   body.pending[0].listing_status = 'deactivated'
-  installDashboardFetch({ myRequests: () => makeFakeResponse(true, 200, body) })
+  installDashboardFetch({ myRequests: () => makeFakeResponse(true, 200, pageSections(body)) })
 
   renderDashboard()
 
@@ -638,9 +666,9 @@ test('clicking Withdraw calls the withdraw endpoint and reloads', async () => {
     myRequests: () => {
       myRequestsCalls = myRequestsCalls + 1
       if (myRequestsCalls === 1) {
-        return makeFakeResponse(true, 200, makeOutgoingBody())
+        return makeFakeResponse(true, 200, pageSections(makeOutgoingBody()))
       }
-      return makeFakeResponse(true, 200, { pending: [], approved: [], denied: [] })
+      return makeFakeResponse(true, 200, pageSections({ pending: [], approved: [], denied: [] }))
     },
     withdraw: (urlText) => {
       withdrawUrl = urlText
@@ -1429,7 +1457,7 @@ test('a failed withdraw shows the server message via an alert', async () => {
     alertMessage = message
   })
   installDashboardFetch({
-    myRequests: () => makeFakeResponse(true, 200, makeOutgoingBody()),
+    myRequests: () => makeFakeResponse(true, 200, pageSections(makeOutgoingBody())),
     withdraw: () =>
       makeFakeResponse(false, 409, {
         detail: 'This request is not pending, so it cannot be withdrawn.',
@@ -1504,4 +1532,67 @@ test('an incoming request row says no rating for an unrated requestor', async ()
   expect(screen.getByText('(no requestor rating)')).toBeTruthy()
   expect(screen.queryByText(/★/)).toBeNull()
   expect(screen.queryByRole('link', { name: /View the reviews/ })).toBeNull()
+})
+
+// --- US-33: the dashboard reads the paged bodies but gets no controls ---
+
+test('the dashboard shows no pagination controls anywhere', async () => {
+  // A non-goal of the paging story: the dashboard is a set of previews with
+  // See-all links, so it renders no controls even when the lists behind it have
+  // many more rows than it is showing.
+  setLoggedIn()
+  installDashboardFetch({
+    listings: () => makeFakeResponse(true, 200, { items: [makeListing('l1', 'Lemons', 'active')], total: 90, page: 1, page_size: 5 }),
+    myListings: () => makeFakeResponse(true, 200, { items: [makeListing('a', 'Mine', 'active')], total: 80, page: 1, page_size: 100 }),
+    myRequests: () => makeFakeResponse(true, 200, {
+      pending: { items: [], total: 70, page: 1, page_size: 100 },
+      approved: { items: [], total: 0, page: 1, page_size: 100 },
+      completed: { items: [], total: 0, page: 1, page_size: 100 },
+      denied: { items: [], total: 0, page: 1, page_size: 100 },
+      withdrawn: { items: [], total: 0, page: 1, page_size: 100 },
+    }),
+  })
+
+  renderDashboard()
+
+  await screen.findByRole('link', { name: 'Lemons' })
+  expect(screen.queryByRole('button', { name: 'Next' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Prev' })).toBeNull()
+  expect(screen.queryByText(/Showing \d/)).toBeNull()
+})
+
+test('the dashboard previews ask for a window instead of the whole list', async () => {
+  setLoggedIn()
+  const requestedUrls: string[] = []
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    const urlText = String(url)
+    requestedUrls.push(urlText)
+    if (urlText.includes('/api/my-listings')) {
+      return makeFakeResponse(true, 200, makePage([]))
+    }
+    if (urlText.includes('/api/exchange-history')) {
+      return makeFakeResponse(true, 200, makeEmptyHistory())
+    }
+    if (urlText.includes('/api/request-queues')) {
+      return makeFakeResponse(true, 200, { groups: [] })
+    }
+    if (urlText.includes('/api/my-requests')) {
+      return makeFakeResponse(true, 200, pageSections({ pending: [], approved: [], denied: [] }))
+    }
+    return makeFakeResponse(true, 200, makePage([]))
+  })
+
+  renderDashboard()
+
+  await waitFor(() => {
+    expect(requestedUrls.some((url) => url.includes('/api/my-listings'))).toBe(true)
+  })
+  const browseUrl = requestedUrls.find((url) => url.startsWith('/api/listings'))
+  const myListingsUrl = requestedUrls.find((url) => url.includes('/api/my-listings'))
+  const myRequestsUrl = requestedUrls.find((url) => url.includes('/api/my-requests'))
+  // The community preview wants only the newest few; the two own-activity boxes
+  // ask for the largest window the API allows.
+  expect(browseUrl).toContain('page_size=5')
+  expect(myListingsUrl).toContain('page_size=100')
+  expect(myRequestsUrl).toContain('page_size=100')
 })

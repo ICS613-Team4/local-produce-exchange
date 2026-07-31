@@ -268,17 +268,18 @@ def test_admin_reactivation_makes_listing_visible_in_browsing(db_session):
     )
 
     reactivate_listing_as_admin(listing.id, db_session)
-    browse_results = browse_listings(
+    browse_page = browse_listings(
         q=None,
         category=None,
         dietary_tags=None,
         allergen_tags=None,
-        limit=50,
+        page=1,
+        page_size=50,
         current_member=admin,
         session=db_session,
     )
 
-    assert str(listing.id) in {row.id for row in browse_results}
+    assert str(listing.id) in {row.id for row in browse_page.items}
 
 
 def test_admin_reactivation_rejects_an_active_listing_without_changes(db_session):
