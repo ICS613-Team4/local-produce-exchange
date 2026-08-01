@@ -313,8 +313,8 @@ test('a 401 on reactivate clears the credentials', async () => {
   const activateButton = await screen.findByRole('button', { name: 'Activate listing' })
   fireEvent.click(activateButton)
 
-  // The shared route guard renders the logged-out message now, so the only
-  // thing this page owns is clearing the stored login.
+  // The shared route guard sends a logged-out visitor to the log-in form
+  // now, so this page only clears the stored login.
   await waitFor(() => {
     expect(window.localStorage.getItem('memberId')).toBeNull()
   })
@@ -483,8 +483,8 @@ test('a 401 on deactivate clears the credentials', async () => {
   const deactivateButton = await screen.findByRole('button', { name: 'Deactivate' })
   fireEvent.click(deactivateButton)
 
-  // The shared route guard renders the logged-out message now, so the only
-  // thing this page owns is clearing the stored login.
+  // The shared route guard sends a logged-out visitor to the log-in form
+  // now, so this page only clears the stored login.
   await waitFor(() => {
     expect(window.localStorage.getItem('memberId')).toBeNull()
   })

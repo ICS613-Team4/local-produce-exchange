@@ -15,6 +15,7 @@ type FakeResponse = {
 
 afterEach(() => {
   cleanup()
+  vi.restoreAllMocks()
   vi.unstubAllGlobals()
   window.localStorage.clear()
 })
@@ -107,6 +108,7 @@ test('export PDF triggers a download and shows no error on success', async () =>
   const fakeBlob = new Blob(['%PDF-1.4'], { type: 'application/pdf' })
   vi.stubGlobal('fetch', async () => ({ ok: true, status: 200, blob: async () => fakeBlob }))
   vi.stubGlobal('URL', { createObjectURL: vi.fn(() => 'blob:fake'), revokeObjectURL: vi.fn() })
+  const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
 
   renderPage()
   fireEvent.click(screen.getByRole('button', { name: 'Export PDF' }))
@@ -114,6 +116,7 @@ test('export PDF triggers a download and shows no error on success', async () =>
   await waitFor(() => {
     expect(screen.getByRole('button', { name: 'Export PDF' }).textContent).toBe('Export PDF')
   })
+  expect(anchorClick).toHaveBeenCalledOnce()
   expect(screen.queryByRole('alert')).toBeNull()
 })
 

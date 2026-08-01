@@ -11,6 +11,7 @@ type FakeResponse = {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
 
@@ -97,12 +98,14 @@ test('downloadAuditLogPdf GETs the export endpoint and triggers a browser downlo
   const createObjectURL = vi.fn(() => 'blob:fake-url')
   const revokeObjectURL = vi.fn()
   vi.stubGlobal('URL', { createObjectURL, revokeObjectURL })
+  const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
 
   const outcome = await downloadAuditLogPdf('admin-1', '2026-01-01', '')
 
   expect(requestUrl).toBe('/api/admin/audit-log/export?start_date=2026-01-01')
   expect(outcome.ok).toBe(true)
   expect(createObjectURL).toHaveBeenCalledWith(fakeBlob)
+  expect(anchorClick).toHaveBeenCalledOnce()
   expect(revokeObjectURL).toHaveBeenCalledWith('blob:fake-url')
 })
 

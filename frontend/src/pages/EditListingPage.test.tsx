@@ -290,8 +290,8 @@ test('clears stored login when a photo upload returns 401', async () => {
     target: { files: [file] },
   })
 
-  // The shared route guard owns the logged-out message now, so this page
-  // renders nothing of its own; only the cleared login shows.
+  // The shared route guard sends a logged-out visitor to the log-in form
+  // now, so this page renders nothing of its own; only the cleared login shows.
   await waitFor(() => {
     expect(window.localStorage.getItem('memberId')).toBeNull()
   })
@@ -491,8 +491,9 @@ test('clears stale credentials and fires the auth event on a 401 load response',
 
   renderEditPage()
 
-  // The shared route guard owns the logged-out message now, so this page
-  // renders nothing of its own; only the cleared login and the event show.
+  // The shared route guard sends a logged-out visitor to the log-in form now,
+  // so this page renders nothing of its own; only the cleared login and the
+  // event show.
   await waitFor(() => {
     expect(window.localStorage.getItem('memberId')).toBeNull()
   })
@@ -648,8 +649,9 @@ test('clears stale credentials and fires the auth event on a 401 save response',
   await waitForLoadedForm()
   submitForm()
 
-  // The shared route guard owns the logged-out message now, so this page
-  // renders nothing of its own; only the cleared login and the event show.
+  // The shared route guard sends a logged-out visitor to the log-in form now,
+  // so this page renders nothing of its own; only the cleared login and the
+  // event show.
   await waitFor(() => {
     expect(window.localStorage.getItem('memberId')).toBeNull()
   })

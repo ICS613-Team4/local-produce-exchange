@@ -46,9 +46,8 @@ function ProfilePage() {
 
   useEffect(() => {
     // RequireAuth already guarantees a logged-in viewer before this page can
-    // render (it is the only place that decides that and shows the log-in
-    // message), so the only thing left to guard here is having an id to ask
-    // for at all.
+    // render and redirects anyone else to the log-in form, so all that is left
+    // to check here is having an id to ask for at all.
     if (targetMemberId === '') {
       return
     }
@@ -59,7 +58,7 @@ function ProfilePage() {
     getPublicMemberProfile(targetMemberId, memberId).then((result) => {
       if (result.status === 401) {
         // Same convention every protected page follows: clear the stale
-        // login and let RequireAuth's listener block the page.
+        // login and let RequireAuth's listener redirect to the log-in form.
         clearStoredLogin()
         return
       }

@@ -18,8 +18,6 @@ import { clearStoredLogin } from '../services/authService'
 import { formatApiResult } from '../utils/formatApiResult'
 import { formatTimestamp, getLocalTimeZoneName } from '../utils/formatTimestamp'
 
-// One shared message for the not-logged-in case, declared at module scope so the
-// wording is the same everywhere and it is not a useEffect dependency.
 function ListingDetailPage() {
   // Counts listing loads so an older response cannot overwrite a newer route.
   const latestRequestNumber = useRef(0)

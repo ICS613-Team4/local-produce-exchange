@@ -42,7 +42,8 @@ function ExchangeReviewsPage() {
       requestInFlightRef.current = false
       if (loaded.status === 401) {
         // The stored id is not a real member. Clearing it makes the shared
-        // guard show the log-in message, so this page renders nothing itself.
+        // guard send the viewer to the log-in form, so this page renders
+        // nothing itself.
         clearStoredLogin()
         return
       }

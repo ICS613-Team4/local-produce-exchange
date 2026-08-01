@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link, useNavigate, useSearchParams } from 'react-router'
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router'
 
 import { sendRegisterRequest } from '../services/authService'
 
@@ -7,6 +7,26 @@ function RegisterPage() {
   // useNavigate is a hook, so it must be called here at the top level,
   // not inside the submit handler.
   const navigate = useNavigate()
+
+  // A member-only page that a logged-out visitor asked for (US-34). The guard
+  // passes it to the login page, and the login page passes it here through its
+  // "Register here" link. This page only carries it along; LoginPage is the one
+  // that checks it is a safe place to go before using it.
+  const location = useLocation()
+  let fromTarget = ''
+  if (location.state !== null && typeof location.state === 'object') {
+    const locationState = location.state as { from?: unknown }
+    if (typeof locationState.from === 'string') {
+      fromTarget = locationState.from
+    }
+  }
+
+  // The navigation state both exits from this page carry: the success redirect
+  // below and the "Log in" link at the bottom.
+  let loginLinkState: { from: string } | undefined = undefined
+  if (fromTarget !== '') {
+    loginLinkState = { from: fromTarget }
+  }
 
   // A shared invite link looks like /register?token=abc123. Read that token
   // from the URL and use it as the starting value of the invite-token field,
@@ -53,9 +73,15 @@ function RegisterPage() {
       // The account exists now. Send the user to the login page and pass a
       // one-time flag so that page can show a success message. The flag
       // travels with this redirect but clears on a manual refresh, which is
-      // what a one-time message should do. No session is started and nothing
-      // is written to localStorage; logging in happens on the next page.
-      navigate('/login', { state: { justRegistered: true } })
+      // what a one-time message should do. Any return target rides along with
+      // it, so signing up on the way to a member-only page still ends there.
+      // No session is started and nothing is written to localStorage; logging
+      // in happens on the next page.
+      if (fromTarget !== '') {
+        navigate('/login', { state: { justRegistered: true, from: fromTarget } })
+      } else {
+        navigate('/login', { state: { justRegistered: true } })
+      }
       return
     }
 
@@ -187,7 +213,7 @@ function RegisterPage() {
         {errorArea}
         <p className="mt-6 text-center text-sm text-text-muted">
           Already have an account?{' '}
-          <Link to="/login" className="font-medium text-primary-600 hover:text-primary-700">
+          <Link to="/login" state={loginLinkState} className="font-medium text-primary-600 hover:text-primary-700">
             Log in
           </Link>
         </p>

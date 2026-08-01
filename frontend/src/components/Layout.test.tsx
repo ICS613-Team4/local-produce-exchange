@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { useLayoutEffect } from 'react'
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router'
 import { afterEach, expect, test, vi } from 'vitest'
 
@@ -112,11 +113,24 @@ function FakeStaleClearRoute() {
   return <button onClick={handleClick}>fake stale clear</button>
 }
 
+// Clears the login after Layout renders but before its passive effects run.
+// This models another tab changing localStorage just before the storage listener
+// is installed, so no event reaches that listener.
+function ClearLoginBeforePassiveEffects() {
+  useLayoutEffect(function clearLogin() {
+    window.localStorage.removeItem('memberId')
+    window.localStorage.removeItem('memberName')
+    window.localStorage.removeItem('memberEmail')
+  }, [])
+  return null
+}
+
 // Renders the Layout as a parent route with a few stand-in child routes, the same
 // shape App.tsx uses. The starting path decides which child renders first.
-function renderLayoutAt(initialPath: string) {
+function renderLayoutAt(initialPath: string, clearLoginBeforePassiveEffects = false) {
   return render(
     <MemoryRouter initialEntries={[initialPath]}>
+      {clearLoginBeforePassiveEffects && <ClearLoginBeforePassiveEffects />}
       <Routes>
         <Route element={<Layout />}>
           <Route path="/" element={<p>home content</p>} />
@@ -130,7 +144,7 @@ function renderLayoutAt(initialPath: string) {
   )
 }
 
-test('shows the logged-out nav when no member is stored', () => {
+test('shows the logged-out nav when no member is stored, with no Browse link anywhere', () => {
   renderLayoutAt('/')
 
   expect(screen.getByText('Surplus')).toBeTruthy()
@@ -140,9 +154,24 @@ test('shows the logged-out nav when no member is stored', () => {
 
   expect(screen.queryByRole('link', { name: 'Dashboard' })).toBeNull()
   expect(screen.queryByRole('link', { name: 'Log out' })).toBeNull()
+
+  const header = screen.getByRole('banner')
+  const footer = screen.getByRole('contentinfo')
+
+  // US-34: no Browse link in either region.
+  expect(within(header).queryByRole('link', { name: 'Browse' })).toBeNull()
+  expect(within(footer).queryByRole('link', { name: 'Browse' })).toBeNull()
+
+  // The mobile menu is only in the DOM while it is open, so open it and look
+  // again. This catches a Browse link removed from the desktop row but left in
+  // the mobile one.
+  fireEvent.click(screen.getByLabelText('Toggle navigation menu'))
+  expect(screen.getAllByRole('link', { name: 'About' }).length).toBeGreaterThanOrEqual(2)
+  expect(within(header).queryByRole('link', { name: 'Browse' })).toBeNull()
+  expect(within(footer).queryByRole('link', { name: 'Browse' })).toBeNull()
 })
 
-test('shows the logged-in nav when a member is stored', () => {
+test('shows the logged-in nav when a member is stored, keeping every Browse link', () => {
   window.localStorage.setItem('memberId', 'member-123')
   window.localStorage.setItem('memberName', 'Bob Baker')
   renderLayoutAt('/dashboard')
@@ -159,6 +188,31 @@ test('shows the logged-in nav when a member is stored', () => {
 
   expect(screen.queryByRole('link', { name: 'Log in' })).toBeNull()
   expect(screen.queryByRole('link', { name: 'Register' })).toBeNull()
+
+  const header = screen.getByRole('banner')
+  const footer = screen.getByRole('contentinfo')
+
+  // US-34 criterion 4: a member keeps one desktop Browse link and one footer
+  // link while the mobile menu is closed.
+  expect(within(header).getAllByRole('link', { name: 'Browse' }).length).toBe(1)
+  expect(within(footer).getAllByRole('link', { name: 'Browse' }).length).toBe(1)
+
+  // Opening the menu adds the mobile link without changing the footer.
+  fireEvent.click(screen.getByLabelText('Toggle navigation menu'))
+  expect(within(header).getAllByRole('link', { name: 'Browse' }).length).toBe(2)
+  expect(within(footer).getAllByRole('link', { name: 'Browse' }).length).toBe(1)
+})
+
+test('reconciles a login cleared before the storage listener is installed', async () => {
+  window.localStorage.setItem('memberId', 'member-123')
+  window.localStorage.setItem('memberName', 'Bob Baker')
+  window.localStorage.setItem('memberEmail', 'bob@example.com')
+
+  renderLayoutAt('/dashboard', true)
+
+  expect(await screen.findByRole('link', { name: 'Log in' })).toBeTruthy()
+  expect(screen.queryByRole('link', { name: 'Log out' })).toBeNull()
+  expect(screen.queryByRole('link', { name: 'Browse' })).toBeNull()
 })
 
 test('the nav link for the current page is highlighted with aria-current', () => {
@@ -245,6 +299,31 @@ test('re-reads localStorage on the auth event without a route change', async () 
   // The event makes the nav re-read and show the logged-out set, same route.
   expect((await screen.findAllByRole('link', { name: 'Log in' })).length).toBeGreaterThanOrEqual(1)
   expect(screen.queryByRole('link', { name: 'Log out' })).toBeNull()
+})
+
+test('re-reads localStorage when another browser tab logs out', async () => {
+  window.localStorage.setItem('memberId', 'member-123')
+  window.localStorage.setItem('memberName', 'Bob Baker')
+  window.localStorage.setItem('memberEmail', 'bob@example.com')
+  renderLayoutAt('/detail')
+
+  expect(screen.getAllByRole('link', { name: 'Browse' }).length).toBe(2)
+
+  window.localStorage.removeItem('memberId')
+  window.localStorage.removeItem('memberName')
+  window.localStorage.removeItem('memberEmail')
+  act(() => {
+    window.dispatchEvent(new StorageEvent('storage', {
+      key: 'memberId',
+      oldValue: 'member-123',
+      newValue: null,
+      storageArea: window.localStorage,
+    }))
+  })
+
+  expect((await screen.findAllByRole('link', { name: 'Log in' })).length).toBeGreaterThanOrEqual(1)
+  expect(screen.queryByRole('link', { name: 'Log out' })).toBeNull()
+  expect(screen.queryByRole('link', { name: 'Browse' })).toBeNull()
 })
 
 // ── the notification bell and its badge (US-22) ──────────────────────────────

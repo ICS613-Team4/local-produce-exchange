@@ -43,8 +43,9 @@ function App() {
           <Route path="/register" element={<RegisterPage />} />
           {/* Member-only pages. RequireAuth wraps them as one group, so the
               login check lives in a single place instead of in each page. A
-              logged-out visitor (or a stored id the backend rejects) sees the
-              "please log in" message instead of the page. */}
+              logged-out visitor (or a stored id the backend rejects) is sent to
+              /login instead of seeing the page, and logging in brings them back
+              here (US-34). */}
           <Route element={<RequireAuth />}>
             <Route path="/profile" element={<ProfilePage />} />
             {/* US-08: view another member's public profile. Same page component
@@ -68,9 +69,10 @@ function App() {
             <Route path="/listings/:id" element={<ListingDetailPage />} />
           </Route>
           {/* Admin-only pages (US-29). Separate guard from RequireAuth: these
-              need role "admin", not just a logged-in member, and RequireAdmin
-              gives a distinct "not authorized" message for a logged-in
-              non-admin instead of the "please log in" one. */}
+              need role "admin", not just a logged-in member. A logged-out
+              visitor is sent to /login the same way RequireAuth sends one, but
+              a logged-in non-admin stays here and reads a "not authorized"
+              message, because telling them to log in would be misleading. */}
           <Route element={<RequireAdmin />}>
             <Route path="/admin" element={<AdminDashboardPage />} />
             <Route path="/admin/audit-log" element={<AdminAuditLogPage />} />

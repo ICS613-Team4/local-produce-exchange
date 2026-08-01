@@ -268,7 +268,8 @@ test('a stale-session 401 clears the credentials and fires the auth event', asyn
   renderDetailPage()
 
   // Every credential key is cleared, not just memberId. The shared route guard
-  // owns the logged-out message now, so this page renders nothing of its own.
+  // sends a logged-out visitor to the log-in form now, so this page renders
+  // nothing of its own.
   await waitFor(() => {
     expect(window.localStorage.getItem('memberId')).toBeNull()
   })
@@ -584,8 +585,8 @@ test('clears the credentials and fires the auth event on a deactivate 401', asyn
   const button = await screen.findByRole('button', { name: 'Deactivate listing' })
   fireEvent.click(button)
 
-  // Every credential key is cleared. The shared route guard owns the
-  // logged-out message now, so this page renders nothing of its own.
+  // Every credential key is cleared. The shared route guard sends a logged-out
+  // visitor to the log-in form now, so this page renders nothing of its own.
   await waitFor(() => {
     expect(window.localStorage.getItem('memberId')).toBeNull()
   })
@@ -852,8 +853,9 @@ test('a count-fetch 401 clears the credentials and fires the auth event', async 
 
   renderDetailPage()
 
-  // The shared route guard owns the logged-out message now, so this page
-  // renders nothing of its own; only the cleared login and the event show.
+  // The shared route guard sends a logged-out visitor to the log-in form now,
+  // so this page renders nothing of its own; only the cleared login and the
+  // event show.
   await waitFor(() => {
     expect(window.localStorage.getItem('memberId')).toBeNull()
   })

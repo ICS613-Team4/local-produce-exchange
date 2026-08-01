@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, expect, test, vi } from 'vitest'
 
 import App from './App'
@@ -29,6 +29,16 @@ function makeFakeResponse(ok: boolean, status: number, body: object): FakeRespon
     },
   }
   return fakeResponse
+}
+
+// US-34: every member-only and admin-only route sends a logged-out visitor to
+// the log-in form instead of leaving a message on the guarded path. The
+// redirect happens just after the first render, so wait for the login page and
+// then check the URL. The heading is matched instead of the button of the same
+// name, which is why the role is given.
+async function expectRedirectToLogin() {
+  expect(await screen.findByRole('heading', { name: 'Log in' })).toBeTruthy()
+  expect(window.location.pathname).toBe('/login')
 }
 
 test('wires the /listings/:id route to the listing detail page', async () => {
@@ -156,16 +166,16 @@ test('wires /admin/listings inside RequireAdmin for an administrator', async () 
   expect(await screen.findByRole('heading', { name: 'Manage Listings' })).toBeTruthy()
 })
 
-test('guards the /dashboard route, showing the log-in message when logged out', () => {
+test('guards the /dashboard route, redirecting to login when logged out', async () => {
   // No stored login. The dashboard is a member-only route, so App wraps it in
   // RequireAuth. This proves the guard is wired in App.tsx, not just correct in
-  // isolation: the dashboard heading must not show, the log-in message must.
+  // isolation: the dashboard heading must not show, and the browser must end up
+  // on /login.
   window.history.pushState({}, '', '/dashboard')
   render(<App />)
 
+  await expectRedirectToLogin()
   expect(screen.queryByRole('heading', { name: 'Member Dashboard' })).toBeNull()
-  const loginLink = screen.getByRole('link', { name: 'log in' })
-  expect(loginLink.getAttribute('href')).toBe('/login')
 })
 
 test('wires the /requests route inside RequireAuth for a logged-in member', async () => {
@@ -186,15 +196,14 @@ test('wires the /requests route inside RequireAuth for a logged-in member', asyn
   expect(await screen.findByRole('heading', { name: 'Requests From Other Members' })).toBeTruthy()
 })
 
-test('guards the /requests route, showing the log-in message when logged out', () => {
+test('guards the /requests route, redirecting to login when logged out', async () => {
   // No stored login. The requests page is member-only, so App wraps it in
-  // RequireAuth: the page heading must not show, the log-in message must.
+  // RequireAuth: the page heading must not show and the browser goes to /login.
   window.history.pushState({}, '', '/requests')
   render(<App />)
 
+  await expectRedirectToLogin()
   expect(screen.queryByRole('heading', { name: 'Requests From Other Members' })).toBeNull()
-  const loginLink = screen.getByRole('link', { name: 'log in' })
-  expect(loginLink.getAttribute('href')).toBe('/login')
 })
 
 test('wires the /my-requests route inside RequireAuth for a logged-in member', async () => {
@@ -215,13 +224,12 @@ test('wires the /my-requests route inside RequireAuth for a logged-in member', a
   expect(await screen.findByRole('heading', { name: 'Requests You Have Made' })).toBeTruthy()
 })
 
-test('guards the /my-requests route, showing the log-in message when logged out', () => {
+test('guards the /my-requests route, redirecting to login when logged out', async () => {
   window.history.pushState({}, '', '/my-requests')
   render(<App />)
 
+  await expectRedirectToLogin()
   expect(screen.queryByRole('heading', { name: 'Requests You Have Made' })).toBeNull()
-  const loginLink = screen.getByRole('link', { name: 'log in' })
-  expect(loginLink.getAttribute('href')).toBe('/login')
 })
 
 test('wires the /my-listings route inside RequireAuth for a logged-in member', async () => {
@@ -242,50 +250,47 @@ test('wires the /my-listings route inside RequireAuth for a logged-in member', a
   expect(await screen.findByRole('heading', { name: 'Listings You Own' })).toBeTruthy()
 })
 
-test('guards the /my-listings route, showing the log-in message when logged out', () => {
+test('guards the /my-listings route, redirecting to login when logged out', async () => {
   window.history.pushState({}, '', '/my-listings')
   render(<App />)
 
+  await expectRedirectToLogin()
   expect(screen.queryByRole('heading', { name: 'Listings You Own' })).toBeNull()
-  const loginLink = screen.getByRole('link', { name: 'log in' })
-  expect(loginLink.getAttribute('href')).toBe('/login')
 })
 
 // ── the routes that moved under RequireAuth, and the two new review routes ────
 
-test('guards the /browse route, showing the log-in message when logged out', () => {
-  // /browse used to guard itself and bounce to /login. It now sits inside the
-  // RequireAuth group like every other member page, so a logged-out visitor
-  // gets the one shared message instead of a redirect.
+test('guards the /browse route, redirecting to login when logged out', async () => {
+  // US-34 acceptance criterion 2: a logged-out visitor who types the browse URL
+  // ends up on the log-in form with no listings shown.
   window.history.pushState({}, '', '/browse')
   render(<App />)
 
+  await expectRedirectToLogin()
   expect(screen.queryByRole('heading', { name: 'Browse listings' })).toBeNull()
-  const loginLink = screen.getByRole('link', { name: 'log in' })
-  expect(loginLink.getAttribute('href')).toBe('/login')
 })
 
-test('guards the /listings/:id route, showing the log-in message when logged out', () => {
+test('guards the /listings/:id route, redirecting to login when logged out', async () => {
   window.history.pushState({}, '', '/listings/abc')
   render(<App />)
 
-  expect(screen.getByRole('link', { name: 'log in' }).getAttribute('href')).toBe('/login')
+  await expectRedirectToLogin()
 })
 
-test('guards the /exchange-reviews route, showing the log-in message when logged out', () => {
+test('guards the /exchange-reviews route, redirecting to login when logged out', async () => {
   window.history.pushState({}, '', '/exchange-reviews?claim=claim-1')
   render(<App />)
 
+  await expectRedirectToLogin()
   expect(screen.queryByText(/Reviews for your exchange/)).toBeNull()
-  expect(screen.getByRole('link', { name: 'log in' }).getAttribute('href')).toBe('/login')
 })
 
-test('guards the /member-reviews route, showing the log-in message when logged out', () => {
+test('guards the /member-reviews route, redirecting to login when logged out', async () => {
   window.history.pushState({}, '', '/member-reviews?member=member-1&role=listing_owner')
   render(<App />)
 
+  await expectRedirectToLogin()
   expect(screen.queryByText(/Reviews for/)).toBeNull()
-  expect(screen.getByRole('link', { name: 'log in' }).getAttribute('href')).toBe('/login')
 })
 
 test('wires the /exchange-reviews route for a logged-in member', async () => {
@@ -374,13 +379,12 @@ test('wires the /profile/:id route inside RequireAuth for a logged-in member', a
   expect(await screen.findByRole('heading', { name: 'Carla' })).toBeTruthy()
 })
 
-test('guards the /profile/:id route, showing the log-in message when logged out', () => {
+test('guards the /profile/:id route, redirecting to login when logged out', async () => {
   window.history.pushState({}, '', '/profile/other-member-456')
   render(<App />)
 
+  await expectRedirectToLogin()
   expect(screen.queryByRole('heading', { name: 'Carla' })).toBeNull()
-  const loginLink = screen.getByRole('link', { name: 'log in' })
-  expect(loginLink.getAttribute('href')).toBe('/login')
 })
 
 test('wires the /admin/members route inside RequireAdmin for a logged-in admin', async () => {
@@ -415,13 +419,12 @@ test('blocks the /admin/members route for a logged-in member who is not an admin
   expect(screen.queryByRole('heading', { name: 'Search members' })).toBeNull()
 })
 
-test('guards the /admin/members route, showing the log-in message when logged out', () => {
+test('guards the /admin/members route, redirecting to login when logged out', async () => {
   window.history.pushState({}, '', '/admin/members')
   render(<App />)
 
+  await expectRedirectToLogin()
   expect(screen.queryByRole('heading', { name: 'Search members' })).toBeNull()
-  const loginLink = screen.getByRole('link', { name: 'log in' })
-  expect(loginLink.getAttribute('href')).toBe('/login')
 })
 
 test('wires the /admin/members/:id route inside RequireAdmin for a logged-in admin', async () => {
@@ -470,13 +473,12 @@ test('wires the /admin/reports route inside RequireAdmin for a logged-in admin',
   expect(await screen.findByRole('heading', { name: 'Activity report' })).toBeTruthy()
 })
 
-test('guards the /admin/reports route, showing the log-in message when logged out', () => {
+test('guards the /admin/reports route, redirecting to login when logged out', async () => {
   window.history.pushState({}, '', '/admin/reports')
   render(<App />)
 
+  await expectRedirectToLogin()
   expect(screen.queryByRole('heading', { name: 'Activity report' })).toBeNull()
-  const loginLink = screen.getByRole('link', { name: 'log in' })
-  expect(loginLink.getAttribute('href')).toBe('/login')
 })
 
 test('wires the /admin route inside RequireAdmin for a logged-in admin', async () => {
@@ -507,11 +509,76 @@ test('wires the /admin route inside RequireAdmin for a logged-in admin', async (
   expect(await screen.findByRole('heading', { name: 'Admin Dashboard' })).toBeTruthy()
 })
 
-test('guards the /admin route, showing the log-in message when logged out', () => {
+test('guards the /admin route, redirecting to login when logged out', async () => {
   window.history.pushState({}, '', '/admin')
   render(<App />)
 
+  await expectRedirectToLogin()
   expect(screen.queryByRole('heading', { name: 'Admin Dashboard' })).toBeNull()
-  const loginLink = screen.getByRole('link', { name: 'log in' })
-  expect(loginLink.getAttribute('href')).toBe('/login')
+})
+
+// US-34 criterion 6: Log out still lands on the home page.
+//
+// These two use the real App because the bug they catch comes from the guard
+// and the shared nav reacting to the same click. Log out clears the stored
+// login and navigates to "/" in one click, so the guard sees a cleared login
+// while the router still reports the guarded path. Both fail with /login if the
+// deferred update in RequireAuth or RequireAdmin is missing.
+
+test('logging out from a member page lands on the home page, not the login page', async () => {
+  window.history.pushState({}, '', '/my-listings')
+  window.localStorage.setItem('memberId', 'member-123')
+  window.localStorage.setItem('memberName', 'Bob Baker')
+
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, [])
+  })
+
+  render(<App />)
+  expect(await screen.findByRole('heading', { name: 'Listings You Own' })).toBeTruthy()
+
+  fireEvent.click(screen.getAllByRole('link', { name: 'Log out' })[0])
+
+  // Wait for the home page to render, not just for the URL to change,
+  // so a redirect that arrived a render later would still be caught below.
+  expect(await screen.findByRole('heading', { name: 'Welcome to Surplus' })).toBeTruthy()
+  await waitFor(() => {
+    expect(window.location.pathname).toBe('/')
+  })
+  expect(screen.queryByRole('heading', { name: 'Log in' })).toBeNull()
+})
+
+test('logging out from an admin page lands on the home page, not the login page', async () => {
+  window.history.pushState({}, '', '/admin')
+  window.localStorage.setItem('memberId', 'admin-123')
+  window.localStorage.setItem('memberName', 'Alice Admin')
+
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    const urlText = String(url)
+    if (urlText === '/api/admin/dashboard') {
+      return makeFakeResponse(true, 200, {
+        generated_at: '2026-07-30T00:00:00.000Z',
+        active_listings: 0,
+        open_requests: 0,
+        members_currently_suspended: 0,
+        open_member_reports_count: 0,
+        recent_member_reports: [],
+        recent_admin_actions: [],
+      })
+    }
+    return makeFakeResponse(true, 200, { id: 'admin-123', role: 'admin' })
+  })
+
+  render(<App />)
+  expect(await screen.findByRole('heading', { name: 'Admin Dashboard' })).toBeTruthy()
+
+  fireEvent.click(screen.getAllByRole('link', { name: 'Log out' })[0])
+
+  // Wait for the home page to render, not just for the URL to change,
+  // so a redirect that arrived a render later would still be caught below.
+  expect(await screen.findByRole('heading', { name: 'Welcome to Surplus' })).toBeTruthy()
+  await waitFor(() => {
+    expect(window.location.pathname).toBe('/')
+  })
+  expect(screen.queryByRole('heading', { name: 'Log in' })).toBeNull()
 })

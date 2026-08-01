@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { MemoryRouter, Route, Routes } from 'react-router'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router'
 import { afterEach, expect, test, vi } from 'vitest'
 
 import LoginPage from './LoginPage'
@@ -20,15 +20,71 @@ afterEach(() => {
   window.localStorage.clear()
 })
 
-// Renders the login page plus stand-in / and /dashboard routes. The stand-ins
-// exist only so a test can prove the success redirect went to the dashboard.
-function renderLoginPage() {
+// Prints the "from" value in the current history entry, so a test can read the
+// navigation state off the screen instead of reaching into router internals.
+function StateProbe({ label }: { label: string }) {
+  const location = useLocation()
+  let fromValue = ''
+  let sawJustRegistered = 'no'
+  if (location.state !== null && typeof location.state === 'object') {
+    const locationState = location.state as { from?: unknown; justRegistered?: unknown }
+    if (typeof locationState.from === 'string') {
+      fromValue = locationState.from
+    }
+    if (locationState.justRegistered === true) {
+      sawJustRegistered = 'yes'
+    }
+  }
+  return (
+    <div
+      data-testid={label}
+      data-location={location.pathname + location.search}
+      data-from={fromValue}
+      data-just-registered={sawJustRegistered}
+    >
+      <p>{label}</p>
+      <p>
+        {label} location: {location.pathname + location.search}
+      </p>
+      <p>
+        {label} from: {fromValue}
+      </p>
+      <p>
+        {label} justRegistered: {sawJustRegistered}
+      </p>
+    </div>
+  )
+}
+
+function HistoryBackButton() {
+  const navigate = useNavigate()
+  return <button type="button" onClick={() => navigate(-1)}>Back one entry</button>
+}
+
+// Renders the login page plus stand-in routes for every page the login flow can
+// reach: /, /dashboard, /browse (a member-only page a guard redirected away
+// from), and /register. The login, browse, and register probes print location
+// and navigation state, so the return-target tests can check each history
+// entry. The starting entry is a parameter so a test can arrive with state
+// already in place, the way a guard's redirect does.
+function renderLoginPage(initialEntries: object[] | string[] = ['/login']) {
   render(
-    <MemoryRouter initialEntries={['/login']}>
+    <MemoryRouter initialEntries={initialEntries}>
       <Routes>
-        <Route path="/login" element={<LoginPage />} />
+        <Route
+          path="/login"
+          element={(
+            <>
+              <LoginPage />
+              <StateProbe label="login page state" />
+              <HistoryBackButton />
+            </>
+          )}
+        />
         <Route path="/" element={<div>home page</div>} />
         <Route path="/dashboard" element={<div>dashboard page</div>} />
+        <Route path="/browse" element={<StateProbe label="browse page" />} />
+        <Route path="/register" element={<StateProbe label="register page" />} />
       </Routes>
     </MemoryRouter>,
   )
@@ -217,10 +273,13 @@ test('hides the form and shows the already-logged-in view when logged in', () =>
   renderLoginPage()
 
   // The form is gone and the already-logged-in view shows. The shared nav owns
-  // logout now, so this page no longer carries a dashboard link or a Log out
-  // button.
+  // logout now, so this page has no Log out button. With no return target in
+  // the navigation state, the one button here goes to the dashboard; the
+  // "Continue" test below covers the case where a guard sent one along.
   expect(screen.queryByLabelText('Email')).toBeNull()
   expect(screen.getByText("You're already logged in as Alice Admin.")).toBeTruthy()
+  const dashboardLink = screen.getByRole('link', { name: 'Go to Dashboard' })
+  expect(dashboardLink.getAttribute('href')).toBe('/dashboard')
 })
 
 test('shows the registration success message even when logged in', () => {
@@ -279,4 +338,191 @@ test('does not show the registration success message without that state', () => 
   renderLoginPage()
 
   expect(screen.queryByText('Your account was created. Please log in.')).toBeNull()
+})
+
+// --- US-34: return to the member-only page the guard redirected away from ---
+
+// The login answer every success test below uses.
+const successfulLoginBody = {
+  id: 'a4c135d8-0000-0000-0000-000000000000',
+  name: 'Alice Admin',
+  email: 'alice@example.com',
+  status: 'active',
+}
+
+function stubSuccessfulLogin() {
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, successfulLoginBody)
+  })
+}
+
+test('returns to the requested page after a successful login', async () => {
+  // This is the state RequireAuth hands over when it redirects a logged-out
+  // visitor away from /browse.
+  stubSuccessfulLogin()
+  renderLoginPage([{ pathname: '/login', state: { from: '/browse' } }])
+
+  fillForm('alice@example.com', 'password')
+  submitForm()
+
+  expect(await screen.findByText('browse page')).toBeTruthy()
+})
+
+test('keeps the query string when it returns to the requested page', async () => {
+  stubSuccessfulLogin()
+  renderLoginPage([{ pathname: '/login', state: { from: '/browse?category=fruit' } }])
+
+  fillForm('alice@example.com', 'password')
+  submitForm()
+
+  expect(await screen.findByText('browse page')).toBeTruthy()
+  expect(screen.getByTestId('browse page').getAttribute('data-location')).toBe(
+    '/browse?category=fruit',
+  )
+})
+
+test('falls back to the dashboard when there is no return target', async () => {
+  stubSuccessfulLogin()
+  renderLoginPage()
+
+  fillForm('alice@example.com', 'password')
+  submitForm()
+
+  expect(await screen.findByText('dashboard page')).toBeTruthy()
+})
+
+test('refuses a return target that points at another site', async () => {
+  // An absolute URL would send the member off this site entirely.
+  stubSuccessfulLogin()
+  renderLoginPage([{ pathname: '/login', state: { from: 'https://evil.test' } }])
+
+  fillForm('alice@example.com', 'password')
+  submitForm()
+
+  expect(await screen.findByText('dashboard page')).toBeTruthy()
+})
+
+test('refuses a protocol-relative return target', async () => {
+  // "//evil.test" names another site without naming a protocol.
+  stubSuccessfulLogin()
+  renderLoginPage([{ pathname: '/login', state: { from: '//evil.test' } }])
+
+  fillForm('alice@example.com', 'password')
+  submitForm()
+
+  expect(await screen.findByText('dashboard page')).toBeTruthy()
+})
+
+test('refuses a backslash return target', async () => {
+  // Browsers read "/\evil.test" the same way they read "//evil.test".
+  stubSuccessfulLogin()
+  renderLoginPage([{ pathname: '/login', state: { from: '/\\evil.test' } }])
+
+  fillForm('alice@example.com', 'password')
+  submitForm()
+
+  expect(await screen.findByText('dashboard page')).toBeTruthy()
+})
+
+test('falls back when parsing the return target fails', async () => {
+  // A backslash starts an authority, and the opening bracket makes that
+  // authority invalid, so the URL parser throws.
+  stubSuccessfulLogin()
+  renderLoginPage([{ pathname: '/login', state: { from: '/\\[' } }])
+
+  fillForm('alice@example.com', 'password')
+  submitForm()
+
+  expect(await screen.findByText('dashboard page')).toBeTruthy()
+})
+
+test('falls back when the return target is not a string', async () => {
+  stubSuccessfulLogin()
+  renderLoginPage([{ pathname: '/login', state: { from: 123 } }])
+
+  fillForm('alice@example.com', 'password')
+  submitForm()
+
+  expect(await screen.findByText('dashboard page')).toBeTruthy()
+})
+
+test('offers a Continue link to the requested page when already logged in', () => {
+  window.localStorage.setItem('memberId', 'a4c135d8-0000-0000-0000-000000000000')
+  window.localStorage.setItem('memberName', 'Alice Admin')
+
+  renderLoginPage([{ pathname: '/login', state: { from: '/browse' } }])
+
+  const continueLink = screen.getByRole('link', { name: 'Continue' })
+  expect(continueLink.getAttribute('href')).toBe('/browse')
+  expect(screen.queryByRole('link', { name: 'Go to Dashboard' })).toBeNull()
+})
+
+test('passes the return target on to the Register here link', () => {
+  renderLoginPage([{ pathname: '/login', state: { from: '/browse' } }])
+
+  fireEvent.click(screen.getByRole('link', { name: 'Register here' }))
+
+  expect(screen.getByText('register page')).toBeTruthy()
+  expect(screen.getByText('register page from: /browse')).toBeTruthy()
+})
+
+test('keeps the return target when it clears the one-time registration flag', async () => {
+  // RegisterPage sends both values. The one-time flag has to go so a refresh
+  // does not repeat the message, but the return target has to stay.
+  renderLoginPage([
+    { pathname: '/login', state: { justRegistered: true, from: '/browse' } },
+  ])
+
+  // The message still shows on this visit.
+  expect(screen.getByText('Your account was created. Please log in.')).toBeTruthy()
+
+  // Read the current router entry after the effect rewrites it. Component state
+  // alone is not proof because LoginPage keeps its first target in useState.
+  await waitFor(() => {
+    const loginState = screen.getByTestId('login page state')
+    expect(loginState.getAttribute('data-from')).toBe('/browse')
+    expect(loginState.getAttribute('data-just-registered')).toBe('no')
+  })
+})
+
+test('replaces the registration entry when it clears the one-time flag', async () => {
+  renderLoginPage([
+    { pathname: '/register' },
+    { pathname: '/login', state: { justRegistered: true, from: '/browse' } },
+  ])
+
+  await waitFor(() => {
+    expect(
+      screen.getByTestId('login page state').getAttribute('data-just-registered'),
+    ).toBe('no')
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Back one entry' }))
+
+  expect(await screen.findByText('register page')).toBeTruthy()
+})
+
+test('still returns to the requested page after remounting the rewritten entry', async () => {
+  // First let LoginPage produce the state that a refresh would restore.
+  renderLoginPage([
+    { pathname: '/login', state: { justRegistered: true, from: '/browse' } },
+  ])
+
+  await waitFor(() => {
+    expect(
+      screen.getByTestId('login page state').getAttribute('data-just-registered'),
+    ).toBe('no')
+  })
+  const retainedFrom = screen.getByTestId('login page state').getAttribute('data-from') ?? ''
+
+  // Unmount and rebuild the router from the state the effect left behind. This
+  // models a page refresh instead of supplying the expected value by hand.
+  cleanup()
+  stubSuccessfulLogin()
+  renderLoginPage([{ pathname: '/login', state: { from: retainedFrom } }])
+
+  expect(screen.queryByText('Your account was created. Please log in.')).toBeNull()
+  fillForm('alice@example.com', 'password')
+  submitForm()
+
+  expect(await screen.findByText('browse page')).toBeTruthy()
 })
