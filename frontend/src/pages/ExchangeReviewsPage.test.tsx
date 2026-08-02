@@ -222,8 +222,8 @@ test('clears a rejected login instead of rendering its own message', async () =>
 
   renderPage()
 
-  // The shared guard shows the log-in message, so this page only clears the
-  // stored login and leaves the rendering to it.
+  // The shared guard sends the visitor to the log-in form, so this page only
+  // clears the stored login and leaves the rest to the guard.
   await waitFor(() => {
     expect(window.localStorage.getItem('memberId')).toBeNull()
   })

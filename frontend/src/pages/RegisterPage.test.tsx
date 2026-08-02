@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { MemoryRouter, Route, Routes } from 'react-router'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { afterEach, expect, test, vi } from 'vitest'
 
 import RegisterPage from './RegisterPage'
@@ -20,16 +20,41 @@ afterEach(() => {
   window.localStorage.clear()
 })
 
-// Renders the register page plus a stand-in /login route. The stand-in
-// exists only so a test can prove the success redirect went to /login.
-// In the real app /login has no route yet and falls through to the
-// catch-all 404 page.
-function renderRegisterPage() {
+// Stands in for the real login page. Besides marking that the redirect landed,
+// it prints the navigation state it was handed, so a test can check that the
+// one-time registration flag and the US-34 return target both came along.
+function LoginProbe() {
+  const location = useLocation()
+  let fromValue = ''
+  let sawJustRegistered = 'no'
+  if (location.state !== null && typeof location.state === 'object') {
+    const locationState = location.state as { from?: unknown; justRegistered?: unknown }
+    if (typeof locationState.from === 'string') {
+      fromValue = locationState.from
+    }
+    if (locationState.justRegistered === true) {
+      sawJustRegistered = 'yes'
+    }
+  }
+  return (
+    <div>
+      <p>login page</p>
+      <p>from: {fromValue}</p>
+      <p>justRegistered: {sawJustRegistered}</p>
+    </div>
+  )
+}
+
+// Renders the register page plus the stand-in /login route above, so a test can
+// prove where the success redirect went and what state it carried. The starting
+// entry is a parameter so a test can arrive with a return target already in
+// place, the way the login page's "Register here" link sends one.
+function renderRegisterPage(initialEntries: object[] | string[] = ['/register']) {
   render(
-    <MemoryRouter initialEntries={['/register']}>
+    <MemoryRouter initialEntries={initialEntries}>
       <Routes>
         <Route path="/register" element={<RegisterPage />} />
-        <Route path="/login" element={<div>login page</div>} />
+        <Route path="/login" element={<LoginProbe />} />
       </Routes>
     </MemoryRouter>,
   )
@@ -286,4 +311,54 @@ test('leaves the invite token empty when there is no token parameter', () => {
 
   const tokenField = screen.getByLabelText('Invite token') as HTMLInputElement
   expect(tokenField.value).toBe('')
+})
+
+// --- US-34: carry the return target through registration ---
+
+test('sends the return target to /login beside the registration flag', async () => {
+  const responseBody = {
+    id: 'a4c135d8-0000-0000-0000-000000000000',
+    name: 'New Person',
+    email: 'new@example.com',
+  }
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, responseBody)
+  })
+
+  renderRegisterPage([{ pathname: '/register', state: { from: '/browse' } }])
+  fillForm('New Person', 'new@example.com', 'password123', 'tok-1')
+  submitForm()
+
+  await screen.findByText('login page')
+  expect(screen.getByText('from: /browse')).toBeTruthy()
+  expect(screen.getByText('justRegistered: yes')).toBeTruthy()
+})
+
+test('sends only the registration flag when there is no return target', async () => {
+  const responseBody = {
+    id: 'a4c135d8-0000-0000-0000-000000000000',
+    name: 'New Person',
+    email: 'new@example.com',
+  }
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, responseBody)
+  })
+
+  renderRegisterPage()
+  fillForm('New Person', 'new@example.com', 'password123', 'tok-1')
+  submitForm()
+
+  await screen.findByText('login page')
+  expect(screen.getByText('from:')).toBeTruthy()
+  expect(screen.getByText('justRegistered: yes')).toBeTruthy()
+})
+
+test('the Log in link carries the return target too', () => {
+  renderRegisterPage([{ pathname: '/register', state: { from: '/browse' } }])
+
+  fireEvent.click(screen.getByRole('link', { name: 'Log in' }))
+
+  expect(screen.getByText('login page')).toBeTruthy()
+  expect(screen.getByText('from: /browse')).toBeTruthy()
+  expect(screen.getByText('justRegistered: no')).toBeTruthy()
 })

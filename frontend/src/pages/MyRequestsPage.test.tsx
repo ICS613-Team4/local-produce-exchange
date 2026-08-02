@@ -482,8 +482,8 @@ test('a stale-session 401 clears the credentials and fires the auth event', asyn
 
   renderMyRequestsPage()
 
-  // The shared route guard renders the logged-out message now, so the only
-  // thing this page owns is clearing the stored login and firing the event.
+  // The shared route guard sends a logged-out visitor to the log-in form
+  // now, so this page only clears the stored login and fires the event.
   await waitFor(() => {
     expect(window.localStorage.getItem('memberId')).toBeNull()
   })

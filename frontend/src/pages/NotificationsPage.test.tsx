@@ -265,8 +265,8 @@ test('a stale session clears the stored login', async () => {
 
   renderNotificationsPage()
 
-  // The shared route guard renders the logged-out message now, so the only
-  // thing this page owns is clearing the stored login.
+  // The shared route guard sends a logged-out visitor to the log-in form
+  // now, so this page only clears the stored login.
   await waitFor(() => {
     expect(window.localStorage.getItem('memberId')).toBeNull()
   })
@@ -616,7 +616,7 @@ test('a stale session on the mark path clears the stored login', async () => {
   markButton.click()
 
   // The stored login is cleared instead of alerting a raw detail. The shared
-  // route guard is what shows the logged-out message.
+  // route guard is what sends the visitor to the log-in form.
   await waitFor(() => {
     expect(window.localStorage.getItem('memberId')).toBeNull()
   })

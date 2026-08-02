@@ -21,8 +21,9 @@ function Layout() {
   // to highlight the nav link of the page the member is on.
   const location = useLocation()
 
-  // A page that clears credentials without changing the route (a stale 401) fires
-  // this same-tab event. The listener below bumps this counter, which forces a
+  // A page that clears credentials without changing the route (a stale 401)
+  // fires a same-tab event. Another browser tab changing localStorage fires a
+  // storage event. Both listeners below bump this counter, which forces a
   // re-render so the stored login is read again. The counter's value is never
   // used; it exists only to trigger that re-render.
   const [, setAuthEventTick] = useState(0)
@@ -38,7 +39,7 @@ function Layout() {
   // RequireAdmin and the backend remain the authorization boundaries.
   const [authorizedAdminMemberId, setAuthorizedAdminMemberId] = useState('')
 
-  useEffect(function listenForAuthStateChange() {
+  useEffect(function listenForAuthStateChanges() {
     function handleAuthStateChange() {
       setAuthEventTick(function bumpTick(previousTick) {
         return previousTick + 1
@@ -51,16 +52,41 @@ function Layout() {
         setAuthorizedAdminMemberId('')
       }
     }
+
+    function handleStorageChange(event: StorageEvent) {
+      // The storage event fires in other tabs, not in the tab that made the
+      // change. Only the three login values affect this layout.
+      if (event.storageArea !== window.localStorage) {
+        return
+      }
+      if (
+        event.key !== null &&
+        event.key !== 'memberId' &&
+        event.key !== 'memberName' &&
+        event.key !== 'memberEmail'
+      ) {
+        return
+      }
+      handleAuthStateChange()
+    }
+
     window.addEventListener(authStateChangedEventName, handleAuthStateChange)
-    return function removeAuthStateListener() {
+    window.addEventListener('storage', handleStorageChange)
+
+    // Re-read after subscribing. This catches a storage change that happened
+    // after render read the old login but before these listeners were installed.
+    handleAuthStateChange()
+
+    return function removeAuthStateListeners() {
       window.removeEventListener(authStateChangedEventName, handleAuthStateChange)
+      window.removeEventListener('storage', handleStorageChange)
     }
   }, [])
 
   // Read the stored login during render. A member is logged in when memberId is
-  // not empty. memberName is the display name shown next to Logout. Both triggers
-  // above (a route change or the auth event) re-render the nav, so this read
-  // always reflects the latest localStorage.
+  // not empty. memberName is the display name shown next to Logout. All three
+  // above (a route change, auth event, or storage event) re-render the nav, so
+  // this read always reflects the latest localStorage.
   const memberId = window.localStorage.getItem('memberId') ?? ''
   const memberName = window.localStorage.getItem('memberName') ?? ''
   const isLoggedIn = memberId !== ''
@@ -312,15 +338,15 @@ function Layout() {
       </>
     )
   } else {
+    // No Browse link for a visitor who is not logged in (US-34). Browse is a
+    // member-only page, so the link would only lead to the log-in form.
     desktopNavItems = (
       <>
-        <Link to="/browse" className={getNavLinkClasses('/browse')} aria-current={getAriaCurrent('/browse')}>Browse</Link>
         <Link to="/about" className={getNavLinkClasses('/about')} aria-current={getAriaCurrent('/about')}>About</Link>
       </>
     )
     mobileNavItems = (
       <>
-        <Link to="/browse" className={getMobileNavLinkClasses('/browse')} aria-current={getAriaCurrent('/browse')} onClick={closeMobileMenu}>Browse</Link>
         <Link to="/about" className={getMobileNavLinkClasses('/about')} aria-current={getAriaCurrent('/about')} onClick={closeMobileMenu}>About</Link>
         <Link to="/login" className={getMobileNavLinkClasses('/login')} aria-current={getAriaCurrent('/login')} onClick={closeMobileMenu}>Log in</Link>
         <Link to="/register" className={getMobileNavLinkClasses('/register')} aria-current={getAriaCurrent('/register')} onClick={closeMobileMenu}>Register</Link>
@@ -500,7 +526,11 @@ function Layout() {
             </p>
             <div className="flex items-center gap-4 text-sm text-text-muted">
               <Link to="/about" className="hover:text-primary-600 transition-colors">About</Link>
-              <Link to="/browse" className="hover:text-primary-600 transition-colors">Browse</Link>
+              {/* Members only, matching the nav (US-34). A visitor who is not
+                  logged in sees just About down here. */}
+              {isLoggedIn && (
+                <Link to="/browse" className="hover:text-primary-600 transition-colors">Browse</Link>
+              )}
             </div>
           </div>
         </div>

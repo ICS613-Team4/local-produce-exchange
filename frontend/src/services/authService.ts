@@ -11,9 +11,9 @@ export const authStateChangedEventName = "auth-state-changed"
 
 // Clear the stored login and tell the rest of the app. Call this when an API
 // call comes back 401, which means the stored member id is missing, malformed,
-// or unknown. RequireAuth listens for the event and shows the log-in message,
-// and the nav listens and flips to the logged-out links, so a caller does not
-// need to render anything itself.
+// or unknown. The shared route guards listen for the event and send the visitor
+// to the log-in form, and the nav listens and flips to the logged-out links, so
+// a caller does not need to render anything itself.
 export function clearStoredLogin() {
   window.localStorage.removeItem('memberId')
   window.localStorage.removeItem('memberName')

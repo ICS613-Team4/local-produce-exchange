@@ -11,8 +11,6 @@ import type { ListingDetail, ListingResult } from '../services/listingService'
 import { clearStoredLogin } from '../services/authService'
 import { formatTimestamp, getLocalTimeZoneNote } from '../utils/formatTimestamp'
 
-// One shared message for the not-logged-in case, declared at module scope so the
-// wording is the same everywhere and it is not a useEffect dependency.
 // "Browse My Listings": every listing the logged-in member owns, active and
 // deactivated, newest first. The owner can deactivate an active listing here.
 // Deactivated listings are shown read-only.
