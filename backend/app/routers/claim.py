@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -20,6 +20,14 @@ from app.models.listing_photo import ListingPhoto
 from app.models.member import Member
 from app.models.review import Review
 from app.notifications import create_notification
+from app.pagination import (
+    DEFAULT_PAGE_SIZE,
+    Page,
+    PageNumber,
+    PageSize,
+    apply_page_window,
+    count_matching_rows,
+)
 from app.schemas.claim import (
     AllRequestItem,
     AllRequestsResponse,
@@ -571,6 +579,8 @@ def get_request_queues(
 @router.get("/request-queues/all")
 def get_all_requests(
     listing: Annotated[str | None, Query()] = None,
+    page: PageNumber = 1,
+    page_size: PageSize = DEFAULT_PAGE_SIZE,
     current_member: Member = Depends(get_current_member),
     session: Session = Depends(get_db_session),
 ) -> AllRequestsResponse:
@@ -584,6 +594,13 @@ def get_all_requests(
     # poster can finish exchanges that were already in flight when the listing
     # was deactivated; each group carries listing_status so the page can mark
     # those. A deactivated listing with no requests drops out.
+    #
+    # This response is paged by the LISTING (US-33): page and page_size select a
+    # window of the caller's listings, and each listing in that window carries
+    # every one of its requests. Paging the outer groups is what the page needs,
+    # because one listing's request count is small while a busy poster's listing
+    # count is not. The ?listing= filter still applies and simply narrows the
+    # window to that one listing.
 
     # Active-member gate, same rule and messages as get_request_queues.
     if current_member.status != "active":
@@ -602,37 +619,33 @@ def get_all_requests(
     # One "now" for the whole response, used by the can_decide display rule.
     now = datetime.now(timezone.utc)
 
-    # Decide which listings to process. With no listing query value, use all of
-    # the caller's listings, newest first (non-active ones are dropped below
-    # when they have no requests). With a listing value, use just that one
-    # listing after the ownership check below.
-    listings_to_process = []
-    if listing is None:
-        try:
-            owned_listings = session.scalars(
-                select(Listing)
-                .where(Listing.owner_id == member_id)
-                .order_by(Listing.created_at.desc(), Listing.id.desc())
-            ).all()
-        except Exception as error:
-            logger.error("Loading the caller's listings failed: %s", error)
-            raise HTTPException(
-                status_code=503,
-                detail=(
-                    "Could not read your requests right now. "
-                    "Make sure the database is running and migrated: "
-                    "npm run db:up, then npm run db:migrate, then npm run db:seed."
-                ),
-            )
-        for owned_listing in owned_listings:
-            listings_to_process.append(owned_listing)
-    else:
+    # Which of the caller's listings this response lists at all. A listing is
+    # listed when it is still active, OR when it already has at least one
+    # request; a deactivated listing with no requests has nothing left to show
+    # and drops out. That rule used to run in Python after every listing's
+    # claims were loaded, but a paged response has to know its own row set
+    # before it can count or window it, so the rule lives in SQL now. The
+    # EXISTS subquery asks "does this listing have any claim?" without loading
+    # them.
+    listing_has_requests = select(Claim.id).where(Claim.listing_id == Listing.id).exists()
+    listings_statement = (
+        select(Listing)
+        .where(Listing.owner_id == member_id)
+        .where(or_(Listing.status == "active", listing_has_requests))
+    )
+
+    # An empty page, used by the two filtered dead ends below. It carries the
+    # requested page numbers back so the caller still sees which window it asked
+    # for.
+    empty_page = AllRequestsResponse(items=[], total=0, page=page, page_size=page_size)
+
+    if listing is not None:
         # A filtered request. A value that is not a real UUID cannot match any
         # listing, so return no groups rather than an error.
         try:
             listing_uuid = uuid.UUID(listing)
         except (ValueError, AttributeError, TypeError):
-            return AllRequestsResponse(groups=[])
+            return empty_page
 
         try:
             one_listing = session.scalars(
@@ -650,19 +663,46 @@ def get_all_requests(
 
         # No such listing reads as no groups, the same as a malformed id.
         if one_listing is None:
-            return AllRequestsResponse(groups=[])
+            return empty_page
 
         # A listing the caller does not own is denied, before any claim is read,
-        # the same as get_request_queues.
+        # the same as get_request_queues. This check is why the filtered path
+        # still loads the row itself instead of only narrowing the statement:
+        # narrowing alone would answer an empty page, and a non-owner must get a
+        # 403.
         if one_listing.owner_id != member_id:
             raise HTTPException(
                 status_code=403,
                 detail="You can only view requests for your own listings.",
             )
 
-        # A non-active listing is processed like any other here; the loop below
-        # drops it only when it has no requests, the same rule as the full list.
-        listings_to_process.append(one_listing)
+        # Narrow the same statement to the one listing, so the filtered path is
+        # counted and windowed by exactly the rules the full list uses. A
+        # deactivated listing with no requests filters itself out here too.
+        listings_statement = listings_statement.where(Listing.id == listing_uuid)
+
+    # One page of those listings, newest first, plus the total across every
+    # page. The id is the tiebreaker so listings that share a created_at sort in
+    # a stable, repeatable order, which is what makes the offset window safe.
+    try:
+        total_count = count_matching_rows(session, listings_statement)
+        listings_to_process = session.scalars(
+            apply_page_window(
+                listings_statement.order_by(Listing.created_at.desc(), Listing.id.desc()),
+                page,
+                page_size,
+            )
+        ).all()
+    except Exception as error:
+        logger.error("Loading the caller's listings failed: %s", error)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Could not read your requests right now. "
+                "Make sure the database is running and migrated: "
+                "npm run db:up, then npm run db:migrate, then npm run db:seed."
+            ),
+        )
 
     # Load every listed listing's photos in one query and group them by listing
     # id, so each group can show the listing's cover photo. One extra query for
@@ -699,10 +739,12 @@ def get_all_requests(
                 )
             )
 
-    # For each listing, load ALL its claims oldest-first and build a group.
-    # Unlike the pending endpoint, an ACTIVE listing with no claims is kept as
-    # an empty group so the page can show its listing-level empty note. A
-    # non-active listing is kept only while it has claims to show.
+    # For each listing in this page, load ALL its claims oldest-first and build a
+    # group. Unlike the pending endpoint, an ACTIVE listing with no claims is
+    # kept as an empty group so the page can show its listing-level empty note.
+    # Nothing is dropped after this point: the statement above already decided
+    # which listings are listed, so every windowed row becomes a group and
+    # len(groups) matches the window the total describes.
     groups = []
     for listing_row in listings_to_process:
         try:
@@ -807,10 +849,6 @@ def get_all_requests(
                 )
             )
 
-        # A non-active listing with nothing left to show drops out entirely.
-        if listing_row.status != "active" and len(request_items) == 0:
-            continue
-
         groups.append(
             ListingAllRequestsGroup(
                 listing_id=str(listing_row.id),
@@ -823,7 +861,7 @@ def get_all_requests(
             )
         )
 
-    return AllRequestsResponse(groups=groups)
+    return AllRequestsResponse(items=groups, total=total_count, page=page, page_size=page_size)
 
 
 def build_my_request_items(session, claims, member_id):
@@ -949,8 +987,40 @@ def build_my_request_items(session, claims, member_id):
     return items
 
 
+def load_my_requests_bucket(session, member_id, statuses, sort_column, page, page_size):
+    # One status bucket of the caller's own requests: the claim rows for one page
+    # of it, plus how many claims are in the whole bucket. Every bucket differs
+    # only in which statuses it keeps and which timestamp column it sorts by, so
+    # they all share this function and cannot drift apart in how they page.
+    #
+    # The sort is newest first by the time the request entered this state, with
+    # the claim id as a tiebreaker so two claims that share a timestamp always
+    # come out in the same order. That total order is what makes the offset
+    # window safe.
+    statement = (
+        select(Claim)
+        .where(Claim.claimant_id == member_id)
+        .where(Claim.status.in_(statuses))
+    )
+    total_count = count_matching_rows(session, statement)
+    rows = session.scalars(
+        apply_page_window(
+            statement.order_by(sort_column.desc(), Claim.id.desc()),
+            page,
+            page_size,
+        )
+    ).all()
+    return rows, total_count
+
+
 @router.get("/my-requests")
 def get_my_requests(
+    pending_page: PageNumber = 1,
+    approved_page: PageNumber = 1,
+    completed_page: PageNumber = 1,
+    denied_page: PageNumber = 1,
+    withdrawn_page: PageNumber = 1,
+    page_size: PageSize = DEFAULT_PAGE_SIZE,
     current_member: Member = Depends(get_current_member),
     session: Session = Depends(get_db_session),
 ) -> MyRequestsResponse:
@@ -960,6 +1030,12 @@ def get_my_requests(
     # with the claim id as a tiebreaker so the order is stable and repeatable. A
     # member has at most one request per listing, so each request stands on its
     # own.
+    #
+    # The page shows all five sections stacked, so each one pages on its own
+    # (US-33): five page numbers, one per section, and one shared page_size. A
+    # single page number would move all five sections at once, which is wrong
+    # for every section but the one the member clicked. Each section comes back
+    # as its own paged envelope with its own total.
 
     # Active-member gate, same rule and messages as get_request_queues.
     if current_member.status != "active":
@@ -975,41 +1051,32 @@ def get_my_requests(
 
     member_id = current_member.id
 
-    # Load each section in its own query. Pending sorts by when it was requested,
-    # approved by when it was approved, completed by when it was completed,
-    # denied by when it was denied; all newest first, all with the claim id as
-    # the tiebreaker.
+    # Load each section in its own pair of queries (a count and a window).
+    # Pending sorts by when it was requested, approved by when it was approved,
+    # completed by when it was completed, denied by when it was denied, and
+    # withdrawn by when it was cancelled. Each section reads its own page number,
+    # so paging one leaves the other four exactly where they were.
     try:
-        pending_claims = session.scalars(
-            select(Claim)
-            .where(Claim.claimant_id == member_id)
-            .where(Claim.status == "requested")
-            .order_by(Claim.requested_at.desc(), Claim.id.desc())
-        ).all()
-        approved_claims = session.scalars(
-            select(Claim)
-            .where(Claim.claimant_id == member_id)
-            .where(Claim.status.in_(["approved", "picked_up"]))
-            .order_by(Claim.approved_at.desc(), Claim.id.desc())
-        ).all()
-        completed_claims = session.scalars(
-            select(Claim)
-            .where(Claim.claimant_id == member_id)
-            .where(Claim.status == "completed")
-            .order_by(Claim.completed_at.desc(), Claim.id.desc())
-        ).all()
-        denied_claims = session.scalars(
-            select(Claim)
-            .where(Claim.claimant_id == member_id)
-            .where(Claim.status == "denied")
-            .order_by(Claim.denied_at.desc(), Claim.id.desc())
-        ).all()
-        withdrawn_claims = session.scalars(
-            select(Claim)
-            .where(Claim.claimant_id == member_id)
-            .where(Claim.status == "cancelled")
-            .order_by(Claim.cancelled_at.desc(), Claim.id.desc())
-        ).all()
+        pending_claims, pending_total = load_my_requests_bucket(
+            session, member_id, ["requested"], Claim.requested_at, pending_page, page_size
+        )
+        approved_claims, approved_total = load_my_requests_bucket(
+            session,
+            member_id,
+            ["approved", "picked_up"],
+            Claim.approved_at,
+            approved_page,
+            page_size,
+        )
+        completed_claims, completed_total = load_my_requests_bucket(
+            session, member_id, ["completed"], Claim.completed_at, completed_page, page_size
+        )
+        denied_claims, denied_total = load_my_requests_bucket(
+            session, member_id, ["denied"], Claim.denied_at, denied_page, page_size
+        )
+        withdrawn_claims, withdrawn_total = load_my_requests_bucket(
+            session, member_id, ["cancelled"], Claim.cancelled_at, withdrawn_page, page_size
+        )
     except Exception as error:
         logger.error("Loading the caller's requests failed: %s", error)
         raise HTTPException(
@@ -1020,6 +1087,9 @@ def get_my_requests(
             ),
         )
 
+    # Only this page's rows are turned into response items, so the listing,
+    # photo, and review lookups behind build_my_request_items run over twelve
+    # rows per section instead of the member's whole history.
     pending_items = build_my_request_items(session, pending_claims, member_id)
     approved_items = build_my_request_items(session, approved_claims, member_id)
     completed_items = build_my_request_items(session, completed_claims, member_id)
@@ -1027,11 +1097,27 @@ def get_my_requests(
     withdrawn_items = build_my_request_items(session, withdrawn_claims, member_id)
 
     return MyRequestsResponse(
-        pending=pending_items,
-        approved=approved_items,
-        completed=completed_items,
-        denied=denied_items,
-        withdrawn=withdrawn_items,
+        pending=Page(
+            items=pending_items, total=pending_total, page=pending_page, page_size=page_size
+        ),
+        approved=Page(
+            items=approved_items, total=approved_total, page=approved_page, page_size=page_size
+        ),
+        completed=Page(
+            items=completed_items,
+            total=completed_total,
+            page=completed_page,
+            page_size=page_size,
+        ),
+        denied=Page(
+            items=denied_items, total=denied_total, page=denied_page, page_size=page_size
+        ),
+        withdrawn=Page(
+            items=withdrawn_items,
+            total=withdrawn_total,
+            page=withdrawn_page,
+            page_size=page_size,
+        ),
     )
 
 

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { afterEach, expect, test, vi } from 'vitest'
 
@@ -26,6 +26,39 @@ function renderMyRequestsPage() {
       </Routes>
     </MemoryRouter>,
   )
+}
+
+// Each of the five sections arrives as its own paged envelope now. These tests
+// build plain arrays, so this wraps whichever sections a body names and leaves
+// every other body (a PATCH result, an error) untouched. total defaults to
+// "they all fit", so only the paging tests below see any controls.
+function pageSections(body: object) {
+  const sectionNames = ['pending', 'approved', 'completed', 'denied', 'withdrawn']
+  const source = body as Record<string, unknown>
+  const wrapped: Record<string, unknown> = { ...source }
+  for (let index = 0; index < sectionNames.length; index = index + 1) {
+    const items = source[sectionNames[index]]
+    if (Array.isArray(items)) {
+      wrapped[sectionNames[index]] = {
+        items: items,
+        total: items.length,
+        page: 1,
+        page_size: 12,
+      }
+    }
+  }
+  return wrapped
+}
+
+// One section as a paged envelope, for the paging tests that need a total
+// bigger than the rows they hand over.
+function makeSection(items: object[], total?: number, page?: number, pageSize?: number) {
+  return {
+    items: items,
+    total: total ?? items.length,
+    page: page ?? 1,
+    page_size: pageSize ?? 12,
+  }
 }
 
 function makeFakeResponse(ok: boolean, status: number, body: object): FakeResponse {
@@ -111,7 +144,7 @@ function setLoggedIn() {
 test('renders Pending, Approved, and Denied sections with their requests', async () => {
   setLoggedIn()
   vi.stubGlobal('fetch', async () => {
-    return makeFakeResponse(true, 200, makeMyRequestsBody())
+    return makeFakeResponse(true, 200, pageSections(makeMyRequestsBody()))
   })
 
   renderMyRequestsPage()
@@ -147,7 +180,7 @@ test('renders Pending, Approved, and Denied sections with their requests', async
 test('an approved request shows its thread link while pending and denied do not', async () => {
   setLoggedIn()
   vi.stubGlobal('fetch', async () => {
-    return makeFakeResponse(true, 200, makeMyRequestsBody())
+    return makeFakeResponse(true, 200, pageSections(makeMyRequestsBody()))
   })
 
   renderMyRequestsPage()
@@ -171,7 +204,7 @@ test('an approved request shows its thread link while pending and denied do not'
 test('each request title links to its listing', async () => {
   setLoggedIn()
   vi.stubGlobal('fetch', async () => {
-    return makeFakeResponse(true, 200, makeMyRequestsBody())
+    return makeFakeResponse(true, 200, pageSections(makeMyRequestsBody()))
   })
 
   renderMyRequestsPage()
@@ -189,7 +222,7 @@ test('a request on a deactivated listing shows its title as plain text', async (
   const body = makeMyRequestsBody()
   body.pending[0].listing_status = 'deactivated'
   vi.stubGlobal('fetch', async () => {
-    return makeFakeResponse(true, 200, body)
+    return makeFakeResponse(true, 200, pageSections(body))
   })
 
   renderMyRequestsPage()
@@ -223,7 +256,7 @@ test('a picked-up request shows a Contact the Poster thread link', async () => {
     denied: [],
   }
   vi.stubGlobal('fetch', async () => {
-    return makeFakeResponse(true, 200, body)
+    return makeFakeResponse(true, 200, pageSections(body))
   })
 
   renderMyRequestsPage()
@@ -256,7 +289,7 @@ test('a completed exchange shows in the Completed section with no thread link', 
     denied: [],
   }
   vi.stubGlobal('fetch', async () => {
-    return makeFakeResponse(true, 200, body)
+    return makeFakeResponse(true, 200, pageSections(body))
   })
 
   renderMyRequestsPage()
@@ -302,7 +335,7 @@ test('the review link on a completed exchange points at the shared review page',
     denied: [],
   }
   vi.stubGlobal('fetch', async () => {
-    return makeFakeResponse(true, 200, body)
+    return makeFakeResponse(true, 200, pageSections(body))
   })
 
   renderMyRequestsPage()
@@ -335,7 +368,7 @@ test('a completed row also links to the reviews for that exchange', async () => 
     denied: [],
   }
   vi.stubGlobal('fetch', async () => {
-    return makeFakeResponse(true, 200, body)
+    return makeFakeResponse(true, 200, pageSections(body))
   })
 
   renderMyRequestsPage()
@@ -348,7 +381,7 @@ test('a completed row also links to the reviews for that exchange', async () => 
 test('a response without a completed list treats the section as empty', async () => {
   setLoggedIn()
   vi.stubGlobal('fetch', async () => {
-    return makeFakeResponse(true, 200, makeMyRequestsBody())
+    return makeFakeResponse(true, 200, pageSections(makeMyRequestsBody()))
   })
 
   renderMyRequestsPage()
@@ -361,7 +394,7 @@ test('a response without a completed list treats the section as empty', async ()
 test('separates the three sections with horizontal rules', async () => {
   setLoggedIn()
   vi.stubGlobal('fetch', async () => {
-    return makeFakeResponse(true, 200, makeMyRequestsBody())
+    return makeFakeResponse(true, 200, pageSections(makeMyRequestsBody()))
   })
 
   renderMyRequestsPage()
@@ -374,7 +407,7 @@ test('separates the three sections with horizontal rules', async () => {
 test('shows a per-section empty message when a section has no requests', async () => {
   setLoggedIn()
   vi.stubGlobal('fetch', async () => {
-    return makeFakeResponse(true, 200, makeEmptyBody())
+    return makeFakeResponse(true, 200, pageSections(makeEmptyBody()))
   })
 
   renderMyRequestsPage()
@@ -418,7 +451,7 @@ test('renders a section newest-first in the order the backend returns', async ()
     denied: [],
   }
   vi.stubGlobal('fetch', async () => {
-    return makeFakeResponse(true, 200, body)
+    return makeFakeResponse(true, 200, pageSections(body))
   })
 
   renderMyRequestsPage()
@@ -442,7 +475,7 @@ test("a request row shows the listing's first photo as a thumbnail", async () =>
     { id: 'photo-second', content_type: 'image/png', position: 1 },
   ]
   vi.stubGlobal('fetch', async () => {
-    return makeFakeResponse(true, 200, body)
+    return makeFakeResponse(true, 200, pageSections(body))
   })
 
   renderMyRequestsPage()
@@ -457,7 +490,7 @@ test("a request row shows the listing's first photo as a thumbnail", async () =>
 test('a request row without photos shows no thumbnail image', async () => {
   setLoggedIn()
   vi.stubGlobal('fetch', async () => {
-    return makeFakeResponse(true, 200, makeMyRequestsBody())
+    return makeFakeResponse(true, 200, pageSections(makeMyRequestsBody()))
   })
 
   renderMyRequestsPage()
@@ -521,7 +554,7 @@ test('shows the transport error message when the request fails', async () => {
 test('a Pending request shows a Withdraw Request button', async () => {
   setLoggedIn()
   vi.stubGlobal('fetch', async () => {
-    return makeFakeResponse(true, 200, makeMyRequestsBody())
+    return makeFakeResponse(true, 200, pageSections(makeMyRequestsBody()))
   })
 
   renderMyRequestsPage()
@@ -574,7 +607,7 @@ test('only an approved request shows a Cancel request button', async () => {
     ],
   }
   vi.stubGlobal('fetch', async () => {
-    return makeFakeResponse(true, 200, body)
+    return makeFakeResponse(true, 200, pageSections(body))
   })
 
   renderMyRequestsPage()
@@ -634,13 +667,13 @@ test('clicking Withdraw reloads and the request moves from Pending to Withdrawn'
     }
     if (urlText.includes('/withdraw') || method === 'DELETE') {
       withdrawUrl = urlText
-      return makeFakeResponse(true, 200, { id: 'p1', status: 'cancelled' })
+      return makeFakeResponse(true, 200, pageSections({ id: 'p1', status: 'cancelled' }))
     }
     myRequestsCalls = myRequestsCalls + 1
     if (myRequestsCalls === 1) {
-      return makeFakeResponse(true, 200, makeMyRequestsBody())
+      return makeFakeResponse(true, 200, pageSections(makeMyRequestsBody()))
     }
-    return makeFakeResponse(true, 200, withdrawnBody)
+    return makeFakeResponse(true, 200, pageSections(withdrawnBody))
   })
 
   renderMyRequestsPage()
@@ -695,13 +728,13 @@ test('clicking Cancel refreshes in place and moves the request to Withdrawn', as
     const urlText = String(url)
     if (urlText.includes('/cancel')) {
       cancelUrl = urlText
-      return makeFakeResponse(true, 200, { id: 'a1', status: 'cancelled' })
+      return makeFakeResponse(true, 200, pageSections({ id: 'a1', status: 'cancelled' }))
     }
     myRequestsCalls = myRequestsCalls + 1
     if (myRequestsCalls === 1) {
-      return makeFakeResponse(true, 200, standardBody)
+      return makeFakeResponse(true, 200, pageSections(standardBody))
     }
-    return makeFakeResponse(true, 200, cancelledBody)
+    return makeFakeResponse(true, 200, pageSections(cancelledBody))
   })
 
   renderMyRequestsPage()
@@ -737,7 +770,7 @@ test('a failed Cancel shows the server detail and keeps the request approved', a
       })
     }
     myRequestsCalls = myRequestsCalls + 1
-    return makeFakeResponse(true, 200, makeMyRequestsBody())
+    return makeFakeResponse(true, 200, pageSections(makeMyRequestsBody()))
   })
 
   renderMyRequestsPage()
@@ -787,13 +820,13 @@ test('clicking Confirm the Pickup calls the pickup endpoint and shows the picked
     const urlText = String(url)
     if (urlText.includes('/pickup')) {
       pickupUrl = urlText
-      return makeFakeResponse(true, 200, { id: 'a1', status: 'picked_up' })
+      return makeFakeResponse(true, 200, pageSections({ id: 'a1', status: 'picked_up' }))
     }
     myRequestsCalls = myRequestsCalls + 1
     if (myRequestsCalls === 1) {
-      return makeFakeResponse(true, 200, makeMyRequestsBody())
+      return makeFakeResponse(true, 200, pageSections(makeMyRequestsBody()))
     }
-    return makeFakeResponse(true, 200, pickedUpBody)
+    return makeFakeResponse(true, 200, pageSections(pickedUpBody))
   })
 
   renderMyRequestsPage()
@@ -835,7 +868,7 @@ test('a completed exchange the caller reviewed offers the edit label', async () 
     denied: [],
   }
   vi.stubGlobal('fetch', async () => {
-    return makeFakeResponse(true, 200, body)
+    return makeFakeResponse(true, 200, pageSections(body))
   })
 
   renderMyRequestsPage()
@@ -843,4 +876,199 @@ test('a completed exchange the caller reviewed offers the edit label', async () 
   const reviewLink = await screen.findByRole('link', { name: 'Edit Your Review for Bob' })
   expect(reviewLink.getAttribute('href')).toBe('/review?claim=completed-1')
   expect(screen.queryByRole('link', { name: 'Leave a Review for Bob' })).toBeNull()
+})
+
+// --- US-33: each section pages on its own ---
+
+// One pending request row in the shape the endpoint returns. The nullable
+// timestamp columns are typed so a caller can fill in the one its status needs.
+function makePendingItem(id: string, title: string) {
+  return {
+    id: id,
+    listing_id: 'listing-' + id,
+    listing_title: title,
+    listing_status: 'active',
+    owner_name: 'Polly Poster',
+    requested_quantity: 1,
+    approved_quantity: null as number | null,
+    status: 'requested',
+    requested_at: '2026-07-01T12:00:00.000Z',
+    approved_at: null as string | null,
+    picked_up_at: null as string | null,
+    completed_at: null as string | null,
+    denied_at: null as string | null,
+    cancelled_at: null as string | null,
+    photos: [],
+  }
+}
+
+function makeDeniedItem(id: string, title: string) {
+  const item = makePendingItem(id, title)
+  item.status = 'denied'
+  item.denied_at = '2026-07-03T12:00:00.000Z'
+  return item
+}
+
+function makeItems(count: number, build: (id: string, title: string) => object, prefix: string) {
+  const items = []
+  for (let index = 0; index < count; index = index + 1) {
+    items.push(build(prefix + index, prefix + ' ' + index))
+  }
+  return items
+}
+
+// A whole response with each section given explicitly, so a test can put one
+// section on page 2 while the rest stay on page 1.
+function makeSectionedBody(sections: {
+  pending?: object
+  approved?: object
+  completed?: object
+  denied?: object
+  withdrawn?: object
+}) {
+  return {
+    pending: sections.pending ?? makeSection([]),
+    approved: sections.approved ?? makeSection([]),
+    completed: sections.completed ?? makeSection([]),
+    denied: sections.denied ?? makeSection([]),
+    withdrawn: sections.withdrawn ?? makeSection([]),
+  }
+}
+
+function renderMyRequestsAt(entry: string) {
+  render(
+    <MemoryRouter initialEntries={[entry]}>
+      <Routes>
+        <Route path="/my-requests" element={<MyRequestsPage />} />
+      </Routes>
+    </MemoryRouter>,
+  )
+}
+
+test('a section with more than one page gets its own count and controls', async () => {
+  window.localStorage.setItem('memberId', 'member-1')
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(
+      true,
+      200,
+      makeSectionedBody({
+        pending: makeSection(makeItems(12, makePendingItem, 'Pending'), 40, 1, 12),
+      }),
+    )
+  })
+
+  renderMyRequestsPage()
+
+  await screen.findByText('Showing 1-12 of 40')
+  // The control names the section it belongs to.
+  expect(screen.getByRole('navigation', { name: 'Pending requests pagination' })).toBeTruthy()
+  // The four empty sections show no controls at all.
+  expect(screen.queryByRole('navigation', { name: 'Denied requests pagination' })).toBeNull()
+  expect(screen.queryByRole('navigation', { name: 'Completed requests pagination' })).toBeNull()
+})
+
+test('a section that fits on one page shows no controls', async () => {
+  // Scenario 4, per section.
+  window.localStorage.setItem('memberId', 'member-1')
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(
+      true,
+      200,
+      makeSectionedBody({ pending: makeSection(makeItems(2, makePendingItem, 'Pending'), 2, 1, 12) }),
+    )
+  })
+
+  renderMyRequestsPage()
+
+  await screen.findByText('Pending 0')
+  expect(screen.queryByRole('navigation', { name: 'Pending requests pagination' })).toBeNull()
+})
+
+test('an empty section keeps its empty message and shows no controls', async () => {
+  // Scenario 5, per section.
+  window.localStorage.setItem('memberId', 'member-1')
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, makeSectionedBody({}))
+  })
+
+  renderMyRequestsPage()
+
+  expect(await screen.findByText('You have no pending requests.')).toBeTruthy()
+  expect(screen.queryByRole('navigation', { name: 'Pending requests pagination' })).toBeNull()
+})
+
+test('paging one section changes only that section and its URL param', async () => {
+  // Scenario 7: the point of giving each section its own page number.
+  window.localStorage.setItem('memberId', 'member-1')
+  let lastUrl = ''
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    lastUrl = String(url)
+    const pendingPage = String(url).includes('pending_page=2') ? 2 : 1
+    return makeFakeResponse(
+      true,
+      200,
+      makeSectionedBody({
+        pending: makeSection(makeItems(12, makePendingItem, 'Pending'), 40, pendingPage, 12),
+        denied: makeSection(makeItems(12, makeDeniedItem, 'Denied'), 30, 1, 12),
+      }),
+    )
+  })
+
+  renderMyRequestsPage()
+  await screen.findByText('Showing 1-12 of 40')
+
+  const pendingNav = screen.getByRole('navigation', { name: 'Pending requests pagination' })
+  const pendingNext = within(pendingNav).getByRole('button', { name: 'Next' })
+  fireEvent.click(pendingNext)
+
+  await waitFor(() => {
+    expect(lastUrl).toContain('pending_page=2')
+  })
+  // Only the pending section moved: the denied section is still asked for on
+  // its own first page.
+  expect(lastUrl).toContain('denied_page=1')
+  expect(lastUrl).not.toContain('denied_page=2')
+  expect(await screen.findByText('Showing 13-24 of 40')).toBeTruthy()
+  // The denied section's own count is untouched.
+  expect(screen.getByText('Showing 1-12 of 30')).toBeTruthy()
+})
+
+test('opening ?denied_page=2 deep-links that one section', async () => {
+  // Scenario 2, per section.
+  window.localStorage.setItem('memberId', 'member-1')
+  let lastUrl = ''
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    lastUrl = String(url)
+    return makeFakeResponse(
+      true,
+      200,
+      makeSectionedBody({
+        denied: makeSection(makeItems(12, makeDeniedItem, 'Denied'), 30, 2, 12),
+      }),
+    )
+  })
+
+  renderMyRequestsAt('/my-requests?denied_page=2')
+
+  await screen.findByText('Showing 13-24 of 30')
+  expect(lastUrl).toContain('denied_page=2')
+  expect(lastUrl).toContain('pending_page=1')
+  const deniedNav = screen.getByRole('navigation', { name: 'Denied requests pagination' })
+  expect(within(deniedNav).getByRole('button', { name: 'Page 2' }).getAttribute('aria-current')).toBe('page')
+})
+
+test('a non-numeric section page in the URL is treated as page 1', async () => {
+  // Scenario 10, the frontend half.
+  window.localStorage.setItem('memberId', 'member-1')
+  let lastUrl = ''
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    lastUrl = String(url)
+    return makeFakeResponse(true, 200, makeSectionedBody({}))
+  })
+
+  renderMyRequestsAt('/my-requests?pending_page=oops')
+
+  await waitFor(() => {
+    expect(lastUrl).toContain('pending_page=1')
+  })
 })

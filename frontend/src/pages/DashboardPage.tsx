@@ -21,8 +21,23 @@ import type {
   RequestQueuesResult,
 } from '../services/requestQueueService'
 import { formatTimestamp, getLocalTimeZoneNote } from '../utils/formatTimestamp'
+import type { PagedResponse } from '../utils/pagination'
 import MemberRatingChip from '../components/MemberRatingChip'
 import ReviewLinks from '../components/ReviewLinks'
+
+// The dashboard shows previews of lists that page elsewhere, and it gets no
+// pagination controls of its own (US-33 non-goal): each box is a glance at the
+// list with a "See all" link to the page that does page. It still has to ask for
+// a window, though, because the endpoints are paged now. These two numbers are
+// what it asks for.
+//
+// The community preview shows the newest few listings, so a small window is the
+// whole point of that box. The other three boxes summarize the member's own
+// activity and used to receive every row, so they ask for the largest window the
+// API allows; a member with more than that sees the first hundred here and the
+// full list, paged, on the page the See-all link points to.
+const DASHBOARD_PREVIEW_PAGE_SIZE = 5
+const DASHBOARD_SUMMARY_PAGE_SIZE = 100
 
 function DashboardPage() {
   const memberId = window.localStorage.getItem('memberId') ?? ''
@@ -81,7 +96,10 @@ function DashboardPage() {
 
   useEffect(() => {
     async function loadPreview() {
-      const loadedResult = await sendBrowseListingsRequest(memberId, { limit: 5 })
+      const loadedResult = await sendBrowseListingsRequest(memberId, {
+        page: 1,
+        page_size: DASHBOARD_PREVIEW_PAGE_SIZE,
+      })
       setPreviewResult(loadedResult)
     }
     loadPreview()
@@ -89,7 +107,7 @@ function DashboardPage() {
 
   useEffect(() => {
     async function loadMyListings() {
-      const loadedResult = await sendGetMyListingsRequest(memberId)
+      const loadedResult = await sendGetMyListingsRequest(memberId, 1, DASHBOARD_SUMMARY_PAGE_SIZE)
       setMyListingsResult(loadedResult)
     }
     loadMyListings()
@@ -105,7 +123,13 @@ function DashboardPage() {
 
   useEffect(() => {
     async function loadOutgoing() {
-      const loadedResult = await sendGetMyRequestsRequest(memberId)
+      // This box shows only the pending section, so that is the only page number
+      // worth sending.
+      const loadedResult = await sendGetMyRequestsRequest(
+        memberId,
+        { pending: 1 },
+        DASHBOARD_SUMMARY_PAGE_SIZE,
+      )
       setOutgoingResult(loadedResult)
     }
     loadOutgoing()
@@ -292,7 +316,10 @@ function DashboardPage() {
   } else if (previewResult.errorMessage !== '') {
     previewArea = <p className="text-sm text-error" role="alert">{previewResult.errorMessage}</p>
   } else if (previewResult.ok) {
-    const listings = previewResult.data as ListingDetail[]
+    // Browse is paged, so read the window out of the envelope. This box shows the
+    // window and nothing else: no controls here (US-33 non-goal), just the
+    // "Browse all" link below.
+    const listings = (previewResult.data as PagedResponse<ListingDetail>).items
     if (listings.length === 0) {
       previewArea = <p className="text-sm text-text-muted">No listings yet.</p>
     } else {
@@ -329,7 +356,7 @@ function DashboardPage() {
   } else if (myListingsResult.errorMessage !== '') {
     myActiveArea = <p className="text-sm text-error" role="alert">{myListingsResult.errorMessage}</p>
   } else if (myListingsResult.ok) {
-    const listings = myListingsResult.data as ListingDetail[]
+    const listings = (myListingsResult.data as PagedResponse<ListingDetail>).items
     const activeRows = []
     for (let index = 0; index < listings.length; index = index + 1) {
       const listing = listings[index]
@@ -476,7 +503,9 @@ function DashboardPage() {
     outgoingArea = <p className="text-sm text-error" role="alert">{outgoingResult.errorMessage}</p>
   } else if (outgoingResult.ok) {
     const responseData = outgoingResult.data as MyRequestsResponse
-    const pending = responseData.pending
+    // Each my-requests section is its own paged envelope now; this box shows the
+    // pending one's rows, with no controls of its own.
+    const pending = responseData.pending.items
     if (pending.length === 0) {
       outgoingArea = <p className="text-sm text-text-muted">You have no pending requests.</p>
     } else {

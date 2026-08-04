@@ -23,6 +23,14 @@ from app.models.listing import Listing
 from app.models.listing_photo import ListingPhoto
 from app.models.member import Member
 from app.models.review import Review
+from app.pagination import (
+    DEFAULT_PAGE_SIZE,
+    Page,
+    PageNumber,
+    PageSize,
+    apply_page_window,
+    count_matching_rows,
+)
 from app.schemas.listing import CreateListingRequest, ListingPhotoRef, ListingResponse
 
 logger = logging.getLogger(__name__)
@@ -184,13 +192,21 @@ def browse_listings(
     category: Annotated[str | None, Query()] = None,
     dietary_tags: Annotated[list[str] | None, Query()] = None,
     allergen_tags: Annotated[list[str] | None, Query()] = None,
-    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    page: PageNumber = 1,
+    page_size: PageSize = DEFAULT_PAGE_SIZE,
     current_member: Member = Depends(get_current_member),
     session: Session = Depends(get_db_session),
-) -> list[ListingResponse]:
+) -> Page[ListingResponse]:
     # Browse, search, and filter active listings (US-06 / UC-06). A logged-in,
-    # active member sends optional search text and filters; the route returns the
-    # active listings that match, newest first.
+    # active member sends optional search text and filters; the route returns one
+    # page of the active listings that match, newest first, wrapped in the shared
+    # paged envelope (US-33) so the caller also learns how many matched in total.
+    #
+    # page and page_size replace the single limit this route used to take: a
+    # numbered page is a window (offset plus size), and one plain cap could not
+    # express which window the caller wanted. A caller that only wants the newest
+    # few asks for page 1 with a small page_size, which is what the dashboard's
+    # preview does.
 
     # Permission gate. Same active-member rule and exact messages as get_listing:
     # the insecure X-Member-Id header means a forged suspended id could otherwise
@@ -225,18 +241,28 @@ def browse_listings(
         statement = statement.where(Listing.dietary_tags.contains(dietary_tags))
     if allergen_tags:
         statement = statement.where(Listing.allergen_tags.contains(allergen_tags))
-    # Order newest first, with the id as a tiebreaker so the order is total and
-    # deterministic. Without the tiebreaker, listings that share a created_at
-    # (seed rows all get the same now() inside one transaction) sort in an
-    # arbitrary order, and with LIMIT that means an unrelated UPDATE on one row
-    # could shuffle which rows fall in the window. The unique id breaks every tie
-    # the same way every time.
-    statement = statement.order_by(Listing.created_at.desc(), Listing.id.desc()).limit(limit)
-
     # Wrap the read so a down or unmigrated database returns 503 instead of an
     # unhandled error, matching the other listing routes.
     try:
-        rows = session.scalars(statement).all()
+        # The total across every page, counted from the same filtered statement
+        # before the page window narrows it, so the count the member reads
+        # ("of 40") always describes the list they are paging.
+        total_count = count_matching_rows(session, statement)
+
+        # Order newest first, with the id as a tiebreaker so the order is total
+        # and deterministic. Without the tiebreaker, listings that share a
+        # created_at (seed rows all get the same now() inside one transaction)
+        # sort in an arbitrary order, and with a page window that means an
+        # unrelated UPDATE on one row could shuffle which rows fall in the
+        # window, so a row could show up on two pages or on none. The unique id
+        # breaks every tie the same way every time, which is what makes offset
+        # paging safe here.
+        windowed_statement = apply_page_window(
+            statement.order_by(Listing.created_at.desc(), Listing.id.desc()),
+            page,
+            page_size,
+        )
+        rows = session.scalars(windowed_statement).all()
         listing_ids = []
         for row in rows:
             listing_ids.append(row.id)
@@ -352,16 +378,22 @@ def browse_listings(
                 owner_rating_count=owner_rating_count,
             )
         )
-    return results
+    # total_count comes from the COUNT above, not from len(results): the loop can
+    # skip a malformed row, and the count must keep describing what the filters
+    # matched in the database.
+    return Page(items=results, total=total_count, page=page, page_size=page_size)
 
 
 @router.get("/my-listings")
 def get_my_listings(
+    page: PageNumber = 1,
+    page_size: PageSize = DEFAULT_PAGE_SIZE,
     current_member: Member = Depends(get_current_member),
     session: Session = Depends(get_db_session),
-) -> list[ListingResponse]:
-    # The caller's own listings, active and deactivated, newest first (US-24).
-    # This mirrors browse_listings but drops the active-only filter and the search
+) -> Page[ListingResponse]:
+    # One page of the caller's own listings, active and deactivated, newest first
+    # (US-24), in the same paged envelope browse_listings returns (US-33). This
+    # mirrors browse_listings but drops the active-only filter and the search
     # filters, scopes to the caller's own rows, and adds deactivated_by so the
     # page can tell an admin takedown apart from an owner one.
     #
@@ -383,19 +415,24 @@ def get_my_listings(
             detail="Your account is not active, so you cannot view listings.",
         )
 
-    # Every listing the caller owns, any status, newest first. The id is a
-    # tiebreaker so rows that share a created_at sort in a stable, repeatable
-    # order, the same rule browse_listings uses.
-    statement = (
-        select(Listing)
-        .where(Listing.owner_id == current_member.id)
-        .order_by(Listing.created_at.desc(), Listing.id.desc())
-    )
+    # Every listing the caller owns, any status. The window is added below.
+    statement = select(Listing).where(Listing.owner_id == current_member.id)
 
     # Wrap the read so a down or unmigrated database returns 503 instead of an
     # unhandled error, matching the other listing routes.
     try:
-        rows = session.scalars(statement).all()
+        # The total across every page, counted before the window narrows it.
+        total_count = count_matching_rows(session, statement)
+
+        # Newest first. The id is a tiebreaker so rows that share a created_at
+        # sort in a stable, repeatable order, the same rule browse_listings uses
+        # and the reason offset paging is safe over this order.
+        windowed_statement = apply_page_window(
+            statement.order_by(Listing.created_at.desc(), Listing.id.desc()),
+            page,
+            page_size,
+        )
+        rows = session.scalars(windowed_statement).all()
         listing_ids = []
         for row in rows:
             listing_ids.append(row.id)
@@ -475,7 +512,7 @@ def get_my_listings(
                 photos=photos,
             )
         )
-    return results
+    return Page(items=results, total=total_count, page=page, page_size=page_size)
 
 
 @router.get("/listings/{listing_id}")

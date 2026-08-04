@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { MouseEvent } from 'react'
-import { Link } from 'react-router'
+import { Link, useSearchParams } from 'react-router'
 
 import {
   sendDeactivateListingRequest,
@@ -10,6 +10,9 @@ import {
 import type { ListingDetail, ListingResult } from '../services/listingService'
 import { clearStoredLogin } from '../services/authService'
 import { formatTimestamp, getLocalTimeZoneNote } from '../utils/formatTimestamp'
+import { DEFAULT_PAGE_SIZE, clampPage, countPages, readPageParam } from '../utils/pagination'
+import type { PagedResponse } from '../utils/pagination'
+import Pagination from '../components/Pagination'
 
 // "Browse My Listings": every listing the logged-in member owns, active and
 // deactivated, newest first. The owner can deactivate an active listing here.
@@ -23,6 +26,12 @@ function MyListingsPage() {
   // state so a stale-session 401 can flip the page to logged-out without a
   // reload, the same as MyRequestsPage.
   const memberId = window.localStorage.getItem('memberId') ?? ''
+
+  // The page being shown lives in the URL (?page=2), so a page is bookmarkable
+  // and the back button walks back through the pages the member visited.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const currentQueryText = searchParams.toString()
+  const requestedPage = readPageParam(searchParams, 'page')
 
   // Holds the whole response. null means it has not loaded yet, which doubles as
   // the loading state.
@@ -52,13 +61,18 @@ function MyListingsPage() {
   // of the request in flight (listing id plus member id).
   const reactivateInFlightRef = useRef('')
 
-  // Load the caller's listings when the page has a logged-in member, and again
-  // whenever reloadCounter changes after a successful status change.
+  // Load the caller's listings when the page has a logged-in member, again
+  // whenever reloadCounter changes after a successful status change, and again
+  // whenever the URL asks for a different page.
   useEffect(() => {
     latestRequestNumber.current = latestRequestNumber.current + 1
     const requestNumber = latestRequestNumber.current
     async function loadMyListings() {
-      const loadedResult = await sendGetMyListingsRequest(memberId)
+      const loadedResult = await sendGetMyListingsRequest(
+        memberId,
+        requestedPage,
+        DEFAULT_PAGE_SIZE,
+      )
       if (requestNumber !== latestRequestNumber.current) {
         return
       }
@@ -71,7 +85,33 @@ function MyListingsPage() {
       setResult(loadedResult)
     }
     loadMyListings()
-  }, [memberId, reloadCounter])
+  }, [memberId, reloadCounter, requestedPage])
+
+  // A page past the end (a stale bookmark, or a listing that left the list)
+  // comes back empty with the true total, so move to the last real page and show
+  // its rows (Scenario 6). Replacing the history entry keeps the back button
+  // pointed at where the member came from.
+  useEffect(() => {
+    if (result === null || result.ok === false) {
+      return
+    }
+    const pagedListings = result.data as PagedResponse<ListingDetail>
+    const totalPages = countPages(pagedListings.total, pagedListings.page_size)
+    const pageToShow = clampPage(pagedListings.page, totalPages)
+    if (pageToShow === pagedListings.page) {
+      return
+    }
+    const clampedParams = new URLSearchParams(currentQueryText)
+    clampedParams.set('page', String(pageToShow))
+    setSearchParams(clampedParams, { replace: true })
+  }, [result, currentQueryText, setSearchParams])
+
+  // Move to another page. Any other query param the URL carries is kept.
+  function handlePageChange(nextPage: number) {
+    const nextParams = new URLSearchParams(currentQueryText)
+    nextParams.set('page', String(nextPage))
+    setSearchParams(nextParams)
+  }
 
   // True only when an admin deactivated this listing (status deactivated and
   // deactivated_by set). An owner deactivation leaves deactivated_by null.
@@ -330,7 +370,9 @@ function MyListingsPage() {
       </div>
     )
   } else if (result.ok) {
-    const listings = result.data as ListingDetail[]
+    // The paged envelope: this window's listings plus the owner's total.
+    const pagedListings = result.data as PagedResponse<ListingDetail>
+    const listings = pagedListings.items
     if (listings.length === 0) {
       contentArea = (
         <div className="text-center py-12">
@@ -355,6 +397,14 @@ function MyListingsPage() {
         <>
           <p className="text-xs text-text-muted mb-4">{timeZoneNote}</p>
           <ul className="space-y-4">{rows}</ul>
+          {/* Renders nothing when every listing fits on one page. */}
+          <Pagination
+            page={pagedListings.page}
+            pageSize={pagedListings.page_size}
+            total={pagedListings.total}
+            onPageChange={handlePageChange}
+            label="Your listings"
+          />
           <p className="text-xs text-text-muted mt-4">{timeZoneNote}</p>
         </>
       )

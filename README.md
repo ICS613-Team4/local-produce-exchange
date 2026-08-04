@@ -390,6 +390,57 @@ models in the same change, and check that the generated migration drops the
 referencing tables or constraints first. PostgreSQL won't drop a table that
 another table still points to.
 
+## Pagination
+
+Four pages show numbered pages instead of one unbounded list: Browse, My
+Listings, My Requests, and Incoming Requests. They all use the same pattern, so
+adding paging to a new list means reusing these pieces rather than inventing
+another one.
+
+**One page size.** Twelve rows per page, in two constants that must agree:
+`DEFAULT_PAGE_SIZE` in `backend/app/pagination.py` and the one in
+`frontend/src/utils/pagination.ts`. `page_size` can be overridden per request up
+to 100; anything larger is a 422.
+
+**One response shape.** Every paged endpoint answers with the same envelope:
+
+```json
+{ "items": [], "total": 0, "page": 1, "page_size": 12 }
+```
+
+`total` is a `COUNT(*)` over the same filters as the window, so the count the
+member reads always describes the list they are paging. Paging is plain
+`OFFSET`/`LIMIT` over the ordering each query already had. That is safe because
+every one of those orderings ends with the row id as a tiebreaker, which makes
+the order total: without it, rows sharing a timestamp could swap places between
+two requests and show up twice or not at all.
+
+**The endpoints.** `GET /api/listings` and `GET /api/my-listings` take `page`
+and `page_size` and return the envelope directly. `GET /api/my-requests` returns
+five envelopes, one per status section, and takes a page number per section
+(`pending_page`, `approved_page`, `completed_page`, `denied_page`,
+`withdrawn_page`) plus one shared `page_size`, so paging one section leaves the
+other four where they were. `GET /api/request-queues/all` pages the LISTINGS:
+`items` holds listing groups and `total` counts listings, while every request
+inside a listed listing stays in the response.
+
+**Out-of-range pages.** The backend does not clamp. A page past the end answers
+honestly with no items and the true total; the frontend uses that to send the
+member to the last real page. A missing or non-numeric `?page` in the URL reads
+as page 1.
+
+**On the frontend.** `frontend/src/components/Pagination.tsx` is the one control
+(Prev, numbered pages, Next, and a "Showing X-Y of N" line). It is
+presentational: it reports a click through `onPageChange`, and the page it sits
+on owns the URL. The current page lives in the URL (`?page=2`), and on Browse the
+filters do too, so a page is bookmarkable and the back button works. The control
+renders nothing when everything fits on one page, so short and empty lists look
+exactly as they did before.
+
+The Dashboard and the Exchange Thread deliberately have no controls. The
+dashboard's boxes are previews with See-all links, so they ask for a window and
+render it without offering paging.
+
 ## Tests
 
 ### Coverage Reports
@@ -421,6 +472,8 @@ frontend/
     components/
       Layout.test.tsx           Vitest component tests for the shared
                                 layout and auth-aware nav.
+      Pagination.test.tsx       Vitest component tests for the shared
+                                pagination control.
       RequireAuth.test.tsx      Vitest component tests for the member-only
                                 route guard.
     pages/
@@ -458,6 +511,8 @@ frontend/
       formatApiResult.test.ts   Vitest unit tests for response text
                                 formatting.
       formatTimestamp.test.ts   Vitest unit tests for timestamp formatting.
+      pagination.test.ts        Vitest unit tests for the shared paging
+                                helpers.
 ```
 
 ### Backend Tests
@@ -488,6 +543,8 @@ backend/
     test_my_claim.py           pytest unit tests for a viewer's own claim.
     test_my_requests.py        pytest unit tests for the outgoing-requests
                                view.
+    test_pagination.py         pytest unit tests for the shared paging
+                               envelope and query helpers.
     test_request_queues.py     pytest unit tests for incoming-request queues.
     test_sample_endpoint.py    pytest unit tests for the sample endpoint.
     test_security.py           pytest unit tests for password and

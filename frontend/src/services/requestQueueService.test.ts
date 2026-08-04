@@ -190,12 +190,93 @@ test('gets my requests at /api/my-requests with the member id header', async () 
   expect(result.status).toBe(200)
   expect(JSON.stringify(result.data)).toBe(JSON.stringify(responseBody))
   expect(result.errorMessage).toBe('')
-  // No filter, so the URL has no query string.
-  expect(requestUrl).toBe('/api/my-requests')
+  // With no section pages named, only the shared page size is sent, so every
+  // section stays on its first page.
+  expect(requestUrl).toBe('/api/my-requests?page_size=12')
   expect(requestOptions.method).toBe('GET')
   expect(JSON.stringify(requestOptions.headers)).toContain('X-Member-Id')
   expect(JSON.stringify(requestOptions.headers)).toContain('member-123')
   expect(requestOptions.signal).toBeTruthy()
+})
+
+// --- US-33: each my-requests section carries its own page number ---
+
+test('my requests sends one page param per named section', async () => {
+  let requestUrl = ''
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    requestUrl = String(url)
+    return makeFakeResponse(true, 200, JSON.stringify({}))
+  })
+
+  await sendGetMyRequestsRequest('member-123', {
+    pending: 2,
+    approved: 1,
+    completed: 4,
+    denied: 1,
+    withdrawn: 3,
+  })
+
+  expect(requestUrl).toContain('pending_page=2')
+  expect(requestUrl).toContain('approved_page=1')
+  expect(requestUrl).toContain('completed_page=4')
+  expect(requestUrl).toContain('denied_page=1')
+  expect(requestUrl).toContain('withdrawn_page=3')
+  expect(requestUrl).toContain('page_size=12')
+})
+
+test('my requests leaves out the sections it was not given', async () => {
+  // A section with no page of its own sends no param, so the backend leaves it
+  // on page 1 and the other sections are unaffected.
+  let requestUrl = ''
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    requestUrl = String(url)
+    return makeFakeResponse(true, 200, JSON.stringify({}))
+  })
+
+  await sendGetMyRequestsRequest('member-123', { pending: 3 })
+
+  expect(requestUrl).toContain('pending_page=3')
+  expect(requestUrl).not.toContain('approved_page')
+  expect(requestUrl).not.toContain('completed_page')
+  expect(requestUrl).not.toContain('denied_page')
+  expect(requestUrl).not.toContain('withdrawn_page')
+})
+
+test('my requests sends the page size it was given', async () => {
+  let requestUrl = ''
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    requestUrl = String(url)
+    return makeFakeResponse(true, 200, JSON.stringify({}))
+  })
+
+  await sendGetMyRequestsRequest('member-123', {}, 100)
+
+  expect(requestUrl).toBe('/api/my-requests?page_size=100')
+})
+
+test('my requests hands back each section as its own paged envelope', async () => {
+  const responseBody = {
+    pending: { items: [{ id: 'c1' }], total: 20, page: 2, page_size: 12 },
+    approved: { items: [], total: 0, page: 1, page_size: 12 },
+    completed: { items: [], total: 0, page: 1, page_size: 12 },
+    denied: { items: [], total: 0, page: 1, page_size: 12 },
+    withdrawn: { items: [], total: 0, page: 1, page_size: 12 },
+  }
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, JSON.stringify(responseBody))
+  })
+
+  const result = await sendGetMyRequestsRequest('member-123', { pending: 2 })
+
+  const data = result.data as {
+    pending: { items: unknown[]; total: number; page: number }
+    approved: { total: number; page: number }
+  }
+  expect(data.pending.items.length).toBe(1)
+  expect(data.pending.total).toBe(20)
+  expect(data.pending.page).toBe(2)
+  // The other sections came back on their own first pages.
+  expect(data.approved.page).toBe(1)
 })
 
 test('my requests maps an HTTP error response into the result object', async () => {
@@ -649,7 +730,7 @@ test('withdraw returns a timeout message when the request times out', async () =
 
 test('gets all requests at /api/request-queues/all with the member id header', async () => {
   const responseBody = {
-    groups: [
+    items: [
       {
         listing_id: 'l1',
         listing_title: 'Lemons',
@@ -657,6 +738,9 @@ test('gets all requests at /api/request-queues/all with the member id header', a
         requests: [],
       },
     ],
+    total: 1,
+    page: 1,
+    page_size: 12,
   }
   let requestUrl = ''
   let requestOptions: RequestInit = {}
@@ -674,8 +758,8 @@ test('gets all requests at /api/request-queues/all with the member id header', a
   expect(result.status).toBe(200)
   expect(JSON.stringify(result.data)).toBe(JSON.stringify(responseBody))
   expect(result.errorMessage).toBe('')
-  // With no listing id, the URL carries no query string.
-  expect(requestUrl).toBe('/api/request-queues/all')
+  // With no listing id, the query string is just the page window.
+  expect(requestUrl).toBe('/api/request-queues/all?page=1&page_size=12')
   expect(requestOptions.method).toBe('GET')
   expect(JSON.stringify(requestOptions.headers)).toContain('X-Member-Id')
   expect(JSON.stringify(requestOptions.headers)).toContain('member-123')
@@ -686,12 +770,60 @@ test('all requests appends the listing id as a query param when given one', asyn
   let requestUrl = ''
   vi.stubGlobal('fetch', async (url: string | URL | Request) => {
     requestUrl = String(url)
-    return makeFakeResponse(true, 200, JSON.stringify({ groups: [] }))
+    return makeFakeResponse(true, 200, JSON.stringify({ items: [], total: 0, page: 1, page_size: 12 }))
   })
 
   await sendGetAllRequestsRequest('member-123', 'listing-abc')
 
-  expect(requestUrl).toBe('/api/request-queues/all?listing=listing-abc')
+  expect(requestUrl).toBe('/api/request-queues/all?listing=listing-abc&page=1&page_size=12')
+})
+
+// --- US-33: all requests pages the listings, filter and all ---
+
+test('all requests sends the page window it was given', async () => {
+  let requestUrl = ''
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    requestUrl = String(url)
+    return makeFakeResponse(true, 200, JSON.stringify({ items: [], total: 0, page: 3, page_size: 12 }))
+  })
+
+  await sendGetAllRequestsRequest('member-123', '', 3, 12)
+
+  expect(requestUrl).toBe('/api/request-queues/all?page=3&page_size=12')
+})
+
+test('all requests keeps the listing filter alongside the page window', async () => {
+  let requestUrl = ''
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    requestUrl = String(url)
+    return makeFakeResponse(true, 200, JSON.stringify({ items: [], total: 0, page: 2, page_size: 12 }))
+  })
+
+  await sendGetAllRequestsRequest('member-123', 'listing-abc', 2, 12)
+
+  expect(requestUrl).toContain('listing=listing-abc')
+  expect(requestUrl).toContain('page=2')
+  expect(requestUrl).toContain('page_size=12')
+})
+
+test('all requests hands back the paged envelope of listing groups', async () => {
+  const responseBody = {
+    items: [{ listing_id: 'l1', listing_title: 'Lemons', remaining_quantity: 4, requests: [] }],
+    total: 25,
+    page: 2,
+    page_size: 12,
+  }
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, JSON.stringify(responseBody))
+  })
+
+  const result = await sendGetAllRequestsRequest('member-123', '', 2, 12)
+
+  const data = result.data as { items: unknown[]; total: number; page: number }
+  expect(data.items.length).toBe(1)
+  // total counts the caller's listings, which is what pages here.
+  expect(data.total).toBe(25)
+  expect(data.page).toBe(2)
 })
 
 test('all requests maps an HTTP error response into the result object', async () => {

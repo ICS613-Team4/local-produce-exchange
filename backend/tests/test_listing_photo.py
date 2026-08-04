@@ -609,8 +609,8 @@ def test_photos_appear_in_listing_detail_browse_and_owner_responses(db_session):
     first_photo = insert_photo(db_session, listing, position=0, content_type="image/png")
 
     detail = get_listing(str(listing.id), owner, db_session)
-    browse = browse_listings(current_member=owner, session=db_session)
-    mine = get_my_listings(owner, db_session)
+    browse = browse_listings(current_member=owner, session=db_session).items
+    mine = get_my_listings(current_member=owner, session=db_session).items
 
     assert [photo.id for photo in detail.photos] == [str(first_photo.id), str(later_photo.id)]
     assert detail.photos[0].content_type == "image/png"

@@ -520,20 +520,60 @@ test('browses with filters, building search text, category, and repeated tag par
     category: 'Fruit',
     dietary_tags: ['vegan', 'gluten-free'],
     allergen_tags: ['contains nuts'],
-    limit: 25,
+    page: 2,
+    page_size: 25,
   }
   const result = await sendBrowseListingsRequest('member-123', filters)
 
   expect(result.ok).toBe(true)
   // The query string carries the search text, the category, each tag as its own
-  // repeated param, and the limit. A space inside a tag is encoded as a plus.
+  // repeated param, and the page window. A space inside a tag is encoded as a
+  // plus.
   expect(requestUrl).toContain('/api/listings?')
   expect(requestUrl).toContain('q=lemon')
   expect(requestUrl).toContain('category=Fruit')
   expect(requestUrl).toContain('dietary_tags=vegan')
   expect(requestUrl).toContain('dietary_tags=gluten-free')
   expect(requestUrl).toContain('allergen_tags=contains+nuts')
-  expect(requestUrl).toContain('limit=25')
+  expect(requestUrl).toContain('page=2')
+  expect(requestUrl).toContain('page_size=25')
+})
+
+// --- US-33: browse sends the page window and reads the paged envelope ---
+
+test('browse sends the page and page size it was given', async () => {
+  let requestUrl = ''
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    requestUrl = String(url)
+    return makeFakeResponse(true, 200, JSON.stringify({ items: [], total: 0, page: 3, page_size: 12 }))
+  })
+
+  await sendBrowseListingsRequest('member-123', { page: 3, page_size: 12 })
+
+  expect(requestUrl).toContain('page=3')
+  expect(requestUrl).toContain('page_size=12')
+})
+
+test('browse hands back the paged envelope as the response data', async () => {
+  const responseBody = {
+    items: [{ id: 'l1', title: 'Lemons', status: 'active' }],
+    total: 40,
+    page: 2,
+    page_size: 12,
+  }
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, JSON.stringify(responseBody))
+  })
+
+  const result = await sendBrowseListingsRequest('member-123', { page: 2, page_size: 12 })
+
+  // The service does not unwrap the envelope: the page needs the total and the
+  // page numbers to draw its controls, not just the rows.
+  const data = result.data as { items: unknown[]; total: number; page: number; page_size: number }
+  expect(data.items.length).toBe(1)
+  expect(data.total).toBe(40)
+  expect(data.page).toBe(2)
+  expect(data.page_size).toBe(12)
 })
 
 test('browse omits empty filter fields from the query string', async () => {
@@ -632,12 +672,44 @@ test('gets my listings at /api/my-listings with the member id header', async () 
   expect(result.status).toBe(200)
   expect(JSON.stringify(result.data)).toBe(JSON.stringify(responseBody))
   expect(result.errorMessage).toBe('')
-  // No filters, so the URL is the plain my-listings path.
-  expect(requestUrl).toBe('/api/my-listings')
+  // This endpoint takes no filters, so paging is the whole query string. Called
+  // with no window, it asks for the first page of the shared default size.
+  expect(requestUrl).toBe('/api/my-listings?page=1&page_size=12')
   expect(requestOptions.method).toBe('GET')
   expect(JSON.stringify(requestOptions.headers)).toContain('X-Member-Id')
   expect(JSON.stringify(requestOptions.headers)).toContain('member-123')
   expect(requestOptions.signal).toBeTruthy()
+})
+
+test('my listings asks for the page and size it was given', async () => {
+  let requestUrl = ''
+  vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+    requestUrl = String(url)
+    return makeFakeResponse(true, 200, JSON.stringify({ items: [], total: 0, page: 4, page_size: 5 }))
+  })
+
+  await sendGetMyListingsRequest('member-123', 4, 5)
+
+  expect(requestUrl).toBe('/api/my-listings?page=4&page_size=5')
+})
+
+test('my listings hands back the paged envelope as the response data', async () => {
+  const responseBody = {
+    items: [{ id: 'l1', title: 'Mine', status: 'active', deactivated_by: null }],
+    total: 30,
+    page: 2,
+    page_size: 12,
+  }
+  vi.stubGlobal('fetch', async () => {
+    return makeFakeResponse(true, 200, JSON.stringify(responseBody))
+  })
+
+  const result = await sendGetMyListingsRequest('member-123', 2)
+
+  const data = result.data as { items: unknown[]; total: number; page: number }
+  expect(data.items.length).toBe(1)
+  expect(data.total).toBe(30)
+  expect(data.page).toBe(2)
 })
 
 test('my listings maps an HTTP error response into the result object', async () => {

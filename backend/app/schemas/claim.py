@@ -11,6 +11,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
+from app.pagination import Page
 from app.schemas.listing import ListingPhotoRef
 
 
@@ -117,14 +118,19 @@ class MyRequestItem(BaseModel):
 
 
 # The "my requests" response, split into the five sections the page shows. Each
-# list is newest-first with a stable id tiebreaker. An empty list means that
-# section has nothing.
+# section is its own paged envelope (US-33), because the page stacks all five at
+# once: a member can have forty completed exchanges and two pending ones, so one
+# shared page number would page the five sections in lockstep and make no sense
+# for any of them. Each section carries its own items, its own total, and the
+# page number it was built from, and the page gives each one its own controls and
+# its own URL param. Each section's items are newest-first with a stable id
+# tiebreaker. An empty items list means that section has nothing on this page.
 class MyRequestsResponse(BaseModel):
-    pending: list[MyRequestItem]
-    approved: list[MyRequestItem]
-    completed: list[MyRequestItem]
-    denied: list[MyRequestItem]
-    withdrawn: list[MyRequestItem]
+    pending: Page[MyRequestItem]
+    approved: Page[MyRequestItem]
+    completed: Page[MyRequestItem]
+    denied: Page[MyRequestItem]
+    withdrawn: Page[MyRequestItem]
 
 
 # One request in the poster's full per-listing history (US-24). Unlike
@@ -178,8 +184,11 @@ class ListingAllRequestsGroup(BaseModel):
     photos: list[ListingPhotoRef] = Field(default_factory=list)
 
 
-# The whole all-requests response (US-24): one group per active listing the
-# caller owns, including listings with no requests. An empty list means the
-# caller has no active listings.
-class AllRequestsResponse(BaseModel):
-    groups: list[ListingAllRequestsGroup]
+# The whole all-requests response (US-24, paged by US-33): one page of the
+# listings the caller owns, each with its requests, including active listings
+# that have no requests. The paged unit is the LISTING, not the request: items
+# holds this page's listing groups and total counts the caller's listed
+# listings, while every request inside a group stays visible, because one
+# listing's request count is small. An empty items list means the caller has
+# nothing to show on this page.
+AllRequestsResponse = Page[ListingAllRequestsGroup]

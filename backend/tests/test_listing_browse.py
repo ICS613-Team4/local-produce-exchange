@@ -6,7 +6,6 @@
 # params bind as lists; they use a tiny hand-built ASGI GET helper instead of
 # adding httpx just for this file.
 
-import asyncio
 import json
 import uuid
 from datetime import datetime, timezone
@@ -24,6 +23,7 @@ from app.models.listing_photo import ListingPhoto
 from app.models.member import Member
 from app.models.review import Review
 from app.routers.listing import browse_listings
+from tests.asgi_client import call_asgi_get
 
 
 def insert_member(session, status="active", email="viewer@example.com"):
@@ -96,52 +96,6 @@ def collect_titles(items):
     return titles
 
 
-async def call_asgi_get(path_with_query):
-    # Drive the FastAPI app once for a GET request and collect the response
-    # status and body. This builds a minimal ASGI HTTP scope by hand and calls
-    # the app the way a server would, which avoids adding httpx just for the two
-    # wiring/binding tests below. The caller sets app.dependency_overrides for
-    # the auth and session dependencies before calling this.
-    if "?" in path_with_query:
-        raw_path, query_string = path_with_query.split("?", 1)
-    else:
-        raw_path = path_with_query
-        query_string = ""
-
-    scope = {
-        "type": "http",
-        "asgi": {"version": "3.0"},
-        "http_version": "1.1",
-        "method": "GET",
-        "scheme": "http",
-        "path": raw_path,
-        "raw_path": raw_path.encode("utf-8"),
-        "query_string": query_string.encode("utf-8"),
-        "headers": [],
-        "server": ("testserver", 80),
-        "client": ("testclient", 12345),
-    }
-
-    received_messages = []
-
-    async def receive():
-        return {"type": "http.request", "body": b"", "more_body": False}
-
-    async def send(message):
-        received_messages.append(message)
-
-    await app(scope, receive, send)
-
-    status_code = None
-    body_bytes = b""
-    for message in received_messages:
-        if message["type"] == "http.response.start":
-            status_code = message["status"]
-        elif message["type"] == "http.response.body":
-            body_bytes = body_bytes + message.get("body", b"")
-    return status_code, body_bytes
-
-
 # --- happy path (Scenario 1): newest-first ordering ---
 
 
@@ -160,7 +114,7 @@ def test_browse_returns_newest_first(db_session):
         created_at=datetime(2026, 5, 1, 9, 0, tzinfo=timezone.utc),
     )
 
-    results = browse_listings(current_member=member, session=db_session)
+    results = browse_listings(current_member=member, session=db_session).items
 
     assert len(results) == 2
     assert results[0].title == "Newer"
@@ -182,7 +136,7 @@ def test_browse_carries_the_owner_name_and_photos(db_session):
     )
     db_session.commit()
 
-    results = browse_listings(current_member=member, session=db_session)
+    results = browse_listings(current_member=member, session=db_session).items
 
     assert len(results) == 1
     assert results[0].owner_name == "Viewer"
@@ -224,7 +178,7 @@ def test_browse_order_is_deterministic_when_timestamps_tie(db_session):
     for index in range(3):
         expected_top_three.append(str(ids_by_rule[index]))
 
-    first = browse_listings(limit=3, current_member=member, session=db_session)
+    first = browse_listings(page_size=3, current_member=member, session=db_session).items
     first_ids = []
     for item in first:
         first_ids.append(item.id)
@@ -235,7 +189,7 @@ def test_browse_order_is_deterministic_when_timestamps_tie(db_session):
     listings[0].remaining_quantity = 1
     db_session.commit()
 
-    second = browse_listings(limit=3, current_member=member, session=db_session)
+    second = browse_listings(page_size=3, current_member=member, session=db_session).items
     second_ids = []
     for item in second:
         second_ids.append(item.id)
@@ -251,7 +205,7 @@ def test_browse_excludes_inactive_listings(db_session, inactive_status):
     insert_listing(db_session, member, title="Active one", status="active")
     insert_listing(db_session, member, title="Hidden one", status=inactive_status)
 
-    results = browse_listings(current_member=member, session=db_session)
+    results = browse_listings(current_member=member, session=db_session).items
 
     titles = collect_titles(results)
     assert "Active one" in titles
@@ -267,7 +221,7 @@ def test_browse_search_matches_title_case_insensitive(db_session):
     insert_listing(db_session, member, title="Fresh Tomatoes", description="Red and ripe.")
 
     # Lower-case "lemon" must still match the capitalized title "Lemons".
-    results = browse_listings(q="lemon", current_member=member, session=db_session)
+    results = browse_listings(q="lemon", current_member=member, session=db_session).items
 
     assert len(results) == 1
     assert results[0].title == "Backyard Meyer Lemons"
@@ -278,7 +232,7 @@ def test_browse_search_matches_description_case_insensitive(db_session):
     insert_listing(db_session, member, title="Mystery Box", description="Full of LEMON zest.")
     insert_listing(db_session, member, title="Tomatoes", description="Red and ripe.")
 
-    results = browse_listings(q="lemon", current_member=member, session=db_session)
+    results = browse_listings(q="lemon", current_member=member, session=db_session).items
 
     assert len(results) == 1
     assert results[0].title == "Mystery Box"
@@ -292,7 +246,7 @@ def test_browse_filters_by_category(db_session):
     insert_listing(db_session, member, title="Lemons", category="Fruit")
     insert_listing(db_session, member, title="Lettuce", category="Vegetables")
 
-    results = browse_listings(category="Fruit", current_member=member, session=db_session)
+    results = browse_listings(category="Fruit", current_member=member, session=db_session).items
 
     assert len(results) == 1
     assert results[0].title == "Lemons"
@@ -303,7 +257,7 @@ def test_browse_filters_by_dietary_tag(db_session):
     insert_listing(db_session, member, title="GF Squash", dietary_tags=["vegan", "gluten-free"])
     insert_listing(db_session, member, title="Plain", dietary_tags=["vegan"])
 
-    results = browse_listings(dietary_tags=["gluten-free"], current_member=member, session=db_session)
+    results = browse_listings(dietary_tags=["gluten-free"], current_member=member, session=db_session).items
 
     assert len(results) == 1
     assert results[0].title == "GF Squash"
@@ -314,7 +268,7 @@ def test_browse_filters_by_allergen_tag(db_session):
     insert_listing(db_session, member, title="Banana Bread", allergen_tags=["contains wheat", "contains nuts"])
     insert_listing(db_session, member, title="Lemons", allergen_tags=[])
 
-    results = browse_listings(allergen_tags=["contains nuts"], current_member=member, session=db_session)
+    results = browse_listings(allergen_tags=["contains nuts"], current_member=member, session=db_session).items
 
     assert len(results) == 1
     assert results[0].title == "Banana Bread"
@@ -359,7 +313,7 @@ def test_browse_combines_filters_with_and(db_session):
         dietary_tags=["vegan"],
         current_member=member,
         session=db_session,
-    )
+    ).items
 
     assert len(results) == 1
     assert results[0].title == "Sweet Lemons"
@@ -372,26 +326,157 @@ def test_browse_no_matches_returns_empty_list(db_session):
     member = insert_member(db_session, "active")
     insert_listing(db_session, member, title="Lemons", category="Fruit")
 
-    results = browse_listings(q="nothingmatchesthisxyz", current_member=member, session=db_session)
+    results = browse_listings(q="nothingmatchesthisxyz", current_member=member, session=db_session).items
 
     assert results == []
 
 
-# --- the limit is honored, newest first ---
+# --- US-33: paging the browse list ---
 
 
-def test_browse_honors_limit(db_session):
+def insert_numbered_listings(session, owner, count):
+    # count listings titled "Item 00", "Item 01", ... each one minute newer than
+    # the last, so newest-first order is the exact reverse of the titles and every
+    # paging assertion below can name the rows it expects.
+    created = []
+    for index in range(count):
+        created.append(
+            insert_listing(
+                session,
+                owner,
+                title="Item " + str(index).zfill(2),
+                created_at=datetime(2026, 1, 1, 9, index, tzinfo=timezone.utc),
+            )
+        )
+    return created
+
+
+def test_browse_page_size_is_honored_newest_first(db_session):
     member = insert_member(db_session, "active")
     insert_listing(db_session, member, title="A", created_at=datetime(2026, 1, 1, 9, 0, tzinfo=timezone.utc))
     insert_listing(db_session, member, title="B", created_at=datetime(2026, 2, 1, 9, 0, tzinfo=timezone.utc))
     insert_listing(db_session, member, title="C", created_at=datetime(2026, 3, 1, 9, 0, tzinfo=timezone.utc))
 
-    results = browse_listings(limit=2, current_member=member, session=db_session)
+    response = browse_listings(page_size=2, current_member=member, session=db_session)
 
-    # Only two come back, and they are the two newest in newest-first order.
-    assert len(results) == 2
-    assert results[0].title == "C"
-    assert results[1].title == "B"
+    # Only two come back, and they are the two newest in newest-first order. The
+    # total still counts all three, which is what lets the page say "of 3".
+    assert len(response.items) == 2
+    assert response.items[0].title == "C"
+    assert response.items[1].title == "B"
+    assert response.total == 3
+    assert response.page == 1
+    assert response.page_size == 2
+
+
+def test_browse_defaults_to_page_one_and_twelve_rows(db_session):
+    member = insert_member(db_session, "active")
+    insert_numbered_listings(db_session, member, 15)
+
+    response = browse_listings(current_member=member, session=db_session)
+
+    # No page or page_size sent: page 1 of 12, with the true total behind it.
+    assert response.page == 1
+    assert response.page_size == 12
+    assert response.total == 15
+    assert len(response.items) == 12
+    # Newest first, so the highest-numbered title leads.
+    assert response.items[0].title == "Item 14"
+    assert response.items[11].title == "Item 03"
+
+
+def test_browse_second_page_is_the_next_window(db_session):
+    member = insert_member(db_session, "active")
+    insert_numbered_listings(db_session, member, 15)
+
+    response = browse_listings(page=2, current_member=member, session=db_session)
+
+    # The window picks up exactly where page 1 stopped, with no row repeated and
+    # none skipped, and the total is the same on every page.
+    assert response.page == 2
+    assert response.total == 15
+    titles = collect_titles(response.items)
+    assert titles == ["Item 02", "Item 01", "Item 00"]
+
+
+def test_browse_page_past_the_end_is_empty_with_the_true_total(db_session):
+    member = insert_member(db_session, "active")
+    insert_numbered_listings(db_session, member, 15)
+
+    response = browse_listings(page=9, page_size=12, current_member=member, session=db_session)
+
+    # The backend does not clamp: it answers honestly that this window holds
+    # nothing and reports the real total, so the caller can work out the last
+    # valid page and go there.
+    assert response.items == []
+    assert response.total == 15
+    assert response.page == 9
+
+
+def test_browse_paging_combines_with_the_filters(db_session):
+    member = insert_member(db_session, "active")
+    # Five matching Fruit listings and five that must not be counted or listed.
+    for index in range(5):
+        insert_listing(
+            db_session,
+            member,
+            title="Fruit " + str(index),
+            category="Fruit",
+            created_at=datetime(2026, 3, 1, 9, index, tzinfo=timezone.utc),
+        )
+    for index in range(5):
+        insert_listing(
+            db_session,
+            member,
+            title="Veg " + str(index),
+            category="Vegetables",
+            created_at=datetime(2026, 4, 1, 9, index, tzinfo=timezone.utc),
+        )
+
+    first = browse_listings(
+        category="Fruit", page=1, page_size=2, current_member=member, session=db_session
+    )
+    second = browse_listings(
+        category="Fruit", page=2, page_size=2, current_member=member, session=db_session
+    )
+
+    # The total counts only the filtered rows, so the count the member reads
+    # describes the filtered list and not the whole table.
+    assert first.total == 5
+    assert second.total == 5
+    assert collect_titles(first.items) == ["Fruit 4", "Fruit 3"]
+    assert collect_titles(second.items) == ["Fruit 2", "Fruit 1"]
+
+
+@pytest.mark.parametrize(
+    "query_text",
+    ["page=0", "page=-1", "page_size=0", "page_size=101", "page=abc", "page_size=abc"],
+)
+def test_browse_rejects_out_of_bounds_paging_with_422(db_session, query_text):
+    # Bad paging input is rejected by the query-param bounds before the route
+    # body runs, so this goes through the ASGI layer where that validation lives.
+    active_member = Member(name="X", email="x@example.com", password_hash="x", status="active")
+    app.dependency_overrides[get_current_member] = lambda: active_member
+    app.dependency_overrides[get_db_session] = lambda: db_session
+    try:
+        status_code, body_bytes = call_asgi_get("/api/listings?" + query_text)
+        assert status_code == 422
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_browse_accepts_the_highest_allowed_page_size(db_session):
+    # 100 is the ceiling, not past it, so it must be accepted.
+    active_member = Member(name="X", email="x@example.com", password_hash="x", status="active")
+    app.dependency_overrides[get_current_member] = lambda: active_member
+    app.dependency_overrides[get_db_session] = lambda: db_session
+    try:
+        status_code, body_bytes = call_asgi_get("/api/listings?page_size=100")
+        assert status_code == 200
+        data = json.loads(body_bytes)
+        assert data["page_size"] == 100
+    finally:
+        app.dependency_overrides.clear()
 
 
 # --- nullable text columns are coerced to empty strings ---
@@ -401,7 +486,7 @@ def test_browse_coerces_null_text_to_empty_strings(db_session):
     member = insert_member(db_session, "active")
     insert_listing(db_session, member, title="No text", description=None, category=None)
 
-    results = browse_listings(current_member=member, session=db_session)
+    results = browse_listings(current_member=member, session=db_session).items
 
     assert len(results) == 1
     assert results[0].description == ""
@@ -418,7 +503,7 @@ def test_browse_skips_unbounded_pickup_window(db_session):
     insert_listing(db_session, member, title="Unbounded", pickup_window=unbounded_window)
     insert_listing(db_session, member, title="Good")
 
-    results = browse_listings(current_member=member, session=db_session)
+    results = browse_listings(current_member=member, session=db_session).items
 
     titles = collect_titles(results)
     assert "Good" in titles
@@ -432,7 +517,7 @@ def test_browse_skips_equal_bound_pickup_window(db_session):
     insert_listing(db_session, member, title="Equal", pickup_window=equal_window)
     insert_listing(db_session, member, title="Good")
 
-    results = browse_listings(current_member=member, session=db_session)
+    results = browse_listings(current_member=member, session=db_session).items
 
     titles = collect_titles(results)
     assert "Good" in titles
@@ -519,13 +604,13 @@ def test_repeated_dietary_tags_query_params_bind_as_lists(db_session):
     app.dependency_overrides[get_current_member] = lambda: active_member
     app.dependency_overrides[get_db_session] = lambda: db_session
     try:
-        status_code, body_bytes = asyncio.run(
-            call_asgi_get("/api/listings?dietary_tags=vegan&dietary_tags=gluten-free")
+        status_code, body_bytes = call_asgi_get(
+            "/api/listings?dietary_tags=vegan&dietary_tags=gluten-free"
         )
         assert status_code == 200
         data = json.loads(body_bytes)
         titles = []
-        for item in data:
+        for item in data["items"]:
             titles.append(item["title"])
         # If the two repeated params bound as a list, the @> filter requires both
         # tags, so only "Both dietary" matches. If they had wrongly bound as a
@@ -544,13 +629,13 @@ def test_repeated_allergen_tags_query_params_bind_as_lists(db_session):
     app.dependency_overrides[get_current_member] = lambda: active_member
     app.dependency_overrides[get_db_session] = lambda: db_session
     try:
-        status_code, body_bytes = asyncio.run(
-            call_asgi_get("/api/listings?allergen_tags=nuts&allergen_tags=wheat")
+        status_code, body_bytes = call_asgi_get(
+            "/api/listings?allergen_tags=nuts&allergen_tags=wheat"
         )
         assert status_code == 200
         data = json.loads(body_bytes)
         titles = []
-        for item in data:
+        for item in data["items"]:
             titles.append(item["title"])
         assert titles == ["Both allergen"]
     finally:
@@ -596,7 +681,7 @@ def test_browse_carries_each_owners_listing_owner_rating(db_session):
     db_session.commit()
 
     viewer = insert_member(db_session, email="viewer-two@example.com")
-    results = browse_listings(current_member=viewer, session=db_session)
+    results = browse_listings(current_member=viewer, session=db_session).items
 
     items_by_title = {}
     for item in results:
